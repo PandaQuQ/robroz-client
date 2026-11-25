@@ -1,34 +1,24 @@
 name: Release
 
-# Builds release binaries when a `v*` tag is pushed and attaches them, with
-# SHA256 checksums, to a draft GitHub Release. The draft stays private until
-# a maintainer publishes it by hand. Binaries are not code-signed.
+# Builds client release binaries when a `v*` tag is pushed and attaches them,
+# with SHA256 checksums, to a draft GitHub Release. The draft stays private
+# until a maintainer publishes it by hand. Binaries are not code-signed.
 #
-# workflow_dispatch is a dry run: it builds and packages the same artifacts,
-# and builds the runner image without pushing it. It does not create a release.
+# workflow_dispatch is a dry run: it builds and packages the same artifacts.
+# It does not create a release.
 #
-# A separate job builds two images (linux/amd64, context is the repository
-# root) and pushes them with the version tag only:
-#   runner/Dockerfile -> ghcr.io/pandaquq/robroz-runner:<tag>
-#   host/Dockerfile   -> ghcr.io/pandaquq/robroz-host:<tag>
-# The draft release does not wait for that job, so host and client assets
-# still upload if an image push fails. There is no `latest` tag.
+# The host binary and the robroz-host / robroz-runner images are released
+# from https://github.com/PandaQuQ/robroz.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      push_host_image:
-        description: "Push only the robroz-host image as main-<short sha> (main only, no release)"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
 
 jobs:
   build:
-    if: ${{ !inputs.push_host_image }}
     strategy:
       fail-fast: false
       matrix:
@@ -37,8 +27,8 @@ jobs:
           # Ubuntu 22.04+ and Debian 12+. ubuntu-latest moves forward.
           - os: ubuntu-22.04
             target: linux-x86_64
-            packages: "-p robroz-client -p robroz-host"
-            bins: "robroz-client robroz-host"
+            packages: "-p robroz-client"
+            bins: "robroz-client"
           - os: windows-latest
             target: windows-x86_64
             packages: "-p robroz-client"
@@ -165,76 +155,3 @@ jobs:
             --draft ${pre} \
             --title "robroz ${GITHUB_REF_NAME}" \
             --notes-file notes.md
-
-  image:
-    name: image (${{ matrix.image }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - image: robroz-runner
-            file: runner/Dockerfile
-            description: Task runner image for robroz host sandboxes
-          - image: robroz-host
-            file: host/Dockerfile
-            description: robroz host with the Docker CLI, for running the host in a container
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    env:
-      # Tag pushes push both images. A dispatch from main with push_host_image
-      # pushes only robroz-host. Every other dispatch is a dry run.
-      PUSH: ${{ github.event_name == 'push' || (inputs.push_host_image && github.ref == 'refs/heads/main' && matrix.image == 'robroz-host') }}
-      SKIP: ${{ inputs.push_host_image && matrix.image != 'robroz-host' }}
-    steps:
-      - uses: actions/checkout@v4
-        if: env.SKIP != 'true'
-      - uses: docker/setup-buildx-action@v3
-        if: env.SKIP != 'true'
-      - uses: docker/login-action@v3
-        if: env.PUSH == 'true'
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Lowercase image name
-        if: env.SKIP != 'true'
-        id: image
-        env:
-          OWNER: ${{ github.repository_owner }}
-          REF_NAME: ${{ github.ref_name }}
-          EVENT_NAME: ${{ github.event_name }}
-          IMAGE: ${{ matrix.image }}
-        run: |
-          set -euo pipefail
-          owner="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
-          echo "name=ghcr.io/${owner}/${IMAGE}" >> "$GITHUB_OUTPUT"
-          tag="$REF_NAME"
-          # A dispatched dry run may come from a branch whose name contains slashes.
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            tag="${tag//\//-}"
-          fi
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$PUSH" = "true" ]; then
-            tag="main-${GITHUB_SHA::7}"
-          fi
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v6
-        if: env.SKIP != 'true'
-        with:
-          context: .
-          file: ${{ matrix.file }}
-          push: ${{ env.PUSH == 'true' }}
-          platforms: linux/amd64
-          # Attestation needs id-token: write. Keep this job's permissions to
-          # contents: read and packages: write only.
-          provenance: false
-          tags: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/PandaQuQ/robroz
-            org.opencontainers.image.url=https://github.com/PandaQuQ/robroz
-            org.opencontainers.image.title=${{ matrix.image }}
-            org.opencontainers.image.description=${{ matrix.description }}
-            org.opencontainers.image.version=${{ github.ref_name }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.licenses=AGPL-3.0-only

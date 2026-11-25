@@ -8,8 +8,10 @@
 <p align="center"><a href="README.md">English</a> | <b>简体中文</b></p>
 
 <p align="center">
-  <a href="https://github.com/PandaQuQ/robroz/actions/workflows/ci.yml"><img src="https://github.com/PandaQuQ/robroz/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/PandaQuQ/robroz-client/actions/workflows/ci.yml"><img src="https://github.com/PandaQuQ/robroz-client/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
 </p>
+
+> **仓库已拆分。** 本仓库是 robroz 桌面和移动客户端。宿主机（服务端）、runner、共享契约和 Docker 镜像在 [PandaQuQ/robroz](https://github.com/PandaQuQ/robroz)。下面部分文档还同时描述两边，之后会按仓库重写。
 
 自托管的多智能体工作台，用聊天来驱动。智能体（bro）在 Docker 沙箱里干活；审批和结果以卡片回到对话里。Rust 宿主机 + 原生桌面客户端。
 
