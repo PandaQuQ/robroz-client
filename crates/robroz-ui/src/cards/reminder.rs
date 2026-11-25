@@ -5,7 +5,7 @@
 use chrono::TimeZone;
 use robroz_contract::{Event, ReminderState};
 
-use super::group_approval::{decided_line, reminder_dot};
+use super::group_approval::reminder_dot;
 use super::status::{clock_in, Dot};
 use crate::i18n::Key;
 
@@ -67,18 +67,17 @@ impl Reminder {
     }
 
     /// The row's text: the ask while waiting, then the result.
-    pub fn text<Tz: TimeZone>(&self, tz: &Tz) -> String
+    pub fn text<Tz: TimeZone>(&self, _tz: &Tz) -> String
     where
         Tz::Offset: std::fmt::Display,
     {
-        let result_time = || clock_in(self.answered_at.unwrap_or(self.created_at), tz);
         match self.state {
             ReminderState::Waiting => {
                 Key::ApprovalDmReminder.fill(&[&self.bot_name, &self.group_name])
             }
-            // The reminder only goes to the owner: "by you".
-            ReminderState::Approved => decided_line(true, true, &self.owner_name, &result_time()),
-            ReminderState::Denied => decided_line(false, true, &self.owner_name, &result_time()),
+            // The reminder only goes to the owner. Time sits on the right.
+            ReminderState::Approved => Key::ApprovalDmApprovedByYou.to_string(),
+            ReminderState::Denied => Key::ApprovalDmDeniedByYou.to_string(),
             ReminderState::Expired => Key::ReviewRulesExpired.into(),
         }
     }
@@ -142,14 +141,17 @@ mod tests {
         ))
         .unwrap();
         let _g = scoped(Locale::En);
-        assert_eq!(r.text(&Utc), "Approved by you at 19:02");
+        assert_eq!(r.text(&Utc), "Approved by you");
         assert_eq!(r.time(&Utc).as_deref(), Some("19:02"));
         assert_eq!(r.dot(), Dot::Done);
         let d = Reminder::from_event(&event(ReminderState::Denied, Some("2026-10-07T19:03:00Z")))
             .unwrap();
-        assert_eq!(d.text(&Utc), "Denied by you at 19:03");
+        assert_eq!(d.text(&Utc), "Denied by you");
         assert_eq!(d.time(&Utc).as_deref(), Some("19:03"));
         assert_eq!(d.dot(), Dot::Void);
+        let _g = scoped(Locale::Zh);
+        assert_eq!(r.text(&Utc), "你已批准");
+        assert_eq!(d.text(&Utc), "你已拒绝");
     }
 
     #[test]

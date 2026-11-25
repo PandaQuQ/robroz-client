@@ -3605,7 +3605,7 @@ fn delivery_view<'a>(
             view::status_dot(t, robroz_ui::cards::status::Dot::Void).map(Message::Ui),
             text(failure),
         ]
-        .spacing(t.metrics.dot_gap + 4.0)
+        .spacing(view::STATUS_DOT_TEXT_GAP)
         .align_y(Alignment::Center);
         let setup = delivery_setup(card);
         let mut body: Element<'a, Message> = if setup.is_empty() {
@@ -3719,6 +3719,7 @@ mod tests {
             status_code: None,
             failure_code: None,
             failure_detail: None,
+            failure: None,
         }
     }
 

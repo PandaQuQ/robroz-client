@@ -2,9 +2,9 @@
 //!
 //! The host still sends the legacy `label` / `failure` / `briefing` text.
 //! When a code is present the client never shows that text; it picks a
-//! sentence from i18n. `failureDetail` is host-written and may be in the
-//! other language: if it does not fit the UI locale it is kept off the
-//! main line, in a row the user can open.
+//! sentence from i18n. `failureDetail` always sits behind "Show details",
+//! except [`FailureCode::Other`]: a detail in the UI language is shown as
+//! the failed prefix plus that detail.
 
 use robroz_contract::{CardStatusCode, DeliveryBadge, FailureCode};
 
@@ -101,8 +101,8 @@ pub fn failure_key(code: FailureCode) -> Key {
     }
 }
 
-/// The line a failed card shows, plus an optional detail to hide behind
-/// a disclosure when it is in the other language.
+/// The line a failed or state card shows, plus an optional detail to
+/// hide behind "Show details".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailureLine {
     pub text: String,
@@ -112,33 +112,56 @@ pub struct FailureLine {
 impl FailureLine {
     /// Build from a v0.2 code and optional raw `failureDetail`.
     ///
-    /// `no_result` never takes the failed prefix. For every other code a
-    /// usable detail is shown as exactly one prefix plus that detail
-    /// (`Couldn't finish: …` / 「没做成：…」). A detail in the other
-    /// language is kept off the main line; the sentence for the code is
-    /// shown instead.
+    /// The first line is the sentence for the code. Any detail goes in
+    /// the disclosure, with one exception: [`FailureCode::Other`] shows
+    /// the failed prefix plus the detail when the detail matches the UI
+    /// language, and the bare failed sentence when it does not (detail
+    /// still in the disclosure). `denied`, `approval_expired`,
+    /// `waiting_approval` and `tool_needs_approval` are states and never
+    /// take the failed prefix.
     pub fn from_code(code: FailureCode, detail: Option<&str>) -> Self {
         Self::from_code_in(locale(), code, detail)
     }
 
     pub fn from_code_in(locale: Locale, code: FailureCode, detail: Option<&str>) -> Self {
         let sentence = failure_key(code).to_string_in(locale);
-        let Some(detail) = detail.map(str::trim).filter(|s| !s.is_empty()) else {
-            return Self {
-                text: sentence,
-                collapsed: None,
+        let detail = detail.map(str::trim).filter(|s| !s.is_empty());
+        if code == FailureCode::Other {
+            let Some(detail) = detail else {
+                return Self {
+                    text: sentence,
+                    collapsed: None,
+                };
             };
-        };
-        if code == FailureCode::NoResult || detail_fit(locale, detail) == DetailFit::Collapse {
+            if detail_fit(locale, detail) == DetailFit::Inline {
+                return Self {
+                    text: Key::HostFailedBecause.fill_in(locale, &[&detail]),
+                    collapsed: None,
+                };
+            }
             return Self {
                 text: sentence,
-                collapsed: (code != FailureCode::NoResult).then(|| detail.to_string()),
+                collapsed: Some(detail.to_string()),
             };
         }
         Self {
-            text: Key::HostFailedBecause.fill_in(locale, &[&detail]),
-            collapsed: None,
+            text: sentence,
+            collapsed: detail.map(str::to_string),
         }
+    }
+
+    /// A host `failure` with no `failureCode`. Treated as `no_result` when
+    /// the text is the dead-run line, otherwise as [`FailureCode::Other`].
+    pub fn from_legacy(failure: &str) -> Self {
+        Self::from_legacy_in(locale(), failure)
+    }
+
+    pub fn from_legacy_in(locale: Locale, failure: &str) -> Self {
+        let failure = failure.trim();
+        if failure == robroz_contract::legacy::NO_RESULT {
+            return Self::from_code_in(locale, FailureCode::NoResult, None);
+        }
+        Self::from_code_in(locale, FailureCode::Other, Some(failure))
     }
 }
 
@@ -168,7 +191,7 @@ mod tests {
                 let s = text_in(locale, failure_key(code));
                 assert!(!s.trim().is_empty(), "{code:?} {locale:?}");
                 // The sentence itself must not carry the failed prefix: the
-                // client adds that at most once, and only around a detail.
+                // client adds that only for `other` when the detail fits.
                 assert!(
                     !s.starts_with("Couldn't finish:") && !s.starts_with("没做成："),
                     "sentence for {code:?} starts with the failed prefix: {s}"
@@ -179,71 +202,93 @@ mod tests {
     }
 
     #[test]
-    fn no_result_never_takes_the_prefix_even_with_a_detail() {
-        let l = line(Locale::Zh, FailureCode::NoResult, Some("模型服务返回 401"));
-        assert_eq!(l.text, "没写出结果");
-        assert_eq!(l.collapsed, None);
-        let l = line(Locale::En, FailureCode::NoResult, None);
-        assert_eq!(l.text, "Finished with no result");
-    }
-
-    #[test]
-    fn a_matching_detail_is_the_failed_prefix_once() {
+    fn the_first_line_is_the_code_sentence_and_detail_goes_in_the_row() {
         let l = line(
             Locale::Zh,
             FailureCode::ModelNoReply,
             Some("模型服务返回 401"),
-        );
-        assert_eq!(l.text, "没做成：模型服务返回 401");
-        assert_eq!(l.collapsed, None);
-        // Never the old double prefix.
-        assert!(!l.text.contains("没做成：调用失败"));
-        assert!(!l.text.contains("调用失败："));
-    }
-
-    #[test]
-    fn a_cjk_detail_is_collapsed_in_english() {
-        let l = line(
-            Locale::En,
-            FailureCode::ModelNoReply,
-            Some("模型服务返回 401"),
-        );
-        assert_eq!(l.text, "The model did not reply.");
-        assert_eq!(l.collapsed.as_deref(), Some("模型服务返回 401"));
-        assert!(!l.text.contains("模型"));
-    }
-
-    #[test]
-    fn english_prose_is_collapsed_in_chinese() {
-        let l = line(
-            Locale::Zh,
-            FailureCode::ModelNoReply,
-            Some("model returned 401"),
         );
         assert_eq!(l.text, "模型没有回复。");
-        assert_eq!(l.collapsed.as_deref(), Some("model returned 401"));
+        assert_eq!(l.collapsed.as_deref(), Some("模型服务返回 401"));
+        assert!(!l.text.contains("没做成"));
+        assert!(!l.text.contains("调用失败"));
+
+        let l = line(Locale::En, FailureCode::OutboundOverQuota, Some("3/2"));
+        assert_eq!(l.text, "The outbound request quota was reached.");
+        assert_eq!(l.collapsed.as_deref(), Some("3/2"));
+        assert!(!l.text.contains("3/2"));
+
+        let l = line(
+            Locale::En,
+            FailureCode::ModelNoReply,
+            Some("模型服务返回 401"),
+        );
+        assert_eq!(l.text, "The model didn't reply.");
+        assert_eq!(l.collapsed.as_deref(), Some("模型服务返回 401"));
+        assert!(!l.text.contains("Couldn't finish"));
     }
 
     #[test]
-    fn a_neutral_detail_is_inlined_in_both_locales() {
-        for (locale, want) in [
-            (Locale::En, "Couldn't finish: 401"),
-            (Locale::Zh, "没做成：401"),
-        ] {
-            let l = line(locale, FailureCode::ModelNoReply, Some("401"));
-            assert_eq!(l.text, want, "{locale:?}");
-            assert_eq!(l.collapsed, None);
-        }
-        let quota = line(Locale::En, FailureCode::OutboundOverQuota, Some("3/2"));
-        assert_eq!(quota.text, "Couldn't finish: 3/2");
-        let method = line(Locale::Zh, FailureCode::OutboundNotGet, Some("POST"));
-        assert_eq!(method.text, "没做成：POST");
-        let tool = line(
+    fn other_inlines_a_matching_detail_and_collapses_a_mismatched_one() {
+        let l = line(Locale::Zh, FailureCode::Other, Some("模型服务返回 500"));
+        assert_eq!(l.text, "没做成：模型服务返回 500");
+        assert_eq!(l.collapsed, None);
+
+        let l = line(Locale::En, FailureCode::Other, Some("模型服务返回 500"));
+        assert_eq!(l.text, "This didn't get done.");
+        assert_eq!(l.collapsed.as_deref(), Some("模型服务返回 500"));
+        assert!(!l.text.contains("模型"));
+
+        let l = line(
             Locale::En,
-            FailureCode::WaitingApproval,
-            Some("server.tool"),
+            FailureCode::Other,
+            Some("the model returned 500"),
         );
-        assert_eq!(tool.text, "Couldn't finish: server.tool");
+        assert_eq!(l.text, "Couldn't finish: the model returned 500");
+        assert_eq!(l.collapsed, None);
+
+        let l = line(Locale::Zh, FailureCode::Other, None);
+        assert_eq!(l.text, "没做成。");
+    }
+
+    #[test]
+    fn states_never_take_the_failed_prefix() {
+        for code in [
+            FailureCode::Denied,
+            FailureCode::ApprovalExpired,
+            FailureCode::WaitingApproval,
+            FailureCode::ToolNeedsApproval,
+        ] {
+            let l = line(Locale::Zh, code, Some("发送周报"));
+            assert!(!l.text.starts_with("没做成"), "{code:?} {t}", t = l.text);
+            assert_eq!(l.collapsed.as_deref(), Some("发送周报"));
+        }
+        let l = line(Locale::En, FailureCode::Denied, Some("发送周报"));
+        assert_eq!(l.text, "You denied this.");
+        assert_eq!(l.collapsed.as_deref(), Some("发送周报"));
+    }
+
+    #[test]
+    fn no_result_is_the_sentence_even_with_a_detail() {
+        let l = line(Locale::Zh, FailureCode::NoResult, Some("模型服务返回 401"));
+        assert_eq!(l.text, "没写出结果。");
+        assert_eq!(l.collapsed.as_deref(), Some("模型服务返回 401"));
+        let l = line(Locale::En, FailureCode::NoResult, None);
+        assert_eq!(l.text, "Finished with no result.");
+        assert_eq!(l.collapsed, None);
+    }
+
+    #[test]
+    fn legacy_failures_follow_the_other_rule() {
+        let l = FailureLine::from_legacy_in(Locale::En, "模型服务返回 500");
+        assert_eq!(l.text, "This didn't get done.");
+        assert_eq!(l.collapsed.as_deref(), Some("模型服务返回 500"));
+        let l = FailureLine::from_legacy_in(Locale::Zh, "模型服务返回 500");
+        assert_eq!(l.text, "没做成：模型服务返回 500");
+        assert_eq!(l.collapsed, None);
+        let l = FailureLine::from_legacy_in(Locale::Zh, robroz_contract::legacy::NO_RESULT);
+        assert_eq!(l.text, "没写出结果。");
+        assert_eq!(l.collapsed, None);
     }
 
     #[test]
@@ -288,11 +333,12 @@ mod tests {
         assert_eq!(status_text(CardStatusCode::Done), "Done");
         assert_eq!(
             status_text(CardStatusCode::NoResult),
-            "Finished with no result"
+            "Finished with no result."
         );
         assert_eq!(badge_text(DeliveryBadge::Briefing), "Briefing");
         let _g = scoped(Locale::Zh);
         assert_eq!(status_text(CardStatusCode::Running), "进行");
         assert_eq!(badge_text(DeliveryBadge::Briefing), "简报");
+        assert_eq!(status_text(CardStatusCode::NoResult), "没写出结果。");
     }
 }

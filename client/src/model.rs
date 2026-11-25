@@ -38,25 +38,33 @@ pub struct StatusCard {
     pub failure_code: Option<FailureCode>,
     /// Raw `failureDetail`, with no prefix. May be in the other language.
     pub failure_detail: Option<String>,
+    /// Raw host `failure` when there is no `failureCode`. Used to draw
+    /// the legacy path under the same rule as `other`.
+    pub failure: Option<String>,
 }
 
 impl StatusCard {
     /// The status or failure line in the active locale.
     pub fn shown_line(&self) -> String {
-        if let Some(code) = self.failure_code {
-            FailureLine::from_code(code, self.failure_detail.as_deref()).text
-        } else if let Some(code) = self.status_code {
-            codes::status_text(code)
-        } else {
-            display(&self.status_line).into_owned()
+        if let Some(line) = self.failure_display() {
+            return line.text;
         }
+        if let Some(code) = self.status_code {
+            return codes::status_text(code);
+        }
+        display(&self.status_line).into_owned()
     }
 
-    /// Host detail to hide behind "Show details" when it is not in the
-    /// UI language. `None` when there is no detail, or it is inlined.
+    /// Host detail to hide behind "Show details".
     pub fn collapsed_detail(&self) -> Option<String> {
-        self.failure_code
-            .and_then(|code| FailureLine::from_code(code, self.failure_detail.as_deref()).collapsed)
+        self.failure_display().and_then(|line| line.collapsed)
+    }
+
+    fn failure_display(&self) -> Option<FailureLine> {
+        if let Some(code) = self.failure_code {
+            return Some(FailureLine::from_code(code, self.failure_detail.as_deref()));
+        }
+        self.failure.as_deref().map(FailureLine::from_legacy)
     }
 }
 
@@ -99,10 +107,7 @@ impl DeliveryCard {
         if let Some(code) = self.failure_code {
             return Some(FailureLine::from_code(code, self.failure_detail.as_deref()));
         }
-        self.failure.as_deref().map(|f| FailureLine {
-            text: display(&failure_line(f)).into_owned(),
-            collapsed: None,
-        })
+        self.failure.as_deref().map(FailureLine::from_legacy)
     }
 }
 
@@ -211,12 +216,14 @@ pub fn display(s: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// The failure line in the active locale: from the code when the host
-/// sent one, otherwise the legacy `failure` text with one prefix.
+/// sent one, otherwise the legacy `failure` under the `other` rule.
 fn failure_shown(code: Option<FailureCode>, detail: Option<&str>, legacy: Option<&str>) -> String {
     if let Some(code) = code {
         FailureLine::from_code(code, detail).text
+    } else if let Some(legacy) = legacy.filter(|s| !s.trim().is_empty()) {
+        FailureLine::from_legacy(legacy).text
     } else {
-        display(&failure_line(legacy.unwrap_or_default())).into_owned()
+        display(&failure_line("")).into_owned()
     }
 }
 
@@ -723,6 +730,7 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
                 status_code: *status_code,
                 failure_code: *failure_code,
                 failure_detail: failure_detail.clone(),
+                failure: failure.clone(),
             };
             (Key::Task(task_id.clone()), Row::Status(card))
         }
@@ -840,7 +848,7 @@ mod tests {
         use robroz_ui::i18n::{scoped, Locale};
         let _en = scoped(Locale::En);
         assert_eq!(display(AWAITING_APPROVAL), "Needs your approval");
-        assert_eq!(display(robroz_card::NO_RESULT), "Finished with no result");
+        assert_eq!(display(robroz_card::NO_RESULT), "Finished with no result.");
         assert_eq!(
             display(robroz_contract::APPROVAL_SENT_TO_OWNER_DM_NOTICE),
             "Sent to owner's DM"
@@ -1307,7 +1315,7 @@ mod tests {
         assert_eq!(cards[0].tone, Tone::Gray);
         assert_eq!(cards[0].palette, expected(TaskState::Running, false).2);
         assert_eq!(cards[0].action, None);
-        assert_eq!(preview(&ev), "Cy：没写出结果");
+        assert_eq!(preview(&ev), "Cy：没写出结果。");
     }
 
     #[test]
@@ -2053,6 +2061,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn a_failure_code_drives_the_preview_and_falls_back_without_one() {
         use robroz_contract::{CardStatusCode, FailureCode};
         use robroz_ui::i18n::{scoped, Locale};
@@ -2072,15 +2081,17 @@ mod tests {
         }
         {
             let _g = scoped(Locale::Zh);
-            assert_eq!(preview(&ev), "Ada：没做成：模型服务返回 401");
+            assert_eq!(preview(&ev), "Ada：模型没有回复。");
             assert!(!preview(&ev).contains("调用失败"));
+            assert!(!preview(&ev).contains("没做成"));
         }
         {
             let _g = scoped(Locale::En);
-            // CJK detail is collapsed: the preview is the code sentence.
-            assert_eq!(preview(&ev), "Ada: The model did not reply.");
+            // Detail always sits in the disclosure; the preview is the sentence.
+            assert_eq!(preview(&ev), "Ada: The model didn't reply.");
         }
-        // No code: legacy text, still one prefix (via failure_line + display).
+        // No code: treated as `other`. A matching detail is prefixed;
+        // a mismatched one is collapsed, so the preview is the generic sentence.
         let mut old = status("t2", "Ada", TaskState::Done, false);
         if let Event::Status { failure, .. } = &mut old {
             *failure = Some("模型服务返回 401".into());
@@ -2088,10 +2099,10 @@ mod tests {
         let _g = scoped(Locale::Zh);
         assert_eq!(preview(&old), "Ada：没做成：模型服务返回 401");
         let _g = scoped(Locale::En);
-        // host_text translates the 「没做成：」 prefix and leaves the rest.
-        assert_eq!(preview(&old), "Ada: Couldn't finish: 模型服务返回 401");
+        assert_eq!(preview(&old), "Ada: This didn't get done.");
     }
 
+    #[test]
     fn a_reminder_previews_as_its_sentence() {
         use robroz_contract::ReminderState;
         use robroz_ui::i18n::{scoped, Locale};

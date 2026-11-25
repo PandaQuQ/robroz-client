@@ -237,10 +237,10 @@ mod tests {
         };
         {
             let _g = scoped(Locale::Zh);
-            assert_eq!(preview(&ev), "Ada：没做成：模型服务返回 401");
+            assert_eq!(preview(&ev), "Ada：模型没有回复。");
             assert!(!preview(&ev).contains("调用失败"));
         }
         let _g = scoped(Locale::En);
-        assert_eq!(preview(&ev), "Ada: The model did not reply.");
+        assert_eq!(preview(&ev), "Ada: The model didn't reply.");
     }
 }
