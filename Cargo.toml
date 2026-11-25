@@ -1,31 +1,26 @@
 [workspace]
 members = [
-    "host",
     "client",
-    "crates/robroz-contract",
-    "crates/robroz-policy",
     "crates/robroz-card",
     "crates/robroz-tokens",
     "crates/robroz-ui",
-    "crates/robroz-model",
-    "crates/robroz-mcp",
-    "runner",
     "mobile",
 ]
 # `mobile/` (Slint, Android/iOS spike) is built by its own workflow, not by a bare `cargo build`.
 default-members = [
-    "host",
     "client",
-    "crates/robroz-contract",
-    "crates/robroz-policy",
     "crates/robroz-card",
     "crates/robroz-tokens",
     "crates/robroz-ui",
-    "crates/robroz-model",
-    "crates/robroz-mcp",
-    "runner",
 ]
 resolver = "2"
 
 [workspace.package]
 license = "AGPL-3.0-only"
+
+# The contract and the host live in https://github.com/PandaQuQ/robroz. The
+# client builds against a tagged contract release; the host is only a
+# dev-dependency for the `against_host` tests. Bump both tags together.
+[workspace.dependencies]
+robroz-contract = { git = "https://github.com/PandaQuQ/robroz", tag = "contract-v0.2.0" }
+robroz-host = { git = "https://github.com/PandaQuQ/robroz", tag = "contract-v0.2.0" }

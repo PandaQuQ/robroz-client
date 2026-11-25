@@ -18,7 +18,7 @@ name = "robroz-mobile"
 path = "src/main.rs"
 
 [dependencies]
-robroz-contract = { path = "../crates/robroz-contract" }
+robroz-contract = { workspace = true }
 robroz-card = { path = "../crates/robroz-card" }
 # Only the i18n module and pure view models: no iced on mobile.
 robroz-ui = { path = "../crates/robroz-ui", default-features = false }

@@ -2,6 +2,10 @@ name: CI
 
 # Save Actions minutes: PRs run Linux only; macOS and Windows run after
 # merging to main and once a day. Pushes to PR branches don't double-run.
+#
+# The host and the contract live in https://github.com/PandaQuQ/robroz. The
+# client's `against_host` tests build that host in-process from the git tag
+# pinned in Cargo.toml, so no host image or docker is needed here.
 on:
   push:
     branches: [main]
@@ -11,16 +15,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  host:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Test host and shared crates
-        run: |
-          cargo test -p robroz-mcp --features fixture
-          cargo test -p robroz-host -p robroz-contract -p robroz-policy -p robroz-card -p robroz-runner -p robroz-tokens
-
   client:
     strategy:
       fail-fast: false
@@ -31,20 +25,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Build client
-        run: cargo build -p robroz-client
-      - name: Test client, UI kit and tokens
-        run: cargo test -p robroz-client -p robroz-ui -p robroz-tokens
-
-  e2e:
-    # Node 7: real host binary + real docker, runner image as the fake model.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: End-to-end (task, sandbox, approval, restart, resume, no replay)
-        env:
-          ROBROZ_MODEL: echo
-        run: scripts/e2e.sh
+        run: cargo build --locked -p robroz-client
+      - name: Test client, card, UI kit and tokens
+        run: cargo test --locked -p robroz-client -p robroz-card -p robroz-ui -p robroz-tokens
 
   cargo-deny:
     runs-on: ubuntu-latest

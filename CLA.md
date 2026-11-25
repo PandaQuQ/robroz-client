@@ -4,7 +4,7 @@ Version 1.0
 
 This agreement is adapted from the [Apache Software Foundation Individual Contributor License Agreement v2.2](https://www.apache.org/licenses/contributor-agreements.html#clas) ("Apache ICLA"). The wording has been changed so that the licence is granted to the robroz copyright holder instead of the Apache Software Foundation, and so that it explicitly allows relicensing, including under proprietary or commercial terms. It is not endorsed by the Apache Software Foundation.
 
-Thank you for your interest in robroz (the "Project"). To make the dual licensing of the Project possible (open source under the GNU Affero General Public License v3.0 only, and separate commercial licences, see [COMMERCIAL.md](COMMERCIAL.md)), every contributor must accept this agreement. It protects you as a contributor as well as the Project and its users. It does not change your rights to use your own Contributions for any other purpose.
+Thank you for your interest in robroz (the "Project"). To make the dual licensing of the Project possible (open source under the GNU Affero General Public License v3.0 only, and separate commercial licences, see [COMMERCIAL.md](https://github.com/PandaQuQ/robroz/blob/main/COMMERCIAL.md)), every contributor must accept this agreement. It protects you as a contributor as well as the Project and its users. It does not change your rights to use your own Contributions for any other purpose.
 
 You accept and agree to the following terms for Your present and future Contributions submitted to the Project. Except for the licences granted here to the Maintainer and to recipients of software distributed by the Maintainer, You keep all right, title and interest in and to Your Contributions.
 

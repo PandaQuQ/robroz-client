@@ -8,8 +8,10 @@
 <p align="center"><b>English</b> | <a href="README.zh-CN.md">简体中文</a></p>
 
 <p align="center">
-  <a href="https://github.com/PandaQuQ/robroz/actions/workflows/ci.yml"><img src="https://github.com/PandaQuQ/robroz/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/PandaQuQ/robroz-client/actions/workflows/ci.yml"><img src="https://github.com/PandaQuQ/robroz-client/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
 </p>
+
+> **Repository split.** This repository holds the robroz desktop and mobile client. The host (server), the runner, the shared contract and the Docker images live in [PandaQuQ/robroz](https://github.com/PandaQuQ/robroz). Some documents below still describe both; they will be rewritten per repository.
 
 Self-hosted multi-agent workspace you drive through chat. Agents (bros) run in Docker sandboxes; approvals and results come back as cards. Rust host + native desktop client.
 
@@ -169,6 +171,6 @@ SPDX-License-Identifier: `AGPL-3.0-only`
 
 robroz is licensed under the [GNU Affero General Public License v3.0 only](LICENSE). If you modify robroz and let others use it over a network, you must offer them your modified source code (AGPL section 13).
 
-robroz is also available under a commercial licence for closed-source or proprietary use; see [COMMERCIAL.md](COMMERCIAL.md). For commercial licensing, [contact the author](https://github.com/PandaQuQ).
+The client is licensed only under AGPL-3.0-only. No commercial licence is offered for it; the commercial licence covers the server in [PandaQuQ/robroz](https://github.com/PandaQuQ/robroz).
 
 Contributions are accepted under the [Contributor License Agreement](CLA.md).
