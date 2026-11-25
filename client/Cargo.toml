@@ -6,7 +6,7 @@ publish = false
 license.workspace = true
 
 [dependencies]
-robroz-contract = { path = "../crates/robroz-contract" }
+robroz-contract = { workspace = true }
 robroz-card = { path = "../crates/robroz-card" }
 robroz-ui = { path = "../crates/robroz-ui" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -25,7 +25,8 @@ png = "0.18"
 keyring = { version = "3.6", default-features = false, features = ["apple-native", "windows-native", "async-secret-service", "tokio", "crypto-rust"] }
 
 [dev-dependencies]
-robroz-host = { path = "../host" }
+# In-process host for the `against_host` tests, from the server repository.
+robroz-host = { workspace = true }
 axum = "0.8"
 serde = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }

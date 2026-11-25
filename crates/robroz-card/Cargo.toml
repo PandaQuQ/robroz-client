@@ -6,4 +6,4 @@ publish = false
 license.workspace = true
 
 [dependencies]
-robroz-contract = { path = "../robroz-contract" }
+robroz-contract = { workspace = true }

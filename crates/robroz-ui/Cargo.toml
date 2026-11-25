@@ -7,7 +7,7 @@ license.workspace = true
 description = "robroz shared UI: cards, routines list and the skin interface; no platform code"
 
 [dependencies]
-robroz-contract = { path = "../robroz-contract" }
+robroz-contract = { workspace = true }
 robroz-card = { path = "../robroz-card" }
 robroz-tokens = { path = "../robroz-tokens" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
