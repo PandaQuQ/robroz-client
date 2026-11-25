@@ -30,7 +30,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use iced::widget::{button, column, container, row, scrollable, space, text};
-use iced::{window, Alignment, Element, Fill, Font, Length, Padding, Size, Subscription, Task};
+use iced::{
+    window, Alignment, Border, Element, Fill, Font, Length, Padding, Size, Subscription, Task,
+};
 use robroz_contract::{
     ApprovalDecision, Bro, ConfirmSubject, Event, McpServer, McpTestResult, McpTool, Me, Memory,
     Said, ScheduleEntry, Skill, Unread,
@@ -62,8 +64,8 @@ use model::{attachment_label, change_time, DeliveryCard, Feed, Row, StatusCard};
 use prefs::ThemePref;
 use source::stream::{self, StreamItem};
 use source::{
-    approvals_chats, approvals_source, fake_chats, fake_schedules, EventSource, FakeSource,
-    GroupCard, GroupEvent, GroupTab, HttpSource, SourceError,
+    approvals_chats, approvals_source, codes_chats, codes_source, fake_chats, fake_schedules,
+    EventSource, FakeSource, GroupCard, GroupEvent, GroupTab, HttpSource, SourceError,
 };
 
 /// How often the conversation list refreshes unread counts.
@@ -380,6 +382,8 @@ enum Message {
     Loaded(Result<Vec<GroupTab>, SourceError>),
     Polled(Result<Polled, SourceError>),
     TakeOver(String),
+    /// Open or close the host `failureDetail` on a failed card.
+    ToggleFailDetail(String),
     Ui(Action),
     Answered {
         card: String,
@@ -483,6 +487,8 @@ struct App {
     ui: HashMap<String, CardUi>,
     /// Tasks whose folded confirm cards were opened (「还有 N 条待确认」).
     unfolded: HashSet<String>,
+    /// Failed cards whose host `failureDetail` is expanded.
+    fail_open: HashSet<String>,
     routines: Routines,
     /// 记忆 page (robroz#62).
     memories: Book,
@@ -574,18 +580,17 @@ impl App {
         i18n::set_locale(prefs::initial_locale(!fake));
         type Parts = (Box<dyn EventSource>, Arc<dyn CardApi>, String, Option<Conn>);
         let (source, api, origin, conn): Parts = if fake {
-            // `ROBROZ_FAKE_SCENE=approvals`: every state of the group
-            // approval card and the DM reminder row (screenshots).
-            let scene = std::env::var("ROBROZ_FAKE_SCENE").is_ok_and(|v| v == "approvals");
-            let (unread, bros) = if scene {
-                approvals_chats()
-            } else {
-                fake_chats()
+            // `ROBROZ_FAKE_SCENE=approvals` or `status-codes`.
+            let scene = std::env::var("ROBROZ_FAKE_SCENE").unwrap_or_default();
+            let (unread, bros) = match scene.as_str() {
+                "approvals" => approvals_chats(),
+                "status-codes" => codes_chats(),
+                _ => fake_chats(),
             };
-            let source: Box<dyn EventSource> = if scene {
-                Box::new(approvals_source())
-            } else {
-                Box::new(FakeSource::new())
+            let source: Box<dyn EventSource> = match scene.as_str() {
+                "approvals" => Box::new(approvals_source()),
+                "status-codes" => Box::new(codes_source()),
+                _ => Box::new(FakeSource::new()),
             };
             (
                 source,
@@ -632,6 +637,7 @@ impl App {
             page: Page::Group,
             ui: HashMap::new(),
             unfolded: HashSet::new(),
+            fail_open: HashSet::new(),
             routines: Routines::default(),
             memories: Book::default(),
             skills: SkillBook::default(),
@@ -2275,6 +2281,11 @@ impl App {
             }
             // Opening the private chat is not wired yet; this only logs.
             Message::TakeOver(task_id) => eprintln!("去私聊接管: task {task_id} (not wired yet)"),
+            Message::ToggleFailDetail(id) => {
+                if !self.fail_open.insert(id.clone()) {
+                    self.fail_open.remove(&id);
+                }
+            }
             Message::Ui(action) => return self.on_action(action),
             Message::Answered { card, sent, result } => {
                 let found = self.find_card(&card);
@@ -2802,6 +2813,16 @@ impl App {
         let wanted = std::env::var("ROBROZ_OPEN")
             .ok()
             .filter(|g| self.fake && self.groups.iter().any(|x| &x.id == g));
+        if self.fake {
+            if let Ok(raw) = std::env::var("ROBROZ_EXPAND_DETAIL") {
+                for id in raw.split(',') {
+                    let id = id.trim();
+                    if !id.is_empty() {
+                        self.fail_open.insert(id.to_string());
+                    }
+                }
+            }
+        }
         // `--fake` + `ROBROZ_JUMP=<group>:<approval id>`: press the DM
         // reminder row's jump after a moment (screenshots).
         if let Some((group, card)) = std::env::var("ROBROZ_JUMP")
@@ -3117,6 +3138,7 @@ impl App {
                     (bubble_max, card_w),
                     in_group,
                     me,
+                    &self.fail_open,
                 )
             }))
             .spacing(t.chat.gap_between)
@@ -3268,12 +3290,13 @@ fn group_view<'a>(
     (bubble_max, card_w): (f32, f32),
     in_group: bool,
     me: Option<&str>,
+    fail_open: &HashSet<String>,
 ) -> Element<'a, Message> {
     // A reminder is one full-width row: no avatar, no name, no clock.
     if group.sender.is_reminder() {
         return column(group.items.into_iter().map(|item| match item {
             FeedItem::Row(r) => item_view(
-                t, r, ui, empty, caps, bubble_max, card_w, true, in_group, me,
+                t, r, ui, empty, caps, bubble_max, card_w, true, in_group, me, fail_open,
             ),
             FeedItem::More { .. } => space::horizontal().into(),
         }))
@@ -3292,7 +3315,7 @@ fn group_view<'a>(
         let first = i == 0;
         col = col.push(match item {
             FeedItem::Row(r) => item_view(
-                t, r, ui, empty, caps, bubble_max, card_w, first, in_group, me,
+                t, r, ui, empty, caps, bubble_max, card_w, first, in_group, me, fail_open,
             ),
             FeedItem::More { task, n } => {
                 container(view::confirm_more(t, &task, n).map(Message::Ui))
@@ -3344,6 +3367,7 @@ fn item_view<'a>(
     first: bool,
     in_group: bool,
     me: Option<&str>,
+    fail_open: &HashSet<String>,
 ) -> Element<'a, Message> {
     let own_text = color(t.chat.own_text);
     let bubble = |content: Element<'a, Message>| -> Element<'a, Message> {
@@ -3373,12 +3397,48 @@ fn item_view<'a>(
             .align_y(Alignment::Center)
             .into(),
         ),
-        Row::Status(c) => card(status_view(t, c, card_w)),
-        Row::Delivery(c) => card(delivery_view(t, c, card_w)),
+        Row::Status(c) => card(status_view(t, c, card_w, fail_open.contains(&c.task_id))),
+        Row::Delivery(c) => card(delivery_view(t, c, card_w, fail_open.contains(&c.id))),
         Row::Reminder(r) => view::reminder_row(t, r).map(Message::Ui),
         Row::Card(c) => {
             let state = ui.get(c.id()).unwrap_or(empty);
             card(view::card(t, c, state, caps, card_w, in_group, true, me).map(Message::Ui))
+        }
+    }
+}
+
+fn fail_detail_row<'a>(t: &Skin, id: &str, detail: &str, open: bool) -> Element<'a, Message> {
+    let label = if open {
+        Text::FailureDetailHide.as_str()
+    } else {
+        Text::FailureDetailShow.as_str()
+    };
+    let toggle = button(text(label).size(13.0).color(color(t.chat.accent)))
+        .padding(0)
+        .style(fail_detail_style(*t))
+        .on_press(Message::ToggleFailDetail(id.to_string()));
+    if open {
+        column![
+            toggle,
+            text(detail.to_string())
+                .size(13.0)
+                .color(color(t.palette.text2)),
+        ]
+        .spacing(t.metrics.dot_gap)
+        .into()
+    } else {
+        toggle.into()
+    }
+}
+
+fn fail_detail_style(t: Skin) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: hovered.then_some(color(t.palette.control_hover).into()),
+            text_color: color(t.chat.accent),
+            border: Border::default().rounded(t.radii.button),
+            ..button::Style::default()
         }
     }
 }
@@ -3405,9 +3465,14 @@ fn status_dot_view<'a>(t: &Skin, card: &StatusCard) -> Element<'a, Message> {
 /// Status card: a plain bro card with a status dot and the status word.
 /// The bro name lives in the group header, not inside the card. No fill.
 /// Layout: [dot 8px status (and "Step n of m" if shown)] [flex] [Take over].
-fn status_view<'a>(t: &Skin, card: &'a StatusCard, width: f32) -> Element<'a, Message> {
+fn status_view<'a>(
+    t: &Skin,
+    card: &'a StatusCard,
+    width: f32,
+    detail_open: bool,
+) -> Element<'a, Message> {
     use iced::widget::text::Wrapping;
-    let status_word = text(model::display(&card.status_line).into_owned()).wrapping(Wrapping::None);
+    let status_word = text(card.shown_line()).wrapping(Wrapping::None);
     let texts: Element<'a, Message> = if let Some(step) = visible_step_progress(t, card, width) {
         let rgb = robroz_ui::cards::status::progress_rgb(t.chat.bro_bg, t.palette.text);
         row![
@@ -3439,13 +3504,14 @@ fn status_view<'a>(t: &Skin, card: &'a StatusCard, width: f32) -> Element<'a, Me
                 .on_press(Message::TakeOver(card.task_id.clone())),
         );
     }
-    let body: Element<'a, Message> = match card.progress.as_deref() {
-        Some(_) => column![line, progress_cell(t, card, width)]
-            .spacing(t.metrics.dot_gap)
-            .into(),
-        None => line.into(),
-    };
-    container(body)
+    let mut body = column![line];
+    if card.progress.is_some() {
+        body = body.push(progress_cell(t, card, width));
+    }
+    if let Some(detail) = card.collapsed_detail() {
+        body = body.push(fail_detail_row(t, &card.task_id, &detail, detail_open));
+    }
+    container(body.spacing(t.metrics.dot_gap))
         .padding(view::status_card_padding(t))
         .width(Fill)
         .style(view::card_style(*t))
@@ -3471,7 +3537,7 @@ fn visible_step_progress<'a>(t: &Skin, card: &'a StatusCard, width: f32) -> Opti
         + view::STATUS_DOT_TEXT_GAP
         + text_w(&model::display(raw), WORD)
         + 12.0
-        + text_w(&model::display(&card.status_line), WORD);
+        + text_w(&card.shown_line(), WORD);
     if let Some(action) = card.action {
         needed +=
             text_w(&model::display(action), t.type_.button) + 2.0 * view::TAKE_OVER_PAD[1] + 12.0;
@@ -3526,18 +3592,23 @@ fn delivery_setup(card: &DeliveryCard) -> Vec<(Message, Text, Text)> {
     out
 }
 
-fn delivery_view<'a>(t: &Skin, card: &'a DeliveryCard, width: f32) -> Element<'a, Message> {
+fn delivery_view<'a>(
+    t: &Skin,
+    card: &'a DeliveryCard,
+    width: f32,
+    detail_open: bool,
+) -> Element<'a, Message> {
     // Did not get done: the same grey as 「没写出结果」, no path, no buttons.
-    if let Some(failure) = &card.failure {
+    if let Some(failure) = card.shown_failure() {
         // Not done: a plain bro card with a grey dot, no grey fill.
         let line = row![
             view::status_dot(t, robroz_ui::cards::status::Dot::Void).map(Message::Ui),
-            text(model::display(&model::failure_line(failure)).into_owned()),
+            text(failure),
         ]
-        .spacing(t.metrics.dot_gap + 4.0)
+        .spacing(view::STATUS_DOT_TEXT_GAP)
         .align_y(Alignment::Center);
         let setup = delivery_setup(card);
-        let body: Element<'a, Message> = if setup.is_empty() {
+        let mut body: Element<'a, Message> = if setup.is_empty() {
             line.into()
         } else {
             let mut r = row![line, space::horizontal()];
@@ -3550,6 +3621,11 @@ fn delivery_view<'a>(t: &Skin, card: &'a DeliveryCard, width: f32) -> Element<'a
             }
             r.align_y(Alignment::Center).into()
         };
+        if let Some(detail) = card.collapsed_detail() {
+            body = column![body, fail_detail_row(t, &card.id, &detail, detail_open)]
+                .spacing(t.metrics.dot_gap)
+                .into();
+        }
         return container(body)
             .padding(view::status_card_padding(t))
             .width(Fill)
@@ -3566,7 +3642,7 @@ fn delivery_view<'a>(t: &Skin, card: &'a DeliveryCard, width: f32) -> Element<'a
         space::horizontal()
     ]
     .align_y(Alignment::Center);
-    if let Some(badge) = card.badge {
+    if let Some(badge) = card.shown_badge() {
         head = head.push(
             container(text(badge).size(t.type_.tag).color(color(t.palette.text2)))
                 .padding(Padding::from([2.0, t.metrics.tag_pad_h]))
@@ -3640,6 +3716,10 @@ mod tests {
             action: look.action,
             progress: None,
             step_progress: Some(robroz_contract::host_text::router_step_progress(2, 3)),
+            status_code: None,
+            failure_code: None,
+            failure_detail: None,
+            failure: None,
         }
     }
 

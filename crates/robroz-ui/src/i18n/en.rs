@@ -23,8 +23,8 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::HostSettingsBotName => "Settings",
         // 密钥不对或没填  [approved, batch 1]
         Key::HostModelBadKey => "key is wrong or missing",
-        // 没写出结果  [approved, batch 1]
-        Key::HostNoResult => "Finished with no result",
+        // 没写出结果。  [approved, batch 1]
+        Key::HostNoResult => "Finished with no result.",
         // 开始干活  [approved, batch 2]
         Key::HostProgressStarted => "Getting started",
         // 在想怎么回  [approved, batch 2]
@@ -483,12 +483,48 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ApprovalApprovedByYou => "Approved by you at {0}",
         // 你于 {0} 拒绝  [approved, group approval spec]
         Key::ApprovalDeniedByYou => "Denied by you at {0}",
+        // 你已批准  [approved, status-code i18n; needs UI review]
+        Key::ApprovalDmApprovedByYou => "Approved by you",
+        // 你已拒绝  [approved, status-code i18n; needs UI review]
+        Key::ApprovalDmDeniedByYou => "Denied by you",
         // {0} 在 {1} 等你审批  [approved, group approval spec]
         Key::ApprovalDmReminder => "{0} is waiting for your approval in {1}",
         // 只有 {0} 能审批。  [approved, group approval spec]
         Key::ApprovalOnlyOwner => "Only {0} can approve this.",
         // 它的主人  [approved, group approval spec]
         Key::OwnerFallback => "its owner",
+        // 只有 {0} 能修改这个 bro。  [approved, status-code i18n; needs UI review]
+        Key::BroOnlyOwner => "Only {0} can change this bro.",
+        // 你拒绝了。  [approved, status-code i18n; needs UI review]
+        Key::FailDenied => "You denied this.",
+        // 审批已过期。  [approved, status-code i18n; needs UI review]
+        Key::FailApprovalExpired => "The approval expired.",
+        // 模型没有回复。  [approved, status-code i18n; needs UI review]
+        Key::FailModelNoReply => "The model didn't reply.",
+        // 工具调用次数超过上限。  [approved, status-code i18n; needs UI review]
+        Key::FailToolRoundLimit => "The tool was called too many times.",
+        // 出网次数已达上限。  [approved, status-code i18n; needs UI review]
+        Key::FailOutboundOverQuota => "The outbound request quota was reached.",
+        // 出网请求只能用 GET。  [approved, status-code i18n; needs UI review]
+        Key::FailOutboundNotGet => "Outbound requests can only use GET.",
+        // 没能保存审批状态。  [approved, status-code i18n; needs UI review]
+        Key::FailSaveApprovalState => "Couldn't save the approval state.",
+        // 没能继续已批准的调用。  [approved, status-code i18n; needs UI review]
+        Key::FailResumeApprovedCall => "Couldn't resume the approved call.",
+        // 这次调用在等审批。  [approved, status-code i18n; needs UI review]
+        Key::FailWaitingApproval => "This call is waiting for approval.",
+        // 工具调用失败了。  [approved, status-code i18n; needs UI review]
+        Key::FailToolCall => "The tool call failed.",
+        // 这个工具还需要批准。  [approved, status-code i18n; needs UI review]
+        Key::FailToolNeedsApproval => "This tool still needs approval.",
+        // 没做成。  [approved, status-code i18n; needs UI review]
+        Key::FailOther => "This didn't get done.",
+        // 查看详情  [approved, status-code i18n; needs UI review]
+        Key::FailureDetailShow => "Show details",
+        // 收起详情  [approved, status-code i18n; needs UI review]
+        Key::FailureDetailHide => "Hide details",
+        // 请求没成功。  [approved, status-code i18n; needs UI review]
+        Key::ClientRequestFailed => "The request failed.",
         // 没选上：{0}  [approved, batch 2]
         Key::InteractRejected => "Choice not accepted: {0}",
         // 没成功：{0}  [approved, batch 2]

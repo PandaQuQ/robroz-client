@@ -150,7 +150,7 @@ mod host {
         );
         assert_eq!(
             host_text_in(En, robroz_card::NO_RESULT),
-            "Finished with no result"
+            "Finished with no result."
         );
     }
 
@@ -183,7 +183,7 @@ mod host {
         );
         assert_eq!(
             host_text_in(En, &robroz_card::failure_line(robroz_card::NO_RESULT)),
-            "Finished with no result"
+            "Finished with no result."
         );
     }
 

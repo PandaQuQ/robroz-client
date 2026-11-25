@@ -7,7 +7,7 @@ use iced::widget::operation::AbsoluteOffset;
 use iced::{Rectangle, Task, Vector};
 
 /// Room left above the card when it is scrolled into view.
-const MARGIN: f32 = 16.0;
+const MARGIN: f32 = 24.0;
 
 /// The `AbsoluteOffset` y for a feed that is anchored to the bottom (it
 /// counts from the bottom edge) so that `card_top`, measured from the top of
@@ -89,8 +89,9 @@ mod tests {
     #[test]
     fn a_card_near_the_top_is_scrolled_to_just_below_the_top_edge() {
         // 2000 tall content, 600 viewport: max scroll 1400. A card 300 from
-        // the top wants scroll-from-top 284, i.e. 1116 from the bottom.
-        assert_eq!(offset_from_bottom(300.0, 2000.0, 600.0), 1116.0);
+        // the top wants 24px of room above it: scroll-from-top 276, i.e.
+        // 1124 from the bottom.
+        assert_eq!(offset_from_bottom(300.0, 2000.0, 600.0), 1124.0);
     }
 
     #[test]
@@ -102,6 +103,7 @@ mod tests {
     fn a_card_at_the_very_top_scrolls_all_the_way_up() {
         assert_eq!(offset_from_bottom(0.0, 2000.0, 600.0), 1400.0);
         assert_eq!(offset_from_bottom(10.0, 2000.0, 600.0), 1400.0);
+        assert_eq!(offset_from_bottom(24.0, 2000.0, 600.0), 1400.0);
     }
 
     #[test]

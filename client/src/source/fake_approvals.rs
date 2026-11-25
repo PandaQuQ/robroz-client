@@ -126,7 +126,7 @@ pub fn approvals_source() -> FakeSource {
         tab(EXPIRED, "夜间构建"),
         tab(DM, "Ada"),
     ];
-    let step = vec![
+    let mut step = vec![
         say(OWN_WAITING, "m1", "把官网的旧日志清一下。"),
         approval(OWN_WAITING, "a-own", ada, me, None, None, false),
         say(OWN_DONE, "m2", "周报发出去前先清掉旧日志。"),
@@ -175,7 +175,35 @@ pub fn approvals_source() -> FakeSource {
             None,
         ),
     ];
+    // `ROBROZ_LONG_FEED=1`: many later messages in the owner-waiting
+    // group, so a jump from the DM has to scroll up to the card.
+    if std::env::var("ROBROZ_LONG_FEED").is_ok() {
+        for i in 0..40 {
+            let mm = 10 + (i % 50);
+            step.push(say_at(
+                OWN_WAITING,
+                &format!("pad-{i}"),
+                &format!("后面还有一条 {i}。"),
+                ts(&format!("19:{mm:02}")),
+            ));
+        }
+    }
     FakeSource::from_parts(groups, vec![step], Vec::new())
+}
+
+fn say_at(group: &str, id: &str, body: &str, created: String) -> GroupEvent {
+    GroupEvent {
+        group_id: group.into(),
+        event: Event::Message {
+            id: id.into(),
+            kind: MessageKind::Text,
+            body: body.into(),
+            created_at: created,
+            author_user_id: Some(FAKE_ME_ID.into()),
+            author_name: Some(FAKE_ME_NAME.into()),
+        },
+        approval_extras: None,
+    }
 }
 
 /// Unread counts and bros for the scene.
@@ -270,7 +298,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(reminders, [ReminderState::Approved, ReminderState::Waiting]);
+        assert_eq!(reminders, [ReminderState::Waiting, ReminderState::Approved]);
         assert!(!rows.iter().any(|r| matches!(r, Row::Card(_))));
     }
 }

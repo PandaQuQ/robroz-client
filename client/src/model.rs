@@ -4,7 +4,10 @@
 //! This module only decides where a card sits in the stream.
 
 use robroz_card::{Palette, Tone};
-use robroz_contract::{Event, MessageKind, TaskState, WaitingFor};
+use robroz_contract::{
+    CardStatusCode, DeliveryBadge, Event, FailureCode, MessageKind, TaskState, WaitingFor,
+};
+use robroz_ui::cards::codes::{self, FailureLine};
 use robroz_ui::cards::confirm::ConfirmCard;
 use robroz_ui::cards::reminder::Reminder;
 use robroz_ui::cards::{ApprovalCard, ApprovalExtras, Card, ChoiceCard};
@@ -27,10 +30,47 @@ pub struct StatusCard {
     /// left of the status word on a live run only. Raw host text;
     /// [`display`] translates it when drawn.
     pub step_progress: Option<String>,
+    /// v0.2: the code form of `label`. When set, the drawn word comes from
+    /// i18n, not `status_line`.
+    pub status_code: Option<CardStatusCode>,
+    /// v0.2: the code form of `failure`. When set, the drawn line comes
+    /// from i18n (and `failure_detail`), not `status_line`.
+    pub failure_code: Option<FailureCode>,
+    /// Raw `failureDetail`, with no prefix. May be in the other language.
+    pub failure_detail: Option<String>,
+    /// Raw host `failure` when there is no `failureCode`. Used to draw
+    /// the legacy path under the same rule as `other`.
+    pub failure: Option<String>,
+}
+
+impl StatusCard {
+    /// The status or failure line in the active locale.
+    pub fn shown_line(&self) -> String {
+        if let Some(line) = self.failure_display() {
+            return line.text;
+        }
+        if let Some(code) = self.status_code {
+            return codes::status_text(code);
+        }
+        display(&self.status_line).into_owned()
+    }
+
+    /// Host detail to hide behind "Show details".
+    pub fn collapsed_detail(&self) -> Option<String> {
+        self.failure_display().and_then(|line| line.collapsed)
+    }
+
+    fn failure_display(&self) -> Option<FailureLine> {
+        if let Some(code) = self.failure_code {
+            return Some(FailureLine::from_code(code, self.failure_detail.as_deref()));
+        }
+        self.failure.as_deref().map(FailureLine::from_legacy)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeliveryCard {
+    pub id: String,
     pub summary: String,
     /// Volume-relative path, shown as-is. Display only.
     pub path: String,
@@ -41,6 +81,34 @@ pub struct DeliveryCard {
     pub needs_search_setup: bool,
     /// `needsSetup: "model"` (robroz#102): offer 「去设置」 on the card.
     pub needs_model_setup: bool,
+    /// v0.2: the code form of the briefing badge.
+    pub badge_code: Option<DeliveryBadge>,
+    pub failure_code: Option<FailureCode>,
+    pub failure_detail: Option<String>,
+}
+
+impl DeliveryCard {
+    pub fn shown_badge(&self) -> Option<String> {
+        if let Some(code) = self.badge_code {
+            return Some(codes::badge_text(code));
+        }
+        self.badge.map(|b| display(b).into_owned())
+    }
+
+    pub fn shown_failure(&self) -> Option<String> {
+        self.failure_line().map(|l| l.text)
+    }
+
+    pub fn collapsed_detail(&self) -> Option<String> {
+        self.failure_line().and_then(|l| l.collapsed)
+    }
+
+    fn failure_line(&self) -> Option<FailureLine> {
+        if let Some(code) = self.failure_code {
+            return Some(FailureLine::from_code(code, self.failure_detail.as_deref()));
+        }
+        self.failure.as_deref().map(FailureLine::from_legacy)
+    }
 }
 
 /// Status line while the task waits on an approval card (`waitingFor:
@@ -144,6 +212,25 @@ pub fn display(s: &str) -> std::borrow::Cow<'_, str> {
         std::borrow::Cow::Borrowed(Text::ClientAwaitingApproval.as_str())
     } else {
         host_text(s)
+    }
+}
+
+/// The failure line in the active locale: from the code when the host
+/// sent one, otherwise the legacy `failure` under the `other` rule.
+fn failure_shown(code: Option<FailureCode>, detail: Option<&str>, legacy: Option<&str>) -> String {
+    if let Some(code) = code {
+        FailureLine::from_code(code, detail).text
+    } else if let Some(legacy) = legacy.filter(|s| !s.trim().is_empty()) {
+        FailureLine::from_legacy(legacy).text
+    } else {
+        display(&failure_line("")).into_owned()
+    }
+}
+
+fn status_shown(code: Option<CardStatusCode>, state: TaskState, container_up: bool) -> String {
+    match code {
+        Some(code) => codes::status_text(code),
+        None => display(robroz_card::status_line(state, container_up)).into_owned(),
     }
 }
 
@@ -336,7 +423,14 @@ fn meta_of(event: &Event) -> Meta {
             created_at,
             ..
         } => (bro(bot_id, bot_name), unix(created_at)),
-        Event::ApprovalReminder { created_at, .. } => (Sender::Reminder, unix(created_at)),
+        Event::ApprovalReminder {
+            created_at,
+            answered_at,
+            ..
+        } => (
+            Sender::Reminder,
+            unix(answered_at.as_deref().unwrap_or(created_at)),
+        ),
     };
     Meta { sender, at }
 }
@@ -416,22 +510,42 @@ impl Feed {
     }
 
     /// A replaced row keeps its place and its time (an answered card was
-    /// still sent when it was first sent).
+    /// still sent when it was first sent). Reminder rows are the exception:
+    /// they move to their latest change time, so an approved row at 19:02
+    /// sits after a waiting row at 18:50.
     fn upsert(&mut self, key: Key, row: Row, meta: Option<Meta>) {
-        match self.rows.iter_mut().find(|(k, _, _)| *k == key) {
-            Some(slot) => {
-                slot.1 = row;
-                if let Some(m) = meta {
-                    slot.2.sender = m.sender;
-                    slot.2.at = slot.2.at.or(m.at);
+        let reminder = matches!(row, Row::Reminder(_));
+        if let Some(idx) = self.rows.iter().position(|(k, _, _)| *k == key) {
+            self.rows[idx].1 = row;
+            if let Some(m) = meta {
+                self.rows[idx].2.sender = m.sender;
+                if reminder {
+                    self.rows[idx].2.at = m.at;
+                    let item = self.rows.remove(idx);
+                    let pos = reminder_index(&self.rows, item.2.at);
+                    self.rows.insert(pos, item);
+                } else {
+                    self.rows[idx].2.at = self.rows[idx].2.at.or(m.at);
                 }
             }
-            None => {
-                let meta = meta.expect("a new row has meta");
+        } else {
+            let meta = meta.expect("a new row has meta");
+            if reminder {
+                let pos = reminder_index(&self.rows, meta.at);
+                self.rows.insert(pos, (key, row, meta));
+            } else {
                 self.rows.push((key, row, meta));
             }
         }
     }
+}
+
+/// Where a reminder with time `at` belongs: after earlier rows, before
+/// later ones. A row with no time stays where it is (treated as earliest).
+fn reminder_index(rows: &[(Key, Row, Meta)], at: Option<i64>) -> usize {
+    rows.iter()
+        .position(|(_, _, meta)| meta.at > at)
+        .unwrap_or(rows.len())
 }
 
 /// When this card last changed, as the host defines it for `?since=`:
@@ -477,8 +591,13 @@ pub fn preview(event: &Event) -> String {
         Event::Status {
             bot_name,
             failure: Some(failure),
+            failure_code,
+            failure_detail,
             ..
-        } => line(bot_name, &display(&failure_line(failure))),
+        } => line(
+            bot_name,
+            &failure_shown(*failure_code, failure_detail.as_deref(), Some(failure)),
+        ),
         Event::Status {
             bot_name,
             state,
@@ -516,15 +635,15 @@ pub fn preview(event: &Event) -> String {
             bot_name,
             state,
             container_up,
+            status_code,
             ..
-        } => line(
-            bot_name,
-            &display(robroz_card::status_line(*state, *container_up)),
-        ),
+        } => line(bot_name, &status_shown(*status_code, *state, *container_up)),
         Event::Delivery {
             failure: Some(failure),
+            failure_code,
+            failure_detail,
             ..
-        } => display(&failure_line(failure)).into_owned(),
+        } => failure_shown(*failure_code, failure_detail.as_deref(), Some(failure)),
         Event::Delivery { summary, .. } => host_text(summary).into_owned(),
         Event::Choice {
             bot_name, prompt, ..
@@ -568,6 +687,9 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
             failure,
             progress,
             waiting_for,
+            status_code,
+            failure_code,
+            failure_detail,
             ..
         } => {
             // A failed task is grey with no action, like a dead run, never
@@ -605,6 +727,10 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
                 action: look.action,
                 progress,
                 step_progress,
+                status_code: *status_code,
+                failure_code: *failure_code,
+                failure_detail: failure_detail.clone(),
+                failure: failure.clone(),
             };
             (Key::Task(task_id.clone()), Row::Status(card))
         }
@@ -617,15 +743,22 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
             briefing,
             failure,
             needs_setup,
+            badge,
+            failure_code,
+            failure_detail,
             ..
         } => {
             let card = DeliveryCard {
+                id: id.clone(),
                 summary: summary.clone(),
                 path: path.clone(),
                 badge: briefing.then(robroz_card::briefing_badge),
                 failure: failure.clone(),
                 needs_search_setup: needs_setup.as_deref() == Some("search"),
                 needs_model_setup: needs_setup.as_deref() == Some("model"),
+                badge_code: *badge,
+                failure_code: *failure_code,
+                failure_detail: failure_detail.clone(),
             };
             (Key::Event(id.clone()), Row::Delivery(card))
         }
@@ -715,7 +848,7 @@ mod tests {
         use robroz_ui::i18n::{scoped, Locale};
         let _en = scoped(Locale::En);
         assert_eq!(display(AWAITING_APPROVAL), "Needs your approval");
-        assert_eq!(display(robroz_card::NO_RESULT), "Finished with no result");
+        assert_eq!(display(robroz_card::NO_RESULT), "Finished with no result.");
         assert_eq!(
             display(robroz_contract::APPROVAL_SENT_TO_OWNER_DM_NOTICE),
             "Sent to owner's DM"
@@ -1182,7 +1315,7 @@ mod tests {
         assert_eq!(cards[0].tone, Tone::Gray);
         assert_eq!(cards[0].palette, expected(TaskState::Running, false).2);
         assert_eq!(cards[0].action, None);
-        assert_eq!(preview(&ev), "Cy：没写出结果");
+        assert_eq!(preview(&ev), "Cy：没写出结果。");
     }
 
     #[test]
@@ -1845,20 +1978,128 @@ mod tests {
         ));
         assert_eq!(feed.len(), 3, "the same reminder id, not a second row");
         let items: Vec<_> = feed.items().collect();
-        match items[1].0 {
+        match items[2].0 {
             Row::Reminder(r) => {
                 assert_eq!(r.state, robroz_contract::ReminderState::Approved);
                 assert_eq!(r.group_id, "g1");
                 assert_eq!(r.approval_id, "a1");
             }
-            other => panic!("expected a reminder row, got {other:?}"),
+            other => panic!("expected a reminder row last, got {other:?}"),
         }
-        assert_eq!(items[1].1.sender, Sender::Reminder);
-        // It never joins a neighbour's block.
+        assert_eq!(items[2].1.sender, Sender::Reminder);
+        // The two own messages now sit together; the reminder stands alone last.
         let groups = group_items(items.iter().map(|(r, m)| (*r, (*m).clone())), 120);
-        assert_eq!(groups.len(), 3);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].items.len(), 2);
         assert!(groups[1].sender.is_reminder());
         assert!(!Sender::Reminder.same(&Sender::Reminder));
+    }
+
+    #[test]
+    fn reminders_sit_in_chronological_order_by_the_time_they_show() {
+        use robroz_contract::ReminderState;
+        fn at(id: &str, state: ReminderState, created: &str, answered: Option<&str>) -> Event {
+            let mut ev = reminder(state, answered);
+            if let Event::ApprovalReminder {
+                id: ev_id,
+                created_at,
+                answered_at,
+                approval_id,
+                ..
+            } = &mut ev
+            {
+                *ev_id = format!("reminder:{id}");
+                *approval_id = id.into();
+                *created_at = created.into();
+                *answered_at = answered.map(Into::into);
+            }
+            ev
+        }
+        let mut feed = Feed::default();
+        // Applied newest-first on purpose: the approved row must still
+        // land after the waiting one, because 19:02 is later than 18:50.
+        feed.apply(&at(
+            "done",
+            ReminderState::Approved,
+            "2026-10-07T18:50:00.000Z",
+            Some("2026-10-07T19:02:00.000Z"),
+        ));
+        feed.apply(&at(
+            "wait",
+            ReminderState::Waiting,
+            "2026-10-07T18:50:00.000Z",
+            None,
+        ));
+        let items: Vec<_> = feed.items().collect();
+        assert_eq!(items.len(), 2);
+        match items[0].0 {
+            Row::Reminder(r) => assert_eq!(r.state, ReminderState::Waiting),
+            other => panic!("waiting first, got {other:?}"),
+        }
+        match items[1].0 {
+            Row::Reminder(r) => assert_eq!(r.state, ReminderState::Approved),
+            other => panic!("approved second, got {other:?}"),
+        }
+        assert_eq!(items[0].1.at, Some(1_791_399_000)); // 18:50Z
+        assert_eq!(items[1].1.at, Some(1_791_399_720)); // 19:02Z
+                                                        // Updating the waiting row to approved at 19:05 moves it below.
+        feed.apply(&at(
+            "wait",
+            ReminderState::Approved,
+            "2026-10-07T18:50:00.000Z",
+            Some("2026-10-07T19:05:00.000Z"),
+        ));
+        let items: Vec<_> = feed.items().collect();
+        assert_eq!(items.len(), 2);
+        match items[0].0 {
+            Row::Reminder(r) => assert_eq!(r.state, ReminderState::Approved),
+            other => panic!("19:02 stays first, got {other:?}"),
+        }
+        match items[1].0 {
+            Row::Reminder(r) => assert_eq!(r.answered_at, Some(1_791_399_900)),
+            other => panic!("19:05 moves last, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_failure_code_drives_the_preview_and_falls_back_without_one() {
+        use robroz_contract::{CardStatusCode, FailureCode};
+        use robroz_ui::i18n::{scoped, Locale};
+        let mut ev = status("t1", "Ada", TaskState::Done, false);
+        if let Event::Status {
+            failure,
+            failure_code,
+            failure_detail,
+            status_code,
+            ..
+        } = &mut ev
+        {
+            *failure = Some("调用失败：模型服务返回 401".into());
+            *failure_code = Some(FailureCode::ModelNoReply);
+            *failure_detail = Some("模型服务返回 401".into());
+            *status_code = Some(CardStatusCode::Done);
+        }
+        {
+            let _g = scoped(Locale::Zh);
+            assert_eq!(preview(&ev), "Ada：模型没有回复。");
+            assert!(!preview(&ev).contains("调用失败"));
+            assert!(!preview(&ev).contains("没做成"));
+        }
+        {
+            let _g = scoped(Locale::En);
+            // Detail always sits in the disclosure; the preview is the sentence.
+            assert_eq!(preview(&ev), "Ada: The model didn't reply.");
+        }
+        // No code: treated as `other`. A matching detail is prefixed;
+        // a mismatched one is collapsed, so the preview is the generic sentence.
+        let mut old = status("t2", "Ada", TaskState::Done, false);
+        if let Event::Status { failure, .. } = &mut old {
+            *failure = Some("模型服务返回 401".into());
+        }
+        let _g = scoped(Locale::Zh);
+        assert_eq!(preview(&old), "Ada：没做成：模型服务返回 401");
+        let _g = scoped(Locale::En);
+        assert_eq!(preview(&old), "Ada: This didn't get done.");
     }
 
     #[test]

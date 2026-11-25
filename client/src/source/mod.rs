@@ -7,11 +7,13 @@
 
 mod fake;
 mod fake_approvals;
+mod fake_codes;
 mod http;
 pub mod stream;
 
 pub use fake::{fake_chats, fake_schedules, FakeSource, DRAFT_BODY};
 pub use fake_approvals::{approvals_chats, approvals_source};
+pub use fake_codes::{codes_chats, codes_source};
 pub use http::HttpSource;
 
 use std::fmt;

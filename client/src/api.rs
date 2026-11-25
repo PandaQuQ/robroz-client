@@ -26,7 +26,9 @@ use robroz_contract::{
     TaskState, Unread, Unreads, UpdateMemory, UpdateSchedule, UpdateSkill,
     MCP_COMMAND_NOT_APPROVED, SETTINGS_APPROVAL_BOT_ID, SETTINGS_APPROVAL_BOT_NAME,
 };
-use robroz_contract::{ApprovalForbidden, ApprovalForbiddenReason, Me, APPROVAL_FORBIDDEN};
+use robroz_contract::{
+    ApprovalForbidden, ApprovalForbiddenReason, Me, APPROVAL_FORBIDDEN, FORBIDDEN_NOT_BRO_OWNER,
+};
 use robroz_contract::{
     ModelSettings, ModelSettingsSource, ModelTestResult, SearchSettings, SearchTestResult,
 };
@@ -217,32 +219,101 @@ pub enum ApiError {
     /// 403 `approval_forbidden` + `decided` / `expired`: not an error to
     /// show; the card is fetched again and shows what happened.
     ApprovalSettled,
+    /// 403 `not_bro_owner`: only this bro's owner may rename it, open its
+    /// DM, or add it to a group. The host's owner name when it sent one.
+    NotBroOwner {
+        owner: Option<String>,
+    },
+    /// 401 `token_rejected`.
+    TokenRejected,
 }
 
-/// A v0.2 403 with a `code`. The client never shows the host's `error`
-/// text for these; it picks its own copy from the code (and `reason`).
-fn coded_403(body: &str) -> Option<ApiError> {
+/// A v0.2 error body with a `code`. The client never shows the host's
+/// `error` or `message`; it picks its own copy from the code (and
+/// `reason` / `ownerName` when those are present).
+fn coded_error(body: &str) -> Option<ApiError> {
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
-    struct Coded {
+    struct CodedBody {
         code: String,
         #[serde(default)]
         owner_name: Option<String>,
     }
-    let coded = serde_json::from_str::<Coded>(body).ok()?;
+    let coded = serde_json::from_str::<CodedBody>(body).ok()?;
+    if coded.code.trim().is_empty() {
+        return None;
+    }
     let owner = coded.owner_name.filter(|n| !n.trim().is_empty());
-    match coded.code.as_str() {
+    Some(match coded.code.as_str() {
         APPROVAL_FORBIDDEN => {
             let refused = serde_json::from_str::<ApprovalForbidden>(body).ok()?;
-            Some(match refused.reason {
+            match refused.reason {
                 ApprovalForbiddenReason::NotOwner => ApiError::NotApprovalOwner { owner },
                 ApprovalForbiddenReason::Decided | ApprovalForbiddenReason::Expired => {
                     ApiError::ApprovalSettled
                 }
-            })
+            }
         }
-        _ => None,
+        FORBIDDEN_NOT_BRO_OWNER => ApiError::NotBroOwner { owner },
+        "token_rejected" => ApiError::TokenRejected,
+        _ => return None,
+    })
+}
+
+/// The `code` of a v0.2 error body, when it has one.
+fn error_code(body: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct CodeOnly {
+        code: String,
     }
+    let code = serde_json::from_str::<CodeOnly>(body).ok()?.code;
+    (!code.trim().is_empty()).then_some(code)
+}
+
+/// i18n for a host `code` the client shows. Unknown codes get a generic
+/// sentence, never the host's `error` text.
+fn copy_for_code(code: &str) -> String {
+    let key = match code {
+        "token_rejected" => Text::ClientTokenRejected,
+        "group_not_found" => Text::HostGroupNotFound,
+        "bot_not_in_group" => Text::HostBotNotInGroup,
+        "need_text" => Text::HostNeedText,
+        "need_name" => Text::HostNeedName,
+        "need_title" => Text::HostNeedTitle,
+        "need_instruction" => Text::HostNeedInstruction,
+        "need_url" => Text::HostNeedUrl,
+        "need_model_name" => Text::HostNeedModelName,
+        "need_command" => Text::HostNeedCommand,
+        "need_secret_name" => Text::HostNeedSecretName,
+        "need_secret_value" => Text::HostNeedSecretValue,
+        "need_rule" => Text::HostNeedRule,
+        "need_action" => Text::HostNeedAction,
+        "need_searxng_url" => Text::HostNeedSearxngUrl,
+        "bad_request_format" => Text::HostBadRequestFormat,
+        "body_not_json" => Text::HostBodyNotJson,
+        "body_invalid" => Text::HostBodyInvalid,
+        "nothing_to_change" => Text::HostNothingToChange,
+        "database_error" => Text::HostDatabaseError,
+        "already_answered" => Text::HostAlreadyAnswered,
+        "name_too_long" => Text::HostNameTooLong,
+        "name_taken" => Text::HostNameTaken,
+        "slug_taken" => Text::HostSlugTaken,
+        "bad_slug" => Text::HostBadSlug,
+        "bro_not_found" => Text::HostBroNotFound,
+        "unknown_bro" => Text::HostUnknownBro,
+        "task_not_found" => Text::HostTaskNotFound,
+        "approval_not_found" => Text::HostApprovalNotFound,
+        "memory_not_found" => Text::HostMemoryNotFound,
+        "skill_not_found" => Text::HostSkillNotFound,
+        "mcp_server_not_found" => Text::HostMcpNotFound,
+        "mcp_stdio_only_approve" => Text::HostStdioOnlyApprove,
+        "action_not_supported" => Text::HostUnsupportedAction,
+        "resume_needs_approval" => Text::HostResumeNeedsApproval,
+        "resume_no_intent" => Text::HostResumeNoIntent,
+        "resume_marker_failed" => Text::HostResumeMarkerFailed,
+        _ => Text::ClientRequestFailed,
+    };
+    key.into()
 }
 
 impl ApiError {
@@ -252,7 +323,7 @@ impl ApiError {
     pub fn as_conn_error(&self) -> crate::conn::ConnError {
         use crate::conn::ConnError;
         match self {
-            ApiError::Status(401, _) => ConnError::Unauthorized,
+            ApiError::Status(401, _) | ApiError::TokenRejected => ConnError::Unauthorized,
             ApiError::Transport(msg)
             | ApiError::Status(_, msg)
             | ApiError::Conflict(msg)
@@ -261,6 +332,7 @@ impl ApiError {
             | ApiError::Decode(msg) => ConnError::classify(msg),
             ApiError::CommandNotApproved(_)
             | ApiError::NotApprovalOwner { .. }
+            | ApiError::NotBroOwner { .. }
             | ApiError::ApprovalSettled => ConnError::classify(&self.reason()),
         }
     }
@@ -274,6 +346,10 @@ impl ApiError {
             ApiError::NotApprovalOwner { owner } => {
                 Text::ApprovalOnlyOwner.fill(&[&owner_label(owner.as_deref())])
             }
+            ApiError::NotBroOwner { owner } => {
+                Text::BroOnlyOwner.fill(&[&owner_label(owner.as_deref())])
+            }
+            ApiError::TokenRejected => Text::ClientTokenRejected.into(),
             // Never shown; the card is fetched again instead.
             ApiError::ApprovalSettled => Text::InteractAlreadyDecided.into(),
             ApiError::Conflict(msg)
@@ -293,6 +369,10 @@ impl ApiError {
             }
             ApiError::BadRequest(msg) => Note::Rejected(msg.clone()),
             ApiError::NotApprovalOwner { owner } => Note::OnlyOwner(owner.clone()),
+            ApiError::NotBroOwner { owner } => {
+                Note::Copy(Text::BroOnlyOwner.fill(&[&owner_label(owner.as_deref())]))
+            }
+            ApiError::TokenRejected => Note::Copy(Text::ClientTokenRejected.into()),
             ApiError::ApprovalSettled => Note::Settled,
             ApiError::Transport(_) => Note::Retry,
             ApiError::NotFound(msg) | ApiError::Status(_, msg) | ApiError::Decode(msg) => {
@@ -539,12 +619,14 @@ impl HttpApi {
                 }
             }
         }
-        let msg = crate::conn::error_text(method, url, status, &body);
-        if status == 403 {
-            if let Some(err) = coded_403(&body) {
-                return Err(err);
-            }
+        if let Some(err) = coded_error(&body) {
+            return Err(err);
         }
+        let msg = match error_code(&body) {
+            // A known-shape body: show the code's i18n, never the host text.
+            Some(code) => copy_for_code(&code),
+            None => crate::conn::error_text(method, url, status, &body),
+        };
         Err(match status {
             400 => ApiError::BadRequest(msg),
             401 => ApiError::Status(401, msg),
@@ -1794,28 +1876,72 @@ mod tests {
             )
         };
         assert_eq!(
-            coded_403(&body("not_owner")).map(|e| e.note()),
+            coded_error(&body("not_owner")).map(|e| e.note()),
             Some(Note::OnlyOwner(Some("Lin".into())))
         );
         for settled in ["decided", "expired"] {
             assert_eq!(
-                coded_403(&body(settled)).map(|e| e.note()),
+                coded_error(&body(settled)).map(|e| e.note()),
                 Some(Note::Settled)
             );
         }
-        // Not an approval 403, or not JSON: left to the generic mapping.
-        assert!(coded_403(r#"{"error":"x","code":"other"}"#).is_none());
-        assert!(coded_403("nope").is_none());
+        // Any other code, or not JSON: left to the HTTP-status mapping.
+        assert!(coded_error(r#"{"error":"x","code":"other"}"#).is_none());
+        assert!(coded_error("nope").is_none());
         // No owner name: the note's copy falls back to "its owner".
         let none = r#"{"error":"x","code":"approval_forbidden","reason":"not_owner"}"#;
         assert_eq!(
-            coded_403(none).map(|e| e.note()),
+            coded_error(none).map(|e| e.note()),
             Some(Note::OnlyOwner(None))
         );
         assert_eq!(
             Note::OnlyOwner(None).text(),
             "Only its owner can approve this."
         );
+    }
+
+    #[test]
+    fn a_coded_error_never_shows_the_host_message() {
+        let not_owner =
+            r#"{"error":"只有这个 bro 的主人能这样做","code":"not_bro_owner","ownerName":"Lin"}"#;
+        match coded_error(not_owner) {
+            Some(ApiError::NotBroOwner { owner }) => {
+                assert_eq!(owner.as_deref(), Some("Lin"));
+                assert_eq!(
+                    ApiError::NotBroOwner { owner }.reason(),
+                    "Only Lin can change this bro."
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        let missing = r#"{"error":"只有这个 bro 的主人能这样做","code":"not_bro_owner"}"#;
+        assert_eq!(
+            coded_error(missing).map(|e| e.reason()).as_deref(),
+            Some("Only its owner can change this bro.")
+        );
+        let token = r#"{"error":"缺少或错误的令牌","code":"token_rejected"}"#;
+        match coded_error(token) {
+            Some(ApiError::TokenRejected) => {
+                assert_eq!(
+                    ApiError::TokenRejected.reason(),
+                    "The host rejected the token. Check ROBROZ_TOKEN."
+                );
+                assert!(!ApiError::TokenRejected.reason().contains("令牌"));
+            }
+            other => panic!("{other:?}"),
+        }
+        let other = r#"{"error":"这句主机文案绝不能出现","code":"group_not_found"}"#;
+        assert!(
+            coded_error(other).is_none(),
+            "ordinary codes stay on the HTTP variant"
+        );
+        assert_eq!(error_code(other).as_deref(), Some("group_not_found"));
+        assert_eq!(copy_for_code("group_not_found"), "Group not found");
+        assert!(!copy_for_code("group_not_found").contains("绝不能"));
+        assert_eq!(copy_for_code("no_such_code"), "The request failed.");
+        assert!(!copy_for_code("no_such_code").contains("主机"));
+        assert!(coded_error("not json").is_none());
+        assert!(coded_error(r#"{"error":"x"}"#).is_none());
     }
 
     #[test]
@@ -2700,9 +2826,7 @@ mod tests {
             assert!(matches!(err, ApiError::BadRequest(_)));
             // The host's own constant, shown in the active (default) language.
             assert_eq!(err.reason(), "Enter some text");
-            assert!(
-                matches!(&err, ApiError::BadRequest(r) if r == robroz_contract::host_text::NEED_TEXT)
-            );
+            assert!(matches!(&err, ApiError::BadRequest(r) if r == Text::HostNeedText.as_str()));
             assert!(matches!(
                 api.say("no-such-group", "hi"),
                 Err(ApiError::NotFound(_))
@@ -2809,14 +2933,13 @@ mod tests {
             let base = crate::source::http_test_host_with_token(token);
             let without = HttpApi::new(Conn::new(&base));
             match without.unread() {
-                Err(ApiError::Status(401, msg)) => {
-                    assert_eq!(msg, crate::conn::unauthorized_message());
+                Err(ApiError::TokenRejected) => {
                     assert_eq!(
                         without.unread().unwrap_err().reason(),
-                        crate::conn::unauthorized_message()
+                        Text::ClientTokenRejected.as_str()
                     );
                 }
-                other => panic!("expected 401, got {other:?}"),
+                other => panic!("expected token_rejected, got {other:?}"),
             }
             let api = HttpApi::new(Conn::new(&base).with_token(Some(token.into())));
             let bro = api.create_bro().unwrap();

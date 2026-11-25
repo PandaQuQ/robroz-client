@@ -56,6 +56,9 @@ pub enum Note {
     /// 403 `decided` / `expired`: not an error. No text; the buttons go
     /// while the real card is fetched, which then shows the result.
     Settled,
+    /// Already-localised copy (a coded host error, or only the bro's owner
+    /// may change it). Shown as-is; not sent through `host_text`.
+    Copy(String),
 }
 
 impl Note {
@@ -69,6 +72,7 @@ impl Note {
             Note::OnlyOwner(owner) => Key::ApprovalOnlyOwner
                 .fill(&[&crate::cards::group_approval::owner_label(owner.as_deref())]),
             Note::Settled => String::new(),
+            Note::Copy(msg) => msg.clone(),
         }
     }
 }

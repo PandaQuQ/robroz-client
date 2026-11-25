@@ -6,6 +6,7 @@
 //! until the backend adds them. None of this touches the frozen status card.
 
 use crate::i18n::Key;
+pub mod codes;
 pub mod confirm;
 pub mod group_approval;
 pub mod interact;
