@@ -171,6 +171,6 @@ SPDX-License-Identifier: `AGPL-3.0-only`
 
 robroz 采用 [GNU Affero 通用公共许可证 v3.0 only](LICENSE)。修改了 robroz 并通过网络给别人用的，必须向这些用户提供改过的源码（AGPL 第 13 条）。
 
-闭源或专有用途可以另外取得商业授权，见 [COMMERCIAL.md](COMMERCIAL.md)。商业授权请[联系作者](https://github.com/PandaQuQ)。
+客户端只用 AGPL-3.0-only 授权，不提供商业授权；商业授权只覆盖服务端，见 [PandaQuQ/robroz](https://github.com/PandaQuQ/robroz)。
 
 贡献按[贡献者许可协议](CLA.md)接收。
