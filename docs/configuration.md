@@ -19,6 +19,18 @@ Placeholders such as `<your-token>` and `<host-address>` in the examples are not
 | `ROBROZ_SCALE` | `client/src/main.rs:App::boot` | `1.0` | UI scale factor, a decimal. An unparsable value becomes `1.0`. | `1.25` |
 | `ROBROZ_TOUCH` | `client/src/main.rs:App::boot` | off | Set to `1` to start with a larger touch target. If unset, the client still switches automatically after it detects touch input. | `1` |
 
+## Command-line flags and log file
+
+These flags are handled at `client/src/cli.rs:exit_if_requested`, before any window opens.
+
+| Flag | Effect |
+| --- | --- |
+| `-V`, `--version` | Print `robroz-client <version> (<sha>)` and exit with code 0. `<sha>` is the short git commit the binary was built from; a build from a checkout with uncommitted changes prints `(<sha> dirty)`, and a build without git prints `(unknown)`. |
+| `-h`, `--help` | Print the list of flags and exit with code 0. Wins over `--version` when both are given. |
+| `--fake`, `--gallery` | Development runs, see [Development and tests only](#development-and-tests-only). |
+
+**Log file (Windows only).** The Windows release build has no console, so the client writes its standard error output and any crash (panic) message to `logs\robroz-client.log` inside the config folder, by default `%APPDATA%\robroz\logs\robroz-client.log` (it follows `ROBROZ_CONFIG_DIR`). Each start appends a line with the UTC time and the version string. When the file reaches 1 MiB at start-up, it is renamed to `robroz-client.log.1`, replacing the previous one, and a new file is started, so at most two files are kept. If the folder cannot be created, the client starts without a log. On Linux and macOS nothing is written to a file; run the client from a terminal to see its output. Set at `client/src/logfile.rs:install`.
+
 ## Development and tests only
 
 These variables are for screenshots and UI review. You do not need them for everyday use.
