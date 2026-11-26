@@ -3395,19 +3395,20 @@ fn group_view<'a>(
     if let Some(at) = group.last_at {
         let clock = robroz_ui::cards::status::clock_in(at, &chrono::Local);
         if !clock.is_empty() {
-            // Only under the last item of the run, 12px text3, right-aligned
-            // to the bubble (or card).
+            // Only under the last item of the run, 12px text3. Own times
+            // are right-aligned to the bubble; bro times start at the
+            // left edge of the last bubble or card, after the avatar gutter.
             let clock = text(clock)
                 .size(t.chat.time_size)
                 .color(color(t.palette.text3));
-            let clock = container(clock)
-                .width(Length::Fill)
-                .align_x(Alignment::End)
-                .padding(Padding {
-                    right: 2.0,
-                    ..Padding::ZERO
-                });
             if own {
+                let clock = container(clock)
+                    .width(Length::Fill)
+                    .align_x(Alignment::End)
+                    .padding(Padding {
+                        right: 2.0,
+                        ..Padding::ZERO
+                    });
                 col = col.push(
                     container(clock)
                         .max_width(bubble_max)
@@ -3415,10 +3416,7 @@ fn group_view<'a>(
                         .align_x(Alignment::End),
                 );
             } else {
-                col = col.push(row![
-                    iced::widget::Space::new().width(gutter),
-                    container(clock).width(Length::Fixed(card_w)),
-                ]);
+                col = col.push(row![iced::widget::Space::new().width(gutter), clock,]);
             }
         }
     }

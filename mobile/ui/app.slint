@@ -461,123 +461,139 @@ export component MainWindow inherits Window {
                                 }
                             }
                         }
-                        if row.kind == 1: HorizontalLayout {
+                        if row.kind == 1: VerticalLayout {
                             width: 100%;
-                            alignment: start;
-                            vertical-stretch: 0;
-                            VerticalLayout {
-                                width: Metrics.avatar;
-                                alignment: end;
-                                vertical-stretch: 1;
-                                if row.show-avatar: Avatar { letter: row.initial; }
-                                if !row.show-avatar: Rectangle { width: Metrics.avatar; height: 1px; }
-                            }
-                            Rectangle { width: Metrics.avatar-gap; }
-                            VerticalLayout {
-                                spacing: 3px;
-                                max-width: feed.col-w - feed.gutter;
-                                if row.show-name: Text {
-                                    text: row.name;
-                                    color: Brand.muted;
-                                    font-size: 12px;
+                            spacing: 2px;
+                            HorizontalLayout {
+                                width: 100%;
+                                alignment: start;
+                                vertical-stretch: 0;
+                                VerticalLayout {
+                                    width: Metrics.avatar;
+                                    alignment: end;
+                                    vertical-stretch: 1;
+                                    if row.show-avatar: Avatar { letter: row.initial; }
+                                    if !row.show-avatar: Rectangle { width: Metrics.avatar; height: 1px; }
                                 }
-                                Rectangle {
-                                    background: Brand.surface;
-                                    border-radius: Metrics.bubble-radius;
-                                    border-width: 1px;
-                                    border-color: Brand.border;
-                                    VerticalLayout {
-                                        padding-left: Metrics.bubble-pad-h;
-                                        padding-right: Metrics.bubble-pad-h;
-                                        padding-top: Metrics.bubble-pad-v;
-                                        padding-bottom: Metrics.bubble-pad-v;
-                                        Text {
-                                            text: row.text;
-                                            color: Brand.ink;
-                                            font-size: 16px;
-                                            wrap: word-wrap;
-                                            horizontal-alignment: left;
+                                Rectangle { width: Metrics.avatar-gap; }
+                                VerticalLayout {
+                                    spacing: 3px;
+                                    max-width: feed.col-w - feed.gutter;
+                                    if row.show-name: Text {
+                                        text: row.name;
+                                        color: Brand.muted;
+                                        font-size: 12px;
+                                    }
+                                    Rectangle {
+                                        background: Brand.surface;
+                                        border-radius: Metrics.bubble-radius;
+                                        border-width: 1px;
+                                        border-color: Brand.border;
+                                        VerticalLayout {
+                                            padding-left: Metrics.bubble-pad-h;
+                                            padding-right: Metrics.bubble-pad-h;
+                                            padding-top: Metrics.bubble-pad-v;
+                                            padding-bottom: Metrics.bubble-pad-v;
+                                            Text {
+                                                text: row.text;
+                                                color: Brand.ink;
+                                                font-size: 16px;
+                                                wrap: word-wrap;
+                                                horizontal-alignment: left;
+                                            }
                                         }
                                     }
                                 }
-                                if row.time != "": Text {
+                            }
+                            if row.time != "": HorizontalLayout {
+                                width: 100%;
+                                Rectangle { width: feed.gutter; }
+                                Text {
                                     text: row.time;
                                     color: Brand.text3;
                                     font-size: Metrics.time-size;
-                                    horizontal-alignment: right;
+                                    horizontal-alignment: left;
                                 }
                             }
                         }
-                        if row.kind == 2: HorizontalLayout {
+                        if row.kind == 2: VerticalLayout {
                             width: 100%;
-                            alignment: start;
-                            VerticalLayout {
-                                width: Metrics.avatar;
-                                alignment: end;
-                                vertical-stretch: 1;
-                                if row.show-avatar: Avatar { letter: row.initial; }
-                                if !row.show-avatar: Rectangle { width: Metrics.avatar; height: 1px; }
-                            }
-                            Rectangle { width: Metrics.avatar-gap; }
-                            VerticalLayout {
-                                spacing: 3px;
-                                max-width: feed.col-w - feed.gutter;
-                                if row.show-name: Text {
-                                    text: row.name;
-                                    color: Brand.muted;
-                                    font-size: 12px;
+                            spacing: 2px;
+                            HorizontalLayout {
+                                width: 100%;
+                                alignment: start;
+                                VerticalLayout {
+                                    width: Metrics.avatar;
+                                    alignment: end;
+                                    vertical-stretch: 1;
+                                    if row.show-avatar: Avatar { letter: row.initial; }
+                                    if !row.show-avatar: Rectangle { width: Metrics.avatar; height: 1px; }
                                 }
-                                Rectangle {
-                                    // Unfilled status card: border only.
-                                    background: transparent;
-                                    border-radius: 14px;
-                                    border-width: 1px;
-                                    border-color: Brand.border;
-                                    VerticalLayout {
-                                        padding: 14px;
-                                        spacing: 4px;
-                                        alignment: start;
-                                        HorizontalLayout {
+                                Rectangle { width: Metrics.avatar-gap; }
+                                VerticalLayout {
+                                    spacing: 3px;
+                                    max-width: feed.col-w - feed.gutter;
+                                    if row.show-name: Text {
+                                        text: row.name;
+                                        color: Brand.muted;
+                                        font-size: 12px;
+                                    }
+                                    Rectangle {
+                                        // Unfilled status card: border only.
+                                        background: transparent;
+                                        border-radius: 14px;
+                                        border-width: 1px;
+                                        border-color: Brand.border;
+                                        VerticalLayout {
+                                            padding: 14px;
+                                            spacing: 4px;
                                             alignment: start;
-                                            spacing: 8px;
-                                            Rectangle {
-                                                width: 8px;
-                                                height: 8px;
-                                                y: (parent.height - self.height) / 2;
-                                                border-radius: 4px;
-                                                background: row.dot;
+                                            HorizontalLayout {
+                                                alignment: start;
+                                                spacing: 8px;
+                                                Rectangle {
+                                                    width: 8px;
+                                                    height: 8px;
+                                                    y: (parent.height - self.height) / 2;
+                                                    border-radius: 4px;
+                                                    background: row.dot;
+                                                }
+                                                if row.step != "": Text {
+                                                    text: row.step;
+                                                    color: Brand.ink;
+                                                    font-size: 14px;
+                                                    horizontal-alignment: left;
+                                                    vertical-alignment: center;
+                                                }
+                                                Text {
+                                                    text: row.status;
+                                                    color: Brand.ink;
+                                                    font-size: 14px;
+                                                    font-weight: 600;
+                                                    wrap: word-wrap;
+                                                    horizontal-alignment: left;
+                                                    vertical-alignment: center;
+                                                }
                                             }
-                                            if row.step != "": Text {
-                                                text: row.step;
+                                            if row.progress != "": Text {
+                                                text: row.progress;
                                                 color: Brand.ink;
-                                                font-size: 14px;
-                                                horizontal-alignment: left;
-                                                vertical-alignment: center;
-                                            }
-                                            Text {
-                                                text: row.status;
-                                                color: Brand.ink;
-                                                font-size: 14px;
-                                                font-weight: 600;
+                                                font-size: 13px;
                                                 wrap: word-wrap;
                                                 horizontal-alignment: left;
-                                                vertical-alignment: center;
                                             }
-                                        }
-                                        if row.progress != "": Text {
-                                            text: row.progress;
-                                            color: Brand.ink;
-                                            font-size: 13px;
-                                            wrap: word-wrap;
-                                            horizontal-alignment: left;
                                         }
                                     }
                                 }
-                                if row.time != "": Text {
+                            }
+                            if row.time != "": HorizontalLayout {
+                                width: 100%;
+                                Rectangle { width: feed.gutter; }
+                                Text {
                                     text: row.time;
                                     color: Brand.text3;
                                     font-size: Metrics.time-size;
-                                    horizontal-alignment: right;
+                                    horizontal-alignment: left;
                                 }
                             }
                         }
@@ -603,37 +619,46 @@ export component MainWindow inherits Window {
                         padding-bottom: Metrics.composer-send-inset;
                         min-height: Metrics.composer-height;
                         spacing: 8px;
-                        alignment: end;
-                        // Hint is a layout child (not an overlay in a
-                        // Rectangle). TextInput is only created once the
-                        // field is focused or has text, so it cannot cover
-                        // the placeholder on the software backend.
-                        if root.composer-draft == "" && !root.composer-focused: TouchArea {
+                        // stretch (not start/end) so horizontal-stretch is
+                        // honoured; start/end pack children and ignore
+                        // stretch, which pushed a short hint against the
+                        // send button. Left inset is 16px, same as desktop.
+                        alignment: stretch;
+                        Rectangle {
                             horizontal-stretch: 1;
                             height: Metrics.composer-send;
-                            clicked => { root.composer-focused = true; }
-                            Text {
+                            if root.composer-draft == "" && !root.composer-focused: HorizontalLayout {
                                 width: 100%;
                                 height: 100%;
-                                text: root.composer-hint;
-                                color: Brand.text3;
-                                font-size: 16px;
-                                vertical-alignment: center;
-                                overflow: elide;
+                                alignment: start;
+                                Text {
+                                    height: 100%;
+                                    text: root.composer-hint;
+                                    color: Brand.text3;
+                                    font-size: 16px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                Rectangle { horizontal-stretch: 1; height: 1px; }
                             }
-                        }
-                        if root.composer-draft != "" || root.composer-focused: TextInput {
-                            horizontal-stretch: 1;
-                            height: Metrics.composer-send;
-                            text <=> root.composer-draft;
-                            color: Brand.ink;
-                            font-size: 16px;
-                            single-line: true;
-                            vertical-alignment: center;
-                            init => { self.focus(); }
-                            accepted => {
-                                if root.composer-draft != "" { root.send(); }
-                                if root.composer-draft == "" { root.composer-focused = false; }
+                            if root.composer-draft == "" && !root.composer-focused: TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                clicked => { root.composer-focused = true; }
+                            }
+                            if root.composer-draft != "" || root.composer-focused: TextInput {
+                                width: 100%;
+                                height: 100%;
+                                text <=> root.composer-draft;
+                                color: Brand.ink;
+                                font-size: 16px;
+                                single-line: true;
+                                vertical-alignment: center;
+                                init => { self.focus(); }
+                                accepted => {
+                                    if root.composer-draft != "" { root.send(); }
+                                    if root.composer-draft == "" { root.composer-focused = false; }
+                                }
                             }
                         }
                         Rectangle {
