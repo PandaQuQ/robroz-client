@@ -192,6 +192,7 @@ fn apply_metrics(ui: &MainWindow) {
     m.set_composer_send_empty_opacity(c::COMPOSER_SEND_EMPTY_OPACITY);
     m.set_bubble_mine_size(c::BUBBLE_MINE_SIZE);
     m.set_thumb_size(c::THUMB_SIZE);
+    m.set_time_size(c::TIME_SIZE);
 }
 
 fn apply_pref(ui: &MainWindow, state: &mut State, pref: ThemePref) {
@@ -312,6 +313,7 @@ fn feed_entry_row(entry: chat::FeedEntry, fallback: &str, mode: Mode) -> ChatRow
                     show_avatar: row.show_avatar,
                     initial,
                     pad_top: row.pad_top,
+                    time: row.time.into(),
                     ..ChatRow::default()
                 },
                 chat::ChatItem::Status(c) => ChatRow {
@@ -330,6 +332,7 @@ fn feed_entry_row(entry: chat::FeedEntry, fallback: &str, mode: Mode) -> ChatRow
                     show_avatar: row.show_avatar,
                     initial,
                     pad_top: row.pad_top,
+                    time: row.time.into(),
                     ..ChatRow::default()
                 },
             }
@@ -453,6 +456,7 @@ fn prepare_shot(ui: &MainWindow, state: &Arc<Mutex<State>>, shot: &str) {
                 st.chat_in_group = true;
                 set_composer_hint(&ui, &name, false);
                 ui.set_composer_draft("".into());
+                ui.set_composer_focused(false);
                 ui.set_screen(screen);
             }
             Err(e) => ui.set_chat_note(e.0.into()),
@@ -651,6 +655,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             st.chat_in_group = true;
                             set_composer_hint(&ui, &name, false);
                             ui.set_composer_draft("".into());
+                            ui.set_composer_focused(false);
                         }
                         Err(e) => ui.set_chat_note(e.0.into()),
                     }
@@ -748,6 +753,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 return;
             }
             ui.set_composer_draft("".into());
+            ui.set_composer_focused(false);
             let mut st = state.lock().unwrap();
             st.chat.push(chat::ChatItem::Text {
                 body,

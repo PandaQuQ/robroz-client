@@ -43,6 +43,7 @@ export global Metrics {
     in property <float> composer-send-empty-opacity;
     in property <length> bubble-mine-size;
     in property <length> thumb-size;
+    in property <length> time-size;
 }
 
 // Every string comes from the robroz-ui i18n keys, set from Rust.
@@ -91,6 +92,7 @@ export struct ChatRow {
     show-avatar: bool,
     initial: string,
     pad-top: length,
+    time: string,
 }
 
 component Pill inherits Rectangle {
@@ -282,6 +284,7 @@ export component MainWindow inherits Window {
     in property <string> chat-note;
     in-out property <string> composer-draft;
     in property <string> composer-hint;
+    in-out property <bool> composer-focused: false;
     // Reserved: show the 56px thumbnail row when this is > 0.
     in property <int> attachment-count: 0;
     in property <int> locale-index;
@@ -429,22 +432,32 @@ export component MainWindow inherits Window {
                         if row.kind == 0: HorizontalLayout {
                             width: 100%;
                             alignment: end;
-                            Rectangle {
-                                background: Brand.own-bg;
-                                border-radius: Metrics.bubble-radius;
-                                max-width: feed.col-w * 0.75;
-                                VerticalLayout {
-                                    padding-left: Metrics.bubble-pad-h;
-                                    padding-right: Metrics.bubble-pad-h;
-                                    padding-top: Metrics.bubble-pad-v;
-                                    padding-bottom: Metrics.bubble-pad-v;
-                                    Text {
-                                        text: row.text;
-                                        color: Brand.own-text;
-                                        font-size: Metrics.bubble-mine-size;
-                                        wrap: word-wrap;
-                                        horizontal-alignment: left;
+                            VerticalLayout {
+                                spacing: 2px;
+                                alignment: end;
+                                Rectangle {
+                                    background: Brand.own-bg;
+                                    border-radius: Metrics.bubble-radius;
+                                    max-width: feed.col-w * 0.75;
+                                    VerticalLayout {
+                                        padding-left: Metrics.bubble-pad-h;
+                                        padding-right: Metrics.bubble-pad-h;
+                                        padding-top: Metrics.bubble-pad-v;
+                                        padding-bottom: Metrics.bubble-pad-v;
+                                        Text {
+                                            text: row.text;
+                                            color: Brand.own-text;
+                                            font-size: Metrics.bubble-mine-size;
+                                            wrap: word-wrap;
+                                            horizontal-alignment: left;
+                                        }
                                     }
+                                }
+                                if row.time != "": Text {
+                                    text: row.time;
+                                    color: Brand.text3;
+                                    font-size: Metrics.time-size;
+                                    horizontal-alignment: right;
                                 }
                             }
                         }
@@ -486,6 +499,12 @@ export component MainWindow inherits Window {
                                             horizontal-alignment: left;
                                         }
                                     }
+                                }
+                                if row.time != "": Text {
+                                    text: row.time;
+                                    color: Brand.text3;
+                                    font-size: Metrics.time-size;
+                                    horizontal-alignment: right;
                                 }
                             }
                         }
@@ -554,6 +573,12 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                 }
+                                if row.time != "": Text {
+                                    text: row.time;
+                                    color: Brand.text3;
+                                    font-size: Metrics.time-size;
+                                    horizontal-alignment: right;
+                                }
                             }
                         }
                     }
@@ -577,13 +602,18 @@ export component MainWindow inherits Window {
                         padding-top: Metrics.composer-send-inset;
                         padding-bottom: Metrics.composer-send-inset;
                         min-height: Metrics.composer-height;
+                        spacing: 8px;
                         alignment: end;
-                        Rectangle {
+                        // Hint is a layout child (not an overlay in a
+                        // Rectangle). TextInput is only created once the
+                        // field is focused or has text, so it cannot cover
+                        // the placeholder on the software backend.
+                        if root.composer-draft == "" && !root.composer-focused: TouchArea {
                             horizontal-stretch: 1;
                             height: Metrics.composer-send;
-                            if root.composer-draft == "": Text {
-                                x: 0;
-                                width: parent.width;
+                            clicked => { root.composer-focused = true; }
+                            Text {
+                                width: 100%;
                                 height: 100%;
                                 text: root.composer-hint;
                                 color: Brand.text3;
@@ -591,16 +621,19 @@ export component MainWindow inherits Window {
                                 vertical-alignment: center;
                                 overflow: elide;
                             }
-                            TextInput {
-                                x: 0;
-                                width: parent.width;
-                                height: 100%;
-                                text <=> root.composer-draft;
-                                color: Brand.ink;
-                                font-size: 16px;
-                                single-line: true;
-                                vertical-alignment: center;
-                                accepted => { if root.composer-draft != "" { root.send(); } }
+                        }
+                        if root.composer-draft != "" || root.composer-focused: TextInput {
+                            horizontal-stretch: 1;
+                            height: Metrics.composer-send;
+                            text <=> root.composer-draft;
+                            color: Brand.ink;
+                            font-size: 16px;
+                            single-line: true;
+                            vertical-alignment: center;
+                            init => { self.focus(); }
+                            accepted => {
+                                if root.composer-draft != "" { root.send(); }
+                                if root.composer-draft == "" { root.composer-focused = false; }
                             }
                         }
                         Rectangle {

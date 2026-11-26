@@ -294,9 +294,11 @@ pub enum Key {
     ConversationsTitle,
     ConversationsDmHint,
     ConversationsYesterday,
-    /// Date separator in the chat feed. Needs UI review.
+    /// Date separator in the chat feed: today.
     ChatDateToday,
-    /// Older date with a year: "Nov 26, 2026" / "2026年11月26日". Needs UI review.
+    /// Date separator in the chat feed: yesterday.
+    ChatDateYesterday,
+    /// Older date with a year: "Nov 26, 2026" / "2026年11月26日".
     ChatDateYear,
     ClientFakeOrigin,
     ClientNewBroFailed,
@@ -772,6 +774,7 @@ impl Key {
         Key::ConversationsDmHint,
         Key::ConversationsYesterday,
         Key::ChatDateToday,
+        Key::ChatDateYesterday,
         Key::ChatDateYear,
         Key::ClientFakeOrigin,
         Key::ClientNewBroFailed,

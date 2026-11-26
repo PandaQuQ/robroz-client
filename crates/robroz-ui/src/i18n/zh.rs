@@ -42,7 +42,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::HostCallFailed => "调用失败：{0}",
         Key::HostFailedBecause => "没做成：{0}",
         Key::CardQueued => "排队",
-        Key::CardRunning => "进行",
+        Key::CardRunning => "进行中",
         Key::CardDone => "完成",
         Key::CardBlocked => "卡住",
         Key::CardBriefing => "简报",
@@ -127,7 +127,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::HostSearchProviderUnsupported => "不支持的搜索服务：{0}",
         Key::HostStepTimeoutHint => "模型和工具还没回，已等 {0} 分钟",
         Key::HostStallHint => "{0} 分钟没有新进度",
-        Key::HostRouterStep => "{0}/{1} 步",
+        Key::HostRouterStep => "第 {0}/{1} 步",
         Key::HostDeliveryWritten => ht::DELIVERY_WRITTEN,
         Key::HostDeliveryNotRun => ht::DELIVERY_NOT_RUN,
         Key::HostGateFallbackLine => ht::GATE_FALLBACK_LINE,
@@ -314,9 +314,8 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ConversationsTitle => "聊天",
         Key::ConversationsDmHint => "发给 {0}…",
         Key::ConversationsYesterday => "昨天",
-        // Needs UI review.
         Key::ChatDateToday => "今天",
-        // Needs UI review.
+        Key::ChatDateYesterday => "昨天",
         Key::ChatDateYear => "{1}年{0}",
 
         // ---- App shell (client/src/main.rs) ----

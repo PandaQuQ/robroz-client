@@ -209,7 +209,8 @@ mod tests {
         assert_eq!(display(&card.status_line), "Running");
         drop(_en);
         let _zh = scoped(Locale::Zh);
-        assert_eq!(display(card.step_progress.as_deref().unwrap()), "2/3 步");
+        assert_eq!(display(card.step_progress.as_deref().unwrap()), "第 2/3 步");
+        assert_eq!(display(&card.status_line), "进行中");
     }
 
     #[test]

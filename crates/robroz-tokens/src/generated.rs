@@ -45,7 +45,7 @@ pub mod base {
         pub const OWN_CORNER: f32 = 4.0;
         pub const OWN_RADIUS: f32 = 16.0;
         pub const THUMB_SIZE: f32 = 56.0;
-        pub const TIME_SIZE: f32 = 11.0;
+        pub const TIME_SIZE: f32 = 12.0;
     }
     pub mod contrast {
         #[allow(unused_imports)]

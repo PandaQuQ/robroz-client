@@ -3171,11 +3171,20 @@ impl App {
                 }
             }
         }
-        let feed = scrollable(feed_col)
+        // Bottom padding keeps the last item clear of the in-flow composer
+        // (composer height is already reserved below the scrollable) plus
+        // a 16px gap. When the composer overlays the feed, this would be
+        // composer_height + 16 instead; here the composer sits under the
+        // feed, so the extra 16px is the visible gap.
+        feed_col = feed_col.push(iced::widget::Space::new().height(16.0));
+        let feed_body = container(container(feed_col).width(Length::Fixed(column_w)))
+            .width(Fill)
+            .center_x(Fill);
+        let feed = scrollable(feed_body)
             .id(FEED_ID)
-            .anchor_bottom()
             .height(Fill)
-            .width(Fill);
+            .width(Fill)
+            .anchor_bottom();
         let (name, dm) = self
             .convs
             .get(id)
@@ -3197,25 +3206,21 @@ impl App {
         let draft = self.drafts.get(id).map_or("", String::as_str);
         let note = self.send_note.get(id).map(String::as_str);
         let side = ((area - column_w) / 2.0).max(t.chat.column_margin);
+        // The scrollable is the full main area so the scrollbar sits against
+        // the window edge, not on the 720px column (where it clipped cards
+        // and the own-bubble timestamp). The column width is unchanged.
         column![
             view::chat_header(t, name, dm, self.narrow(), rename).map(Message::Ui),
-            container(
-                column![
-                    feed,
-                    view::composer(t, draft, &hint, self.sending, note).map(Message::Ui),
-                ]
-                .height(Fill)
-                .width(Length::Fixed(column_w))
-            )
-            .width(Fill)
-            .height(Fill)
-            .center_x(Fill)
-            .padding(Padding {
-                top: 0.0,
-                right: side,
-                bottom: 0.0,
-                left: side,
-            }),
+            feed,
+            container(view::composer(t, draft, &hint, self.sending, note).map(Message::Ui))
+                .width(Fill)
+                .center_x(Fill)
+                .padding(Padding {
+                    top: 0.0,
+                    right: side,
+                    bottom: 0.0,
+                    left: side,
+                }),
         ]
         .height(Fill)
         .width(Fill)
@@ -3267,7 +3272,7 @@ impl App {
         // The frozen status card, to review its dark-mode outline.
         let running = robroz_card::palette(robroz_card::Tone::Ink);
         let status_sample: Element<'a, Message> = container(
-            row![text("文档哥"), space::horizontal(), text("进行")].align_y(Alignment::Center),
+            row![text("文档哥"), space::horizontal(), text("进行中")].align_y(Alignment::Center),
         )
         .padding(view::status_card_padding(t))
         .width(Fill)
@@ -3390,13 +3395,30 @@ fn group_view<'a>(
     if let Some(at) = group.last_at {
         let clock = robroz_ui::cards::status::clock_in(at, &chrono::Local);
         if !clock.is_empty() {
+            // Only under the last item of the run, 12px text3, right-aligned
+            // to the bubble (or card).
             let clock = text(clock)
                 .size(t.chat.time_size)
                 .color(color(t.palette.text3));
+            let clock = container(clock)
+                .width(Length::Fill)
+                .align_x(Alignment::End)
+                .padding(Padding {
+                    right: 2.0,
+                    ..Padding::ZERO
+                });
             if own {
-                col = col.push(clock);
+                col = col.push(
+                    container(clock)
+                        .max_width(bubble_max)
+                        .width(Length::Shrink)
+                        .align_x(Alignment::End),
+                );
             } else {
-                col = col.push(row![iced::widget::Space::new().width(gutter), clock]);
+                col = col.push(row![
+                    iced::widget::Space::new().width(gutter),
+                    container(clock).width(Length::Fixed(card_w)),
+                ]);
             }
         }
     }
@@ -3845,7 +3867,7 @@ mod tests {
             super::visible_step_progress(&t, &card, 800.0)
                 .map(crate::model::display)
                 .as_deref(),
-            Some("2/3 步")
+            Some("第 2/3 步")
         );
         assert_eq!(super::visible_step_progress(&t, &card, 120.0), None);
     }

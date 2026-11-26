@@ -8,6 +8,7 @@
 //! choice, approval, ...) are not drawn in the spike.
 
 use robroz_contract::Event;
+use robroz_ui::cards::status as status_ui;
 use robroz_ui::conversations;
 use robroz_ui::runs::{self, Block, Meta, RunSender, GROUP_SECS};
 
@@ -65,6 +66,8 @@ pub struct FeedRow {
     pub show_name: bool,
     pub show_avatar: bool,
     pub pad_top: f32,
+    /// Clock under the last item of a run; empty on earlier items.
+    pub time: String,
 }
 
 /// A date separator or a message/status row.
@@ -187,6 +190,10 @@ pub fn feed(items: &[ChatItem], fallback: &str, in_group: bool, now: i64) -> Vec
             Block::Run(run) => {
                 let n = run.items.len();
                 let show_name = in_group && !run.sender.is_own() && !run.sender.name().is_empty();
+                let last_time = run.last_at.and_then(|at| {
+                    let s = status_ui::clock_local(at);
+                    (!s.is_empty()).then_some(s)
+                });
                 for (j, idx) in run.items.into_iter().enumerate() {
                     let pad_top = if j == 0 {
                         if i == 0 || prev_date {
@@ -206,6 +213,11 @@ pub fn feed(items: &[ChatItem], fallback: &str, in_group: bool, now: i64) -> Vec
                         show_name: show_name && j == 0,
                         show_avatar: !run.sender.is_own() && j + 1 == n,
                         pad_top,
+                        time: if j + 1 == n {
+                            last_time.clone().unwrap_or_default()
+                        } else {
+                            String::new()
+                        },
                     }));
                 }
                 prev_date = false;
@@ -330,11 +342,18 @@ mod tests {
         let events = vec![(msg("m1", "hello"), true), (msg("m2", "again"), true)];
         let items = build(&events);
         let rows = feed(&items, "Ada", true, 1_795_000_000);
+        let mut times = Vec::new();
         for e in &rows {
             if let FeedEntry::Row(r) = e {
                 assert!(!r.show_avatar);
                 assert!(!r.show_name);
+                times.push(r.time.is_empty());
             }
+        }
+        // Time only under the last of the run.
+        if times.len() >= 2 {
+            assert!(times[..times.len() - 1].iter().all(|empty| *empty));
+            assert!(!times[times.len() - 1]);
         }
     }
 }

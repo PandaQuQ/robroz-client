@@ -142,7 +142,7 @@ where
     if day == today {
         Key::ChatDateToday.into()
     } else if today.pred_opt() == Some(day) {
-        Key::ConversationsYesterday.into()
+        Key::ChatDateYesterday.into()
     } else if t.format("%Y").to_string() == n.format("%Y").to_string() {
         i18n::month_day(t.month(), t.day())
     } else {

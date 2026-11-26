@@ -337,7 +337,7 @@ mod tests {
         );
         assert_eq!(badge_text(DeliveryBadge::Briefing), "Briefing");
         let _g = scoped(Locale::Zh);
-        assert_eq!(status_text(CardStatusCode::Running), "进行");
+        assert_eq!(status_text(CardStatusCode::Running), "进行中");
         assert_eq!(badge_text(DeliveryBadge::Briefing), "简报");
         assert_eq!(status_text(CardStatusCode::NoResult), "没写出结果。");
     }

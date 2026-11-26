@@ -264,16 +264,32 @@ fn watchdog(s: &str) -> Option<(Key, &str)> {
 }
 
 /// `s` in the active locale when it is a known host string; otherwise `s`
-/// unchanged. Chinese is the host's own language, so it always passes
-/// through as is.
+/// unchanged. Chinese is the host's own language, so it usually passes
+/// through as is. Two display-only exceptions (the host contract is
+/// unchanged): router-step progress is shown as 「第 n/m 步」, and a live
+/// run's status word as 「进行中」 instead of the card crate's 「进行」.
 pub fn host_text(s: &str) -> Cow<'_, str> {
     host_text_in(locale(), s)
+}
+
+/// Display-only Chinese rewrite of a host/card string, if any.
+fn zh_display_rewrite(s: &str) -> Option<String> {
+    if let Some((n, m)) = ht::parse_router_step_progress(s) {
+        return Some(Key::HostRouterStep.fill_in(Locale::Zh, &[&n, &m]));
+    }
+    if exact(s) == Some(Key::CardRunning) {
+        return Some(Key::CardRunning.fill_in(Locale::Zh, &[]));
+    }
+    None
 }
 
 /// [`host_text`] for a given locale.
 pub fn host_text_in(locale: Locale, s: &str) -> Cow<'_, str> {
     if locale == Locale::Zh {
-        return Cow::Borrowed(s);
+        return match zh_display_rewrite(s) {
+            Some(rewritten) => Cow::Owned(rewritten),
+            None => Cow::Borrowed(s),
+        };
     }
     if let Some(key) = exact(s) {
         return Cow::Borrowed(super::text_in(locale, key));

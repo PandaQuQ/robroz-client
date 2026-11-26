@@ -286,7 +286,15 @@ fn every_contract_host_string_maps_to_english() {
                 .any(|c| ('\u{3400}'..='\u{9FFF}').contains(&c)),
             "Chinese left in {name}: {mapped}"
         );
-        assert_eq!(host_text_in(Locale::Zh, text), text);
+        if let Some((n, m)) = ht::parse_router_step_progress(text) {
+            // Display-only: host still sends 「n/m 步」, the card shows 「第 n/m 步」.
+            assert_eq!(
+                host_text_in(Locale::Zh, text),
+                Key::HostRouterStep.fill_in(Locale::Zh, &[&n, &m])
+            );
+        } else {
+            assert_eq!(host_text_in(Locale::Zh, text), text);
+        }
     }
 }
 
@@ -374,7 +382,7 @@ fn router_steps_and_tool_results_map_by_contract() {
     );
     assert_eq!(
         host_text_in(Locale::Zh, &ht::router_step_progress(2, 3)),
-        "2/3 步"
+        "第 2/3 步"
     );
     // Not a step line: left alone.
     assert_eq!(host_text_in(Locale::En, "2/3步"), "2/3步");
