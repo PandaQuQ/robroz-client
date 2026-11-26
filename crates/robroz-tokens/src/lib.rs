@@ -52,6 +52,9 @@ pub struct ColorSet {
     pub text2: Rgb,
     pub text3: Rgb,
     pub accent: Rgb,
+    /// My-bubble and send-button fill. White text on this is ≥4.5:1
+    /// (5.10:1). Same value in light and dark. Links still use `accent`.
+    pub accent_strong: Rgb,
     pub accent_hover: Rgb,
     pub accent_pressed: Rgb,
     pub on_accent: Rgb,
@@ -90,6 +93,7 @@ macro_rules! color_set {
             text2: p::TEXT2,
             text3: p::TEXT3,
             accent: p::ACCENT,
+            accent_strong: p::ACCENT_STRONG,
             accent_hover: p::ACCENT_HOVER,
             accent_pressed: p::ACCENT_PRESSED,
             on_accent: p::ON_ACCENT,
@@ -467,6 +471,11 @@ mod tests {
     fn css_has_both_schemes_and_metrics() {
         let css = css();
         assert!(css.contains("--robroz-palette-accent: #c8551f;"));
+        assert!(css.contains("--robroz-palette-accent-strong: #b84d1b;"));
+        assert!(css.contains("--robroz-chat-composer-radius: 20px;"));
+        assert_eq!(hex(LIGHT.accent_strong), "#b84d1b");
+        assert_eq!(LIGHT.accent_strong, DARK.accent_strong);
+        assert_eq!(hex(LIGHT.accent), "#c8551f");
         assert!(css.contains("--robroz-palette-window: #f4f1ea;"));
         assert!(css.contains("--robroz-palette-window: #16181d;"));
         assert!(css.contains("--robroz-status-card-dark-stroke: #3f444d;"));

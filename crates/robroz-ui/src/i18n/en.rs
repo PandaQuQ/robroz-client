@@ -617,6 +617,10 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ConversationsDmHint => "Message {0}…",
         // 昨天  [approved, batch 2]
         Key::ConversationsYesterday => "Yesterday",
+        // Needs UI review.
+        Key::ChatDateToday => "Today",
+        // Needs UI review.
+        Key::ChatDateYear => "{0}, {1}",
 
         // ---- App shell (client/src/main.rs) ----
         // 假事件  [approved, batch 2]

@@ -19,7 +19,10 @@ pub const AWAITING_APPROVAL: &str = "等你批准";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusCard {
+    pub bot_id: String,
     pub bot_name: String,
+    /// `createdAt`, Unix seconds, when the host sent one.
+    pub at: Option<i64>,
     /// Raw `robroz-card` copy, or 「没做成：…」 for a failure.
     pub status_line: String,
     pub tone: Tone,
@@ -68,7 +71,9 @@ impl StatusCard {
     /// `None` for any event that is not a status card.
     pub fn from_event(event: &Event) -> Option<Self> {
         let Event::Status {
+            bot_id,
             bot_name,
+            created_at,
             state,
             container_up,
             failure,
@@ -112,7 +117,9 @@ impl StatusCard {
             other => (other, None),
         };
         Some(Self {
+            bot_id: bot_id.clone(),
             bot_name: bot_name.clone(),
+            at: robroz_ui::runs::parse_unix(created_at),
             status_line,
             tone: look.tone,
             palette: robroz_card::palette(look.tone),

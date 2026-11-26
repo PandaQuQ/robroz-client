@@ -314,6 +314,10 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ConversationsTitle => "聊天",
         Key::ConversationsDmHint => "发给 {0}…",
         Key::ConversationsYesterday => "昨天",
+        // Needs UI review.
+        Key::ChatDateToday => "今天",
+        // Needs UI review.
+        Key::ChatDateYear => "{1}年{0}",
 
         // ---- App shell (client/src/main.rs) ----
         Key::ClientFakeOrigin => "假事件",

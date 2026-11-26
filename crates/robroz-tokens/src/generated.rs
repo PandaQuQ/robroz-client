@@ -17,6 +17,36 @@ pub mod base {
         pub const RULE: &str = "orange only marks the primary action, 'waiting on you' and switch-on; one primary per card";
         pub const WHITE: Rgb = [0xff, 0xff, 0xff];
     }
+    pub mod chat {
+        #[allow(unused_imports)]
+        use crate::{Rgb, Rgba};
+        pub const AVATAR: f32 = 24.0;
+        pub const AVATAR_GAP: f32 = 8.0;
+        pub const BUBBLE_COMPACT_FRAC: f32 = 0.8;
+        pub const BUBBLE_MAX_FRAC: f32 = 0.68;
+        pub const BUBBLE_MINE_SIZE: f32 = 15.0;
+        pub const BUBBLE_PAD_H: f32 = 14.0;
+        pub const BUBBLE_PAD_V: f32 = 10.0;
+        pub const BUBBLE_RADIUS: f32 = 18.0;
+        pub const COLUMN_MARGIN: f32 = 24.0;
+        pub const COLUMN_MAX: f32 = 720.0;
+        pub const COMPOSER_BOTTOM: f32 = 16.0;
+        pub const COMPOSER_HEIGHT: f32 = 48.0;
+        pub const COMPOSER_PAD_LEFT: f32 = 16.0;
+        pub const COMPOSER_RADIUS: f32 = 20.0;
+        pub const COMPOSER_SEND: f32 = 32.0;
+        pub const COMPOSER_SEND_EMPTY_OPACITY: f32 = 0.4;
+        pub const COMPOSER_SEND_INSET: f32 = 8.0;
+        pub const DATE_GAP: f32 = 16.0;
+        pub const DATE_SIZE: f32 = 12.0;
+        pub const GAP_BETWEEN: f32 = 16.0;
+        pub const GAP_IN: f32 = 4.0;
+        pub const GROUP_SECS: f32 = 300.0;
+        pub const OWN_CORNER: f32 = 4.0;
+        pub const OWN_RADIUS: f32 = 16.0;
+        pub const THUMB_SIZE: f32 = 56.0;
+        pub const TIME_SIZE: f32 = 11.0;
+    }
     pub mod contrast {
         #[allow(unused_imports)]
         use crate::{Rgb, Rgba};
@@ -129,6 +159,7 @@ pub mod solid {
             pub const ACCENT: Rgb = [0xc8, 0x55, 0x1f];
             pub const ACCENT_HOVER: Rgb = [0xb2, 0x4a, 0x1a];
             pub const ACCENT_PRESSED: Rgb = [0x9f, 0x42, 0x17];
+            pub const ACCENT_STRONG: Rgb = [0xb8, 0x4d, 0x1b];
             pub const BORDER: Rgb = [0x2d, 0x31, 0x39];
             pub const BORDER2: Rgb = [0x3f, 0x44, 0x4d];
             pub const CONTENT: Rgb = [0x16, 0x18, 0x1d];
@@ -243,6 +274,7 @@ pub mod solid {
             pub const ACCENT: Rgb = [0xc8, 0x55, 0x1f];
             pub const ACCENT_HOVER: Rgb = [0xb2, 0x4a, 0x1a];
             pub const ACCENT_PRESSED: Rgb = [0x9f, 0x42, 0x17];
+            pub const ACCENT_STRONG: Rgb = [0xb8, 0x4d, 0x1b];
             pub const BORDER: Rgb = [0xe3, 0xdd, 0xd1];
             pub const BORDER2: Rgb = [0xcf, 0xc8, 0xba];
             pub const CONTENT: Rgb = [0xf4, 0xf1, 0xea];
