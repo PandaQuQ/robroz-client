@@ -83,7 +83,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::HostFailedBecause => "Couldn't finish: {0}",
         // 排队  [approved, batch 2]
         Key::CardQueued => "Queued",
-        // 进行  [approved, batch 2]
+        // 进行中  [approved, batch 2]
         Key::CardRunning => "Running",
         // 完成  [approved, batch 2]
         Key::CardDone => "Done",
@@ -259,7 +259,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::HostStepTimeoutHint => "No reply from the model or tools for {0} min",
         // {0} 分钟没有新进度  [approved, batch 3]
         Key::HostStallHint => "No new progress for {0} min",
-        // {0}/{1} 步  [approved, batch 3]
+        // 第 {0}/{1} 步  [approved, batch 3]
         Key::HostRouterStep => "Step {0} of {1}",
         // 已写入结果  [approved, batch 3]
         Key::HostDeliveryWritten => "Result written",
@@ -617,6 +617,12 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ConversationsDmHint => "Message {0}…",
         // 昨天  [approved, batch 2]
         Key::ConversationsYesterday => "Yesterday",
+        // 今天  [approved, chat column]
+        Key::ChatDateToday => "Today",
+        // 昨天  [approved, chat column]
+        Key::ChatDateYesterday => "Yesterday",
+        // {1}年{0}  [approved, chat column]
+        Key::ChatDateYear => "{0}, {1}",
 
         // ---- App shell (client/src/main.rs) ----
         // 假事件  [approved, batch 2]

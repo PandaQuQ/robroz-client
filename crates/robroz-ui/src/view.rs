@@ -548,19 +548,17 @@ pub fn status_card_style(
     }
 }
 
-/// Chat bubble: own = ink fill (inverted on dark), a bro's = surface with a
-/// 1px border. 16px corners, 4px on the sender's top corner when `first` in
-/// its group.
+/// Chat bubble: own = accentStrong fill with white text; a bro's = surface
+/// with a 1px border and a uniform 18px radius. Own bubbles keep a tighter
+/// corner nearest the sender on the first of a run.
 pub fn bubble_style(t: Skin, own: bool, first: bool) -> impl Fn(&IcedTheme) -> container::Style {
     move |_| {
         let c = &t.chat;
-        let mut radius = iced::border::radius(c.radius);
-        if first {
-            radius = if own {
-                radius.top_right(c.corner)
-            } else {
-                radius.top_left(c.corner)
-            };
+        // Bro bubbles are a uniform 18px radius on surface. Own bubbles keep
+        // the tighter corner nearest the sender on the first of a run.
+        let mut radius = iced::border::radius(if own { c.own_radius } else { c.radius });
+        if own && first {
+            radius = radius.top_right(c.corner);
         }
         let (bg, fg, border) = if own {
             (c.own_bg, c.own_text, Border::default())
@@ -3775,8 +3773,26 @@ pub fn chat_header<'a>(
         .into()
 }
 
-/// Bottom of the chat page: one-line input and 发送; Enter sends.
-/// `note` is the last send error, shown above the input.
+/// Centred date line between runs that fall on different local days.
+pub fn date_separator<'a, M: 'a>(t: &Skin, label: String) -> Element<'a, M> {
+    let gap = t.chat.date_gap;
+    container(
+        text(label)
+            .size(t.chat.date_size)
+            .color(color(t.palette.text3)),
+    )
+    .width(Fill)
+    .center_x(Fill)
+    .padding(Padding::from([gap, 0.0]))
+    .into()
+}
+
+/// Bottom of the chat page: a radius-20 card with the input and a 32px
+/// send button at the bottom right. An attachment-thumbnail row is
+/// reserved above the input inside the card, and is omitted while there
+/// are no attachments (the feature is not wired yet). Enter sends.
+/// `note` is the last send error, shown above the card. There is no +
+/// or microphone button until those actions exist.
 pub fn composer<'a>(
     t: &Skin,
     draft: &str,
@@ -3784,42 +3800,172 @@ pub fn composer<'a>(
     sending: bool,
     note: Option<&str>,
 ) -> Element<'a, Action> {
-    let h = t.controls.touch_target.max(t.controls.button_h);
+    let c = &t.chat;
     let can_send = !sending && !draft.trim().is_empty();
     let mut input = text_input(hint, draft)
         .size(t.type_.body)
-        .padding(Padding::from([8.0, 10.0]));
+        .padding(Padding {
+            top: 0.0,
+            right: 8.0,
+            bottom: 0.0,
+            left: c.composer_pad_left,
+        })
+        .style(composer_input_style(*t));
     if !sending {
         input = input
             .on_input(|text| Action::ComposerEdit { text })
             .on_submit(Action::ComposerSend);
     }
-    let send = btn(
-        t,
-        conversations::SEND.into(),
-        Look::Primary,
-        Leading::None,
-        can_send.then_some(Action::ComposerSend),
-    );
+    let arrow = text("↑").size(16).color(faded(
+        t.palette.on_accent,
+        if can_send {
+            1.0
+        } else {
+            c.composer_send_empty_opacity
+        },
+    ));
+    let mut send = button(
+        container(arrow)
+            .width(Length::Fixed(c.composer_send))
+            .height(Length::Fixed(c.composer_send))
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center),
+    )
+    .padding(0)
+    .width(Length::Fixed(c.composer_send))
+    .height(Length::Fixed(c.composer_send))
+    .style(composer_send_style(*t, can_send));
+    if can_send {
+        send = send.on_press(Action::ComposerSend);
+    }
+    let input_row = row![
+        container(input)
+            .width(Fill)
+            .height(Fill)
+            .align_y(Alignment::Center),
+        send
+    ]
+    .spacing(0)
+    .align_y(Alignment::End)
+    .height(Length::Fixed(c.composer_height - c.composer_send_inset))
+    .padding(Padding {
+        top: 0.0,
+        right: c.composer_send_inset,
+        bottom: c.composer_send_inset,
+        left: 0.0,
+    });
+    // The 56px thumbnail row is reserved above this input row. It is
+    // not drawn while there are no attachments.
+    let mut card_body = column![];
+    card_body = push_composer_thumbs(card_body, *t, &[]);
+    card_body = card_body.push(input_row);
+    let card = container(card_body)
+        .width(Fill)
+        .style(composer_card_style(*t));
     let mut col = column![].spacing(4);
     if let Some(n) = note {
         col = col.push(footnote(t, n.to_string()));
     }
-    col = col.push(
-        row![
-            container(input)
-                .width(Fill)
-                .height(Length::Fixed(h))
-                .align_y(Alignment::Center),
-            send
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
-    );
+    col = col.push(card);
     container(col)
         .width(Fill)
-        .padding(Padding::from([8.0, t.metrics.stream_padding]))
+        .padding(Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: c.composer_bottom,
+            left: 0.0,
+        })
         .into()
+}
+
+/// A reserved thumbnail for the composer attachment row. The row stays
+/// hidden until something is placed here.
+struct ComposerThumb {
+    name: String,
+}
+
+fn push_composer_thumbs<'a>(
+    col: iced::widget::Column<'a, Action>,
+    t: Skin,
+    thumbs: &'a [ComposerThumb],
+) -> iced::widget::Column<'a, Action> {
+    if thumbs.is_empty() {
+        return col;
+    }
+    let size = t.chat.thumb_size;
+    col.push(
+        row(thumbs.iter().map(|thumb| {
+            container(
+                text(thumb.name.as_str())
+                    .size(t.type_.tag)
+                    .color(color(t.palette.text)),
+            )
+            .width(Length::Fixed(size))
+            .height(Length::Fixed(size))
+            .padding(4)
+            .style(move |_: &IcedTheme| container::Style {
+                background: Some(color(t.palette.sunken).into()),
+                border: Border::default()
+                    .width(t.stroke.card)
+                    .color(color(t.palette.border))
+                    .rounded(8.0),
+                ..container::Style::default()
+            })
+            .into()
+        }))
+        .spacing(8)
+        .padding(Padding {
+            top: t.chat.composer_send_inset,
+            right: t.chat.composer_send_inset,
+            bottom: 0.0,
+            left: t.chat.composer_pad_left,
+        }),
+    )
+}
+
+fn composer_input_style(t: Skin) -> impl Fn(&IcedTheme, text_input::Status) -> text_input::Style {
+    move |_, _| {
+        let sel = t.palette.selection;
+        text_input::Style {
+            background: Color::TRANSPARENT.into(),
+            border: Border::default(),
+            icon: color(t.palette.text),
+            placeholder: color(t.palette.text3),
+            value: color(t.palette.text),
+            selection: faded(sel.rgb, sel.alpha),
+        }
+    }
+}
+
+fn composer_card_style(t: Skin) -> impl Fn(&IcedTheme) -> container::Style {
+    move |_| container::Style {
+        background: Some(color(t.palette.surface).into()),
+        border: Border::default()
+            .width(t.stroke.card)
+            .color(color(t.palette.border))
+            .rounded(t.chat.composer_radius),
+        ..container::Style::default()
+    }
+}
+
+fn composer_send_style(
+    t: Skin,
+    can_send: bool,
+) -> impl Fn(&IcedTheme, button::Status) -> button::Style {
+    let alpha = if can_send {
+        1.0
+    } else {
+        t.chat.composer_send_empty_opacity
+    };
+    let fill = faded(t.palette.accent_strong, alpha);
+    let r = t.chat.composer_send / 2.0;
+    move |_, _| button::Style {
+        background: Some(fill.into()),
+        text_color: faded(t.palette.on_accent, alpha),
+        border: Border::default().rounded(r),
+        shadow: IcedShadow::default(),
+        snap: false,
+    }
 }
 
 // ---------- 联网搜索 page ----------

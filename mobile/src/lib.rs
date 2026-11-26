@@ -15,7 +15,9 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use robroz_card::Tone;
 use robroz_tokens::{ColorSet, DARK, LIGHT};
+use robroz_ui::conversations;
 use robroz_ui::i18n::{self, Key, Locale};
+use robroz_ui::runs;
 use robroz_ui::theme::Mode;
 
 slint::include_modules!();
@@ -152,18 +154,45 @@ fn apply_theme(ui: &MainWindow, mode: Mode) {
     brand.set_muted(color(p.text2));
     brand.set_rule(color(p.divider));
     brand.set_accent(color(p.accent));
+    brand.set_accent_strong(color(p.accent_strong));
     brand.set_on_accent(color(p.on_accent));
     brand.set_surface(color(p.surface));
     brand.set_border(color(p.border));
-    // Bubbles use the token palette (ink on light, inverted on dark for
-    // own; surface + border for a bro). No hex literals in the UI.
-    brand.set_own_bg(color(p.text));
-    brand.set_own_text(color(p.window));
+    brand.set_text3(color(p.text3));
+    // Own bubbles and the send button use accentStrong + white in both
+    // modes. Bro bubbles use surface + border.
+    brand.set_own_bg(color(p.accent_strong));
+    brand.set_own_text(color(p.on_accent));
     brand.set_bro_bg(color(p.surface));
     brand.set_bro_border(color(p.border));
     let (fill, text) = segment_selected(mode);
     brand.set_segment_fill(color(fill));
     brand.set_segment_text(color(text));
+}
+
+fn apply_metrics(ui: &MainWindow) {
+    use robroz_tokens::base::chat as c;
+    let m = ui.global::<Metrics>();
+    m.set_column_margin(c::COLUMN_MARGIN);
+    m.set_bubble_radius(c::BUBBLE_RADIUS);
+    m.set_bubble_pad_v(c::BUBBLE_PAD_V);
+    m.set_bubble_pad_h(c::BUBBLE_PAD_H);
+    m.set_gap_in(c::GAP_IN);
+    m.set_gap_between(c::GAP_BETWEEN);
+    m.set_avatar(c::AVATAR);
+    m.set_avatar_gap(c::AVATAR_GAP);
+    m.set_date_size(c::DATE_SIZE);
+    m.set_date_gap(c::DATE_GAP);
+    m.set_composer_height(c::COMPOSER_HEIGHT);
+    m.set_composer_radius(c::COMPOSER_RADIUS);
+    m.set_composer_pad_left(c::COMPOSER_PAD_LEFT);
+    m.set_composer_send(c::COMPOSER_SEND);
+    m.set_composer_send_inset(c::COMPOSER_SEND_INSET);
+    m.set_composer_bottom(c::COMPOSER_BOTTOM);
+    m.set_composer_send_empty_opacity(c::COMPOSER_SEND_EMPTY_OPACITY);
+    m.set_bubble_mine_size(c::BUBBLE_MINE_SIZE);
+    m.set_thumb_size(c::THUMB_SIZE);
+    m.set_time_size(c::TIME_SIZE);
 }
 
 fn apply_pref(ui: &MainWindow, state: &mut State, pref: ThemePref) {
@@ -193,6 +222,7 @@ fn apply_strings(ui: &MainWindow) {
     tr.set_theme_light(Key::ClientThemeLight.as_str().into());
     tr.set_theme_dark(Key::ClientThemeDark.as_str().into());
     tr.set_about(Key::MobileAbout.as_str().into());
+    tr.set_send(Key::ConversationsSend.as_str().into());
     ui.set_locale_index(match i18n::locale() {
         Locale::En => 0,
         Locale::Zh => 1,
@@ -224,37 +254,94 @@ fn apply_token_field(ui: &MainWindow, st: &State) {
     }
 }
 
-fn chat_rows(items: &[chat::ChatItem], fallback_name: &str, mode: Mode) -> Vec<ChatRow> {
-    let bro = chat::bro_name(items, fallback_name);
-    items
-        .iter()
-        .map(|item| match item {
-            chat::ChatItem::Text { body, own } => ChatRow {
-                kind: if *own { 0 } else { 1 },
-                name: if *own { "".into() } else { bro.into() },
-                text: body.as_str().into(),
-                ..ChatRow::default()
-            },
-            chat::ChatItem::Status(c) => {
-                let shown = |s: &Option<String>| -> SharedString {
-                    s.as_deref()
-                        .map(|s| card::display(s).into_owned())
-                        .unwrap_or_default()
-                        .into()
-                };
-                ChatRow {
+fn chat_rows(
+    items: &[chat::ChatItem],
+    fallback_name: &str,
+    mode: Mode,
+    in_group: bool,
+) -> Vec<ChatRow> {
+    let now = runs::now_unix();
+    chat::feed(items, fallback_name, in_group, now)
+        .into_iter()
+        .map(|entry| feed_entry_row(entry, fallback_name, mode))
+        .collect()
+}
+
+fn feed_entry_row(entry: chat::FeedEntry, fallback: &str, mode: Mode) -> ChatRow {
+    let shown = |s: &Option<String>| -> SharedString {
+        s.as_deref()
+            .map(|s| card::display(s).into_owned())
+            .unwrap_or_default()
+            .into()
+    };
+    match entry {
+        chat::FeedEntry::Date { label, pad_top } => ChatRow {
+            kind: 3,
+            text: label.into(),
+            pad_top,
+            ..ChatRow::default()
+        },
+        chat::FeedEntry::Row(row) => {
+            let name = match &row.item {
+                chat::ChatItem::Text { side, .. } => {
+                    let n = side.name();
+                    if n.is_empty() {
+                        fallback.to_string()
+                    } else {
+                        n.to_string()
+                    }
+                }
+                chat::ChatItem::Status(c) => {
+                    if c.bot_name.is_empty() {
+                        fallback.to_string()
+                    } else {
+                        c.bot_name.clone()
+                    }
+                }
+            };
+            let initial: SharedString = conversations::initial(&name).into();
+            match row.item {
+                chat::ChatItem::Text { body, side, .. } => ChatRow {
+                    kind: if side.is_own() { 0 } else { 1 },
+                    name: if side.is_own() {
+                        "".into()
+                    } else {
+                        name.into()
+                    },
+                    text: body.into(),
+                    show_name: row.show_name,
+                    show_avatar: row.show_avatar,
+                    initial,
+                    pad_top: row.pad_top,
+                    time: row.time.into(),
+                    ..ChatRow::default()
+                },
+                chat::ChatItem::Status(c) => ChatRow {
                     kind: 2,
                     // #155: the bro name is not drawn inside the card.
-                    name: "".into(),
+                    name: if row.show_name {
+                        name.into()
+                    } else {
+                        "".into()
+                    },
                     status: card::display(&c.status_line).into_owned().into(),
                     step: shown(&c.step_progress),
                     progress: shown(&c.progress),
                     dot: status_dot_color(mode, c.tone),
+                    show_name: row.show_name,
+                    show_avatar: row.show_avatar,
+                    initial,
+                    pad_top: row.pad_top,
+                    time: row.time.into(),
                     ..ChatRow::default()
-                }
+                },
             }
-        })
-        .collect()
+        }
+    }
+}
+
+fn set_composer_hint(ui: &MainWindow, name: &str, dm: bool) {
+    ui.set_composer_hint(conversations::composer_hint(name, dm).into());
 }
 
 #[derive(Default)]
@@ -263,6 +350,8 @@ struct State {
     chat: Vec<chat::ChatItem>,
     /// The open conversation's name, for the bubbles of a bro without a card.
     chat_name: String,
+    /// Names are shown once per bro run in a group chat.
+    chat_in_group: bool,
     /// Where Back from Settings returns to.
     before_settings: i32,
     theme: Mode,
@@ -359,11 +448,15 @@ fn prepare_shot(ui: &MainWindow, state: &Arc<Mutex<State>>, shot: &str) {
                 ui.set_chat_note("".into());
                 let theme = state.lock().unwrap().theme;
                 ui.set_chat(ModelRc::new(VecModel::from(chat_rows(
-                    &items, &name, theme,
+                    &items, &name, theme, true,
                 ))));
                 let mut st = state.lock().unwrap();
                 st.chat = items;
-                st.chat_name = name;
+                st.chat_name = name.clone();
+                st.chat_in_group = true;
+                set_composer_hint(&ui, &name, false);
+                ui.set_composer_draft("".into());
+                ui.set_composer_focused(false);
                 ui.set_screen(screen);
             }
             Err(e) => ui.set_chat_note(e.0.into()),
@@ -407,6 +500,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         apply_pref(&ui, &mut st, initial_pref());
     }
     apply_strings(&ui);
+    apply_metrics(&ui);
     apply_unencrypted_hint(&ui);
     apply_token_field(&ui, &state.lock().unwrap());
 
@@ -553,11 +647,15 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             });
                             let theme = state.lock().unwrap().theme;
                             ui.set_chat(ModelRc::new(VecModel::from(chat_rows(
-                                &items, &name, theme,
+                                &items, &name, theme, true,
                             ))));
                             let mut st = state.lock().unwrap();
                             st.chat = items;
-                            st.chat_name = name;
+                            st.chat_name = name.clone();
+                            st.chat_in_group = true;
+                            set_composer_hint(&ui, &name, false);
+                            ui.set_composer_draft("".into());
+                            ui.set_composer_focused(false);
                         }
                         Err(e) => ui.set_chat_note(e.0.into()),
                     }
@@ -605,6 +703,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 &st.chat,
                 &st.chat_name,
                 st.theme,
+                st.chat_in_group,
             ))));
         }
     });
@@ -620,6 +719,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 &st.chat,
                 &st.chat_name,
                 st.theme,
+                st.chat_in_group,
             ))));
         }
     });
@@ -638,6 +738,33 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 &st.chat,
                 &st.chat_name,
                 st.theme,
+                st.chat_in_group,
+            ))));
+        }
+    });
+
+    ui.on_send({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            let body = ui.get_composer_draft().trim().to_string();
+            if body.is_empty() {
+                return;
+            }
+            ui.set_composer_draft("".into());
+            ui.set_composer_focused(false);
+            let mut st = state.lock().unwrap();
+            st.chat.push(chat::ChatItem::Text {
+                body,
+                side: chat::Side::Own,
+                at: Some(runs::now_unix()),
+            });
+            ui.set_chat(ModelRc::new(VecModel::from(chat_rows(
+                &st.chat,
+                &st.chat_name,
+                st.theme,
+                st.chat_in_group,
             ))));
         }
     });

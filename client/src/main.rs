@@ -3104,7 +3104,6 @@ impl App {
                 .center(Fill)
                 .into();
         };
-        let width = self.content_width(t);
         let in_group = self.convs.get(id).is_some_and(|c| !c.dm);
         let me = self.me.as_ref().map(|m| m.id.as_str());
         let empty = CardUi::default();
@@ -3131,30 +3130,61 @@ impl App {
                 Fold::Hide => None,
                 Fold::More { task, n } => Some((FeedItem::More { task, n }, meta.clone())),
             });
-        let groups = model::group_items(items, t.chat.group_secs);
-        let (bubble_max, card_w) = t.chat_widths(self.width, width);
-        let feed = scrollable(
-            column(groups.into_iter().map(|g| {
-                group_view(
-                    t,
-                    g,
-                    &self.ui,
-                    &empty,
-                    self.caps,
-                    (bubble_max, card_w),
-                    in_group,
-                    me,
-                    &self.fail_open,
-                )
-            }))
-            .spacing(t.chat.gap_between)
-            .padding(t.metrics.stream_padding)
-            .width(Fill),
-        )
-        .id(FEED_ID)
-        .anchor_bottom()
-        .height(Fill)
-        .width(Fill);
+        let blocks = model::chat_blocks(items, t.chat.group_secs, &chrono::Local);
+        let chrome = if self.gallery.is_some() || self.narrow() {
+            0.0
+        } else {
+            t.controls.sidebar_w
+        };
+        let area = (self.width - chrome).max(200.0);
+        let column_w = t.chat_column_width(area);
+        let (bubble_max, card_w) = t.chat_widths(self.width, column_w);
+        let now = now_unix();
+        let mut feed_col = column![].spacing(0).width(Fill);
+        let mut prev_date = false;
+        for (i, block) in blocks.into_iter().enumerate() {
+            match block {
+                robroz_ui::runs::Block::Date(at) => {
+                    feed_col = feed_col.push(view::date_separator(
+                        t,
+                        robroz_ui::runs::date_label(at, now, &chrono::Local),
+                    ));
+                    prev_date = true;
+                }
+                robroz_ui::runs::Block::Run(g) => {
+                    if i == 0 || !prev_date {
+                        feed_col =
+                            feed_col.push(iced::widget::Space::new().height(t.chat.gap_between));
+                    }
+                    feed_col = feed_col.push(group_view(
+                        t,
+                        g,
+                        &self.ui,
+                        &empty,
+                        self.caps,
+                        (bubble_max, card_w),
+                        in_group,
+                        me,
+                        &self.fail_open,
+                    ));
+                    prev_date = false;
+                }
+            }
+        }
+        // Bottom padding keeps the last item clear of the in-flow composer
+        // (composer height is already reserved below the scrollable) plus
+        // a 16px gap. When the composer overlays the feed, this would be
+        // composer_height + 16 instead; here the composer sits under the
+        // feed, so the extra 16px is the visible gap.
+        feed_col = feed_col.push(iced::widget::Space::new().height(16.0));
+        let feed_body = container(container(feed_col).width(Length::Fixed(column_w)))
+            .width(Fill)
+            .center_x(Fill);
+        let feed = scrollable(feed_body)
+            .id(FEED_ID)
+            .height(Fill)
+            .width(Fill)
+            .anchor_bottom();
         let (name, dm) = self
             .convs
             .get(id)
@@ -3175,12 +3205,22 @@ impl App {
         });
         let draft = self.drafts.get(id).map_or("", String::as_str);
         let note = self.send_note.get(id).map(String::as_str);
+        let side = ((area - column_w) / 2.0).max(t.chat.column_margin);
+        // The scrollable is the full main area so the scrollbar sits against
+        // the window edge, not on the 720px column (where it clipped cards
+        // and the own-bubble timestamp). The column width is unchanged.
         column![
             view::chat_header(t, name, dm, self.narrow(), rename).map(Message::Ui),
-            view::rule(t),
             feed,
-            view::rule(t),
-            view::composer(t, draft, &hint, self.sending, note).map(Message::Ui),
+            container(view::composer(t, draft, &hint, self.sending, note).map(Message::Ui))
+                .width(Fill)
+                .center_x(Fill)
+                .padding(Padding {
+                    top: 0.0,
+                    right: side,
+                    bottom: 0.0,
+                    left: side,
+                }),
         ]
         .height(Fill)
         .width(Fill)
@@ -3232,7 +3272,7 @@ impl App {
         // The frozen status card, to review its dark-mode outline.
         let running = robroz_card::palette(robroz_card::Tone::Ink);
         let status_sample: Element<'a, Message> = container(
-            row![text("文档哥"), space::horizontal(), text("进行")].align_y(Alignment::Center),
+            row![text("文档哥"), space::horizontal(), text("进行中")].align_y(Alignment::Center),
         )
         .padding(view::status_card_padding(t))
         .width(Fill)
@@ -3283,13 +3323,14 @@ enum FeedItem<'a> {
     More { task: String, n: usize },
 }
 
-/// A group of items from one sender. Own items go right in ink bubbles;
-/// a bro's go left, behind a round avatar with its name over the first
-/// item. Cards sit at the bubbles' left edge at their own fixed width. The
-/// time (11px) closes the group.
+/// A run of items from one sender. Own items go right in ink bubbles, with
+/// no avatar. A bro's go left: the name once above the first item in a
+/// group chat, and a small avatar only at the bottom-left of the last
+/// item. Cards fill the text column beside the avatar gutter. The time
+/// closes the run.
 fn group_view<'a>(
     t: &Skin,
-    group: model::Group<FeedItem<'a>>,
+    group: robroz_ui::runs::Run<FeedItem<'a>, model::Sender>,
     ui: &HashMap<String, CardUi>,
     empty: &CardUi,
     caps: Caps,
@@ -3309,17 +3350,22 @@ fn group_view<'a>(
         .into();
     }
     let own = group.sender.is_own();
+    let delivery = group.sender.is_delivery();
+    let gutter = t.chat_gutter();
+    let n = group.items.len();
     let mut col = column![].spacing(t.chat.gap_in);
-    if let model::Sender::Bro { name, .. } = &group.sender {
-        col = col.push(
-            text(name.clone())
+    if in_group {
+        if let model::Sender::Bro { name, .. } = &group.sender {
+            let label = text(name.clone())
                 .size(t.type_.foot)
-                .color(color(t.palette.text2)),
-        );
+                .color(color(t.palette.text2));
+            col = col.push(row![iced::widget::Space::new().width(gutter), label]);
+        }
     }
     for (i, item) in group.items.into_iter().enumerate() {
         let first = i == 0;
-        col = col.push(match item {
+        let last = i + 1 == n;
+        let body = match item {
             FeedItem::Row(r) => item_view(
                 t, r, ui, empty, caps, bubble_max, card_w, first, in_group, me, fail_open,
             ),
@@ -3328,36 +3374,56 @@ fn group_view<'a>(
                     .width(Length::Fixed(card_w))
                     .into()
             }
-        });
+        };
+        if own {
+            col = col.push(body);
+        } else if delivery || !last {
+            col = col.push(row![iced::widget::Space::new().width(gutter), body]);
+        } else {
+            col = col.push(
+                row![
+                    container(view::chat_avatar(t, group.sender.name()))
+                        .width(Length::Fixed(t.chat.avatar))
+                        .align_y(Alignment::End),
+                    body
+                ]
+                .spacing(t.chat.avatar_gap)
+                .align_y(Alignment::End),
+            );
+        }
     }
     if let Some(at) = group.last_at {
         let clock = robroz_ui::cards::status::clock_in(at, &chrono::Local);
         if !clock.is_empty() {
-            col = col.push(
-                text(clock)
-                    .size(t.chat.time_size)
-                    .color(color(t.palette.text3)),
-            );
+            // Only under the last item of the run, 12px text3. Own times
+            // are right-aligned to the bubble; bro times start at the
+            // left edge of the last bubble or card, after the avatar gutter.
+            let clock = text(clock)
+                .size(t.chat.time_size)
+                .color(color(t.palette.text3));
+            if own {
+                let clock = container(clock)
+                    .width(Length::Fill)
+                    .align_x(Alignment::End)
+                    .padding(Padding {
+                        right: 2.0,
+                        ..Padding::ZERO
+                    });
+                col = col.push(
+                    container(clock)
+                        .max_width(bubble_max)
+                        .width(Length::Shrink)
+                        .align_x(Alignment::End),
+                );
+            } else {
+                col = col.push(row![iced::widget::Space::new().width(gutter), clock,]);
+            }
         }
     }
     if own {
         row![space::horizontal(), col.align_x(Alignment::End)].into()
-    } else if group.sender.is_delivery() {
-        // Same column as bro cards: indent by the avatar plus its gap,
-        // with no avatar and no name.
-        row![
-            iced::widget::Space::new().width(t.chat.avatar + t.chat.avatar_gap),
-            col
-        ]
-        .into()
     } else {
-        row![
-            container(view::chat_avatar(t, group.sender.name()))
-                .width(Length::Fixed(t.chat.avatar)),
-            col
-        ]
-        .spacing(t.chat.avatar_gap)
-        .into()
+        col.into()
     }
 }
 
@@ -3387,7 +3453,7 @@ fn item_view<'a>(
         container(e).width(Length::Fixed(card_w)).into()
     };
     match r {
-        Row::Text { body } => bubble(text(body).color(own_text).into()),
+        Row::Text { body } => bubble(text(body).size(t.chat.mine_size).color(own_text).into()),
         Row::Attachment { kind, name } => bubble(
             row![
                 container(
@@ -3397,7 +3463,7 @@ fn item_view<'a>(
                 )
                 .padding(Padding::from([2.0, t.metrics.tag_pad_h + 2.0]))
                 .style(view::chip_style(*t)),
-                text(name).color(own_text),
+                text(name).size(t.chat.mine_size).color(own_text),
             ]
             .spacing(8)
             .align_y(Alignment::Center)
@@ -3799,7 +3865,7 @@ mod tests {
             super::visible_step_progress(&t, &card, 800.0)
                 .map(crate::model::display)
                 .as_deref(),
-            Some("2/3 步")
+            Some("第 2/3 步")
         );
         assert_eq!(super::visible_step_progress(&t, &card, 120.0), None);
     }

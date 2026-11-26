@@ -8,6 +8,7 @@ export global Brand {
     in property <color> muted;
     in property <color> rule;
     in property <color> accent;
+    in property <color> accent-strong;
     in property <color> on-accent;
     in property <color> surface;
     in property <color> border;
@@ -17,6 +18,32 @@ export global Brand {
     in property <color> bro-border;
     in property <color> segment-fill;
     in property <color> segment-text;
+    in property <color> text3;
+}
+
+// Lengths from robroz-tokens `base.chat`. Rust pushes the values; this
+// file does not restate the numbers.
+export global Metrics {
+    in property <length> column-margin;
+    in property <length> bubble-radius;
+    in property <length> bubble-pad-v;
+    in property <length> bubble-pad-h;
+    in property <length> gap-in;
+    in property <length> gap-between;
+    in property <length> avatar;
+    in property <length> avatar-gap;
+    in property <length> date-size;
+    in property <length> date-gap;
+    in property <length> composer-height;
+    in property <length> composer-radius;
+    in property <length> composer-pad-left;
+    in property <length> composer-send;
+    in property <length> composer-send-inset;
+    in property <length> composer-bottom;
+    in property <float> composer-send-empty-opacity;
+    in property <length> bubble-mine-size;
+    in property <length> thumb-size;
+    in property <length> time-size;
 }
 
 // Every string comes from the robroz-ui i18n keys, set from Rust.
@@ -40,6 +67,7 @@ export global Tr {
     in property <string> theme-dark;
     in property <string> about;
     in property <string> version;
+    in property <string> send;
 }
 
 export struct SessionRow {
@@ -48,8 +76,8 @@ export struct SessionRow {
     unread: int,
 }
 
-// kind: 0 own bubble (right), 1 bro bubble (left, with the bro's name),
-// 2 status card (left, under the bro).
+// kind: 0 own bubble (right), 1 bro bubble (left), 2 status card (left),
+// 3 date separator (centred).
 export struct ChatRow {
     kind: int,
     name: string,
@@ -60,6 +88,11 @@ export struct ChatRow {
     fill: color,
     text-color: color,
     dot: color,
+    show-name: bool,
+    show-avatar: bool,
+    initial: string,
+    pad-top: length,
+    time: string,
 }
 
 component Pill inherits Rectangle {
@@ -216,6 +249,24 @@ component Header inherits HorizontalLayout {
     }
 }
 
+component Avatar inherits Rectangle {
+    in property <string> letter;
+    width: Metrics.avatar;
+    height: Metrics.avatar;
+    border-radius: Metrics.avatar / 2;
+    border-width: 1.5px;
+    border-color: Brand.accent;
+    background: transparent;
+    Text {
+        text: root.letter;
+        color: Brand.accent;
+        font-size: 12px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
 export component MainWindow inherits Window {
     // 0 connect, 1 sessions, 2 card, 3 settings
     in-out property <int> screen: 0;
@@ -231,6 +282,11 @@ export component MainWindow inherits Window {
     in property <[ChatRow]> chat;
     in property <string> chat-title;
     in property <string> chat-note;
+    in-out property <string> composer-draft;
+    in property <string> composer-hint;
+    in-out property <bool> composer-focused: false;
+    // Reserved: show the 56px thumbnail row when this is > 0.
+    in property <int> attachment-count: 0;
     in property <int> locale-index;
     in property <int> theme-index;
     in property <string> version-text;
@@ -250,6 +306,7 @@ export component MainWindow inherits Window {
     callback set-locale(int);
     callback set-theme(int);
     callback theme-follow-system();
+    callback send();
 
     changed os-dark => { root.theme-follow-system(); }
 
@@ -260,10 +317,10 @@ export component MainWindow inherits Window {
     min-height: 844px;
 
     VerticalLayout {
-        padding-left: 20px;
-        padding-right: 20px;
+        padding-left: root.screen == 2 ? Metrics.column-margin : 20px;
+        padding-right: root.screen == 2 ? Metrics.column-margin : 20px;
         padding-top: 20px + root.safe-area-insets.top + root.extra-safe-top;
-        padding-bottom: 20px + root.safe-area-insets.bottom + root.extra-safe-bottom;
+        padding-bottom: root.screen == 2 ? 0 : (20px + root.safe-area-insets.bottom + root.extra-safe-bottom);
         spacing: 14px;
 
         if root.screen == 0: VerticalLayout {
@@ -358,90 +415,266 @@ export component MainWindow inherits Window {
                 width: 100%;
                 feed := VerticalLayout {
                     width: 100%;
-                    spacing: 8px;
+                    spacing: 0px;
                     alignment: start;
-                    // Width of the feed, not root.width: binding the window
-                    // width to its children collapsed it to 1×1.
                     property <length> col-w: self.width;
-                    for row in root.chat: HorizontalLayout {
+                    property <length> gutter: Metrics.avatar + Metrics.avatar-gap;
+                    for row in root.chat: VerticalLayout {
                         width: 100%;
-                        alignment: row.kind == 0 ? end : start;
-                        VerticalLayout {
-                            spacing: 3px;
-                            max-width: row.kind == 2 ? feed.col-w * 0.85 : feed.col-w * 0.75;
-                            if row.kind == 1: Text {
-                                text: row.name;
-                                color: Brand.muted;
-                                font-size: 12px;
+                        padding-top: row.pad-top;
+                        if row.kind == 3: Text {
+                            width: 100%;
+                            text: row.text;
+                            color: Brand.text3;
+                            font-size: Metrics.date-size;
+                            horizontal-alignment: center;
+                        }
+                        if row.kind == 0: HorizontalLayout {
+                            width: 100%;
+                            alignment: end;
+                            VerticalLayout {
+                                spacing: 2px;
+                                alignment: end;
+                                Rectangle {
+                                    background: Brand.own-bg;
+                                    border-radius: Metrics.bubble-radius;
+                                    max-width: feed.col-w * 0.75;
+                                    VerticalLayout {
+                                        padding-left: Metrics.bubble-pad-h;
+                                        padding-right: Metrics.bubble-pad-h;
+                                        padding-top: Metrics.bubble-pad-v;
+                                        padding-bottom: Metrics.bubble-pad-v;
+                                        Text {
+                                            text: row.text;
+                                            color: Brand.own-text;
+                                            font-size: Metrics.bubble-mine-size;
+                                            wrap: word-wrap;
+                                            horizontal-alignment: left;
+                                        }
+                                    }
+                                }
+                                if row.time != "": Text {
+                                    text: row.time;
+                                    color: Brand.text3;
+                                    font-size: Metrics.time-size;
+                                    horizontal-alignment: right;
+                                }
                             }
-                            if row.kind < 2: Rectangle {
-                                background: row.kind == 0 ? Brand.own-bg : Brand.bro-bg;
-                                border-radius: 16px;
-                                border-width: row.kind == 0 ? 0px : 1px;
-                                border-color: Brand.bro-border;
+                        }
+                        if row.kind == 1: VerticalLayout {
+                            width: 100%;
+                            spacing: 2px;
+                            HorizontalLayout {
+                                width: 100%;
+                                alignment: start;
+                                vertical-stretch: 0;
                                 VerticalLayout {
-                                    padding-left: 14px;
-                                    padding-right: 14px;
-                                    padding-top: 10px;
-                                    padding-bottom: 10px;
-                                    Text {
-                                        text: row.text;
-                                        color: row.kind == 0 ? Brand.own-text : Brand.ink;
-                                        font-size: 16px;
-                                        wrap: word-wrap;
-                                        horizontal-alignment: left;
+                                    width: Metrics.avatar;
+                                    alignment: end;
+                                    vertical-stretch: 1;
+                                    if row.show-avatar: Avatar { letter: row.initial; }
+                                    if !row.show-avatar: Rectangle { width: Metrics.avatar; height: 1px; }
+                                }
+                                Rectangle { width: Metrics.avatar-gap; }
+                                VerticalLayout {
+                                    spacing: 3px;
+                                    max-width: feed.col-w - feed.gutter;
+                                    if row.show-name: Text {
+                                        text: row.name;
+                                        color: Brand.muted;
+                                        font-size: 12px;
+                                    }
+                                    Rectangle {
+                                        background: Brand.surface;
+                                        border-radius: Metrics.bubble-radius;
+                                        border-width: 1px;
+                                        border-color: Brand.border;
+                                        VerticalLayout {
+                                            padding-left: Metrics.bubble-pad-h;
+                                            padding-right: Metrics.bubble-pad-h;
+                                            padding-top: Metrics.bubble-pad-v;
+                                            padding-bottom: Metrics.bubble-pad-v;
+                                            Text {
+                                                text: row.text;
+                                                color: Brand.ink;
+                                                font-size: 16px;
+                                                wrap: word-wrap;
+                                                horizontal-alignment: left;
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            if row.kind == 2: Rectangle {
-                                // #155: no fill, card border only; bro name is not in the card.
-                                background: transparent;
-                                border-radius: 14px;
-                                border-width: 1px;
-                                border-color: Brand.border;
+                            if row.time != "": HorizontalLayout {
+                                width: 100%;
+                                Rectangle { width: feed.gutter; }
+                                Text {
+                                    text: row.time;
+                                    color: Brand.text3;
+                                    font-size: Metrics.time-size;
+                                    horizontal-alignment: left;
+                                }
+                            }
+                        }
+                        if row.kind == 2: VerticalLayout {
+                            width: 100%;
+                            spacing: 2px;
+                            HorizontalLayout {
+                                width: 100%;
+                                alignment: start;
                                 VerticalLayout {
-                                    padding: 14px;
-                                    spacing: 4px;
-                                    alignment: start;
-                                    HorizontalLayout {
-                                        alignment: start;
-                                        spacing: 8px;
-                                        Rectangle {
-                                            width: 8px;
-                                            height: 8px;
-                                            y: (parent.height - self.height) / 2;
-                                            border-radius: 4px;
-                                            background: row.dot;
-                                        }
-                                        if row.step != "": Text {
-                                            text: row.step;
-                                            color: Brand.ink;
-                                            font-size: 14px;
-                                            horizontal-alignment: left;
-                                            vertical-alignment: center;
-                                        }
-                                        Text {
-                                            text: row.status;
-                                            color: Brand.ink;
-                                            font-size: 14px;
-                                            font-weight: 600;
-                                            wrap: word-wrap;
-                                            horizontal-alignment: left;
-                                            vertical-alignment: center;
+                                    width: Metrics.avatar;
+                                    alignment: end;
+                                    vertical-stretch: 1;
+                                    if row.show-avatar: Avatar { letter: row.initial; }
+                                    if !row.show-avatar: Rectangle { width: Metrics.avatar; height: 1px; }
+                                }
+                                Rectangle { width: Metrics.avatar-gap; }
+                                VerticalLayout {
+                                    spacing: 3px;
+                                    max-width: feed.col-w - feed.gutter;
+                                    if row.show-name: Text {
+                                        text: row.name;
+                                        color: Brand.muted;
+                                        font-size: 12px;
+                                    }
+                                    Rectangle {
+                                        // Unfilled status card: border only.
+                                        background: transparent;
+                                        border-radius: 14px;
+                                        border-width: 1px;
+                                        border-color: Brand.border;
+                                        VerticalLayout {
+                                            padding: 14px;
+                                            spacing: 4px;
+                                            alignment: start;
+                                            HorizontalLayout {
+                                                alignment: start;
+                                                spacing: 8px;
+                                                Rectangle {
+                                                    width: 8px;
+                                                    height: 8px;
+                                                    y: (parent.height - self.height) / 2;
+                                                    border-radius: 4px;
+                                                    background: row.dot;
+                                                }
+                                                if row.step != "": Text {
+                                                    text: row.step;
+                                                    color: Brand.ink;
+                                                    font-size: 14px;
+                                                    horizontal-alignment: left;
+                                                    vertical-alignment: center;
+                                                }
+                                                Text {
+                                                    text: row.status;
+                                                    color: Brand.ink;
+                                                    font-size: 14px;
+                                                    font-weight: 600;
+                                                    wrap: word-wrap;
+                                                    horizontal-alignment: left;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                            if row.progress != "": Text {
+                                                text: row.progress;
+                                                color: Brand.ink;
+                                                font-size: 13px;
+                                                wrap: word-wrap;
+                                                horizontal-alignment: left;
+                                            }
                                         }
                                     }
-                                    if row.progress != "": Text {
-                                        text: row.progress;
-                                        color: Brand.ink;
-                                        font-size: 13px;
-                                        wrap: word-wrap;
-                                        horizontal-alignment: left;
-                                    }
+                                }
+                            }
+                            if row.time != "": HorizontalLayout {
+                                width: 100%;
+                                Rectangle { width: feed.gutter; }
+                                Text {
+                                    text: row.time;
+                                    color: Brand.text3;
+                                    font-size: Metrics.time-size;
+                                    horizontal-alignment: left;
                                 }
                             }
                         }
                     }
                 }
+            }
+            Rectangle {
+                width: 100%;
+                border-radius: Metrics.composer-radius;
+                border-width: 1px;
+                border-color: Brand.border;
+                background: Brand.surface;
+                VerticalLayout {
+                    // Reserved 56px attachment-thumbnail row. Hidden while
+                    // there are no attachments (the feature is not wired).
+                    if root.attachment-count > 0: Rectangle {
+                        height: Metrics.thumb-size;
+                    }
+                    HorizontalLayout {
+                        padding-left: Metrics.composer-pad-left;
+                        padding-right: Metrics.composer-send-inset;
+                        padding-top: Metrics.composer-send-inset;
+                        padding-bottom: Metrics.composer-send-inset;
+                        min-height: Metrics.composer-height;
+                        spacing: 8px;
+                        // stretch (not start/end) so horizontal-stretch is
+                        // honoured; start/end pack children and ignore
+                        // stretch, which pushed a short hint against the
+                        // send button. Left inset is 16px, same as desktop.
+                        alignment: stretch;
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            height: Metrics.composer-send;
+                            if root.composer-draft == "" && !root.composer-focused: HorizontalLayout {
+                                width: 100%;
+                                height: 100%;
+                                alignment: start;
+                                Text {
+                                    height: 100%;
+                                    text: root.composer-hint;
+                                    color: Brand.text3;
+                                    font-size: 16px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                Rectangle { horizontal-stretch: 1; height: 1px; }
+                            }
+                            if root.composer-draft == "" && !root.composer-focused: TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                clicked => { root.composer-focused = true; }
+                            }
+                            if root.composer-draft != "" || root.composer-focused: TextInput {
+                                width: 100%;
+                                height: 100%;
+                                text <=> root.composer-draft;
+                                color: Brand.ink;
+                                font-size: 16px;
+                                single-line: true;
+                                vertical-alignment: center;
+                                init => { self.focus(); }
+                                accepted => {
+                                    if root.composer-draft != "" { root.send(); }
+                                    if root.composer-draft == "" { root.composer-focused = false; }
+                                }
+                            }
+                        }
+                        Rectangle {
+                            width: Metrics.composer-send;
+                            height: Metrics.composer-send;
+                            border-radius: Metrics.composer-send / 2;
+                            background: Brand.accent-strong;
+                            opacity: root.composer-draft == "" ? Metrics.composer-send-empty-opacity : 1;
+                            Text { text: "↑"; color: Brand.on-accent; font-size: 16px; }
+                            if root.composer-draft != "": TouchArea { clicked => { root.send(); } }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                height: Metrics.composer-bottom + root.safe-area-insets.bottom + root.extra-safe-bottom;
             }
         }
 

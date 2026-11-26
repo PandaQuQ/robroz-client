@@ -88,6 +88,11 @@ where
     }
 }
 
+/// [`clock_in`] in the computer's local zone.
+pub fn clock_local(unix: i64) -> String {
+    clock_in(unix, &chrono::Local)
+}
+
 /// Local `HH:MM` for an ISO 8601 contract timestamp; empty if unparsable.
 pub fn clock_iso_in<Tz: TimeZone>(iso: &str, tz: &Tz) -> String
 where

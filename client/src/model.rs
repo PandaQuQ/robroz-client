@@ -323,12 +323,14 @@ pub struct Meta {
     pub at: Option<i64>,
 }
 
-/// Consecutive items of one sender, drawn as one block: avatar and name on
-/// the first item, the time at the end.
+/// Consecutive items of one sender, drawn as one block: name on the first
+/// item (in a group chat), avatar at the last, the time at the end.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Group<T> {
     pub sender: Sender,
     pub items: Vec<T>,
+    /// Time of the first item that has one.
+    pub first_at: Option<i64>,
     /// Time of the last item that has one.
     pub last_at: Option<i64>,
 }
@@ -350,17 +352,49 @@ pub fn group_items<T>(items: impl IntoIterator<Item = (T, Meta)>, window: i64) -
             let g = out.last_mut().expect("joins implies a group");
             g.items.push(item);
             if meta.at.is_some() {
+                if g.first_at.is_none() {
+                    g.first_at = meta.at;
+                }
                 g.last_at = meta.at;
             }
         } else {
             out.push(Group {
                 sender: meta.sender,
                 items: vec![item],
+                first_at: meta.at,
                 last_at: meta.at,
             });
         }
     }
     out
+}
+
+impl robroz_ui::runs::RunSender for Sender {
+    fn same(&self, other: &Self) -> bool {
+        Sender::same(self, other)
+    }
+}
+
+/// Runs that also break at a local day change, with a date separator at
+/// the start of each day.
+pub fn chat_blocks<T, Tz: chrono::TimeZone>(
+    items: impl IntoIterator<Item = (T, Meta)>,
+    window: i64,
+    tz: &Tz,
+) -> Vec<robroz_ui::runs::Block<T, Sender>> {
+    robroz_ui::runs::blocks(
+        items.into_iter().map(|(item, meta)| {
+            (
+                item,
+                robroz_ui::runs::Meta {
+                    sender: meta.sender,
+                    at: meta.at,
+                },
+            )
+        }),
+        window,
+        tz,
+    )
 }
 
 fn unix(iso: &str) -> Option<i64> {
@@ -604,7 +638,7 @@ pub fn preview(event: &Event) -> String {
             waiting_for,
             ..
         } if awaits_approval(*state, *waiting_for) => line(bot_name, &display(AWAITING_APPROVAL)),
-        // A live run with a progress line: say what the bro is doing, not 进行.
+        // A live run with a progress line: say what the bro is doing, not 进行中.
         Event::Status {
             bot_name,
             state,
@@ -1117,14 +1151,9 @@ mod tests {
             preview(&with_progress(run.clone(), Some("在查上周的\n工单"))),
             "Ada：在查上周的 工单"
         );
-        // No progress: the plain state word, as before.
-        assert_eq!(
-            preview(&run),
-            format!(
-                "Ada：{}",
-                robroz_card::status_line(TaskState::Running, true)
-            )
-        );
+        // No progress: the displayed state word (「进行中」, not the card
+        // crate's raw 「进行」).
+        assert_eq!(preview(&run), "Ada：进行中");
         // Never on a finished, stuck or failed card.
         let done = with_progress(status("t1", "Ada", TaskState::Done, false), Some("在查"));
         assert_eq!(
@@ -1262,8 +1291,8 @@ mod tests {
             let _zh = robroz_ui::i18n::scoped(robroz_ui::i18n::Locale::Zh);
             let (progress, step) = card_progress(ev.clone());
             assert_eq!(progress, None);
-            assert_eq!(step.as_deref().map(display).as_deref(), Some("2/3 步"));
-            assert_eq!(preview(&ev), "Ada：2/3 步");
+            assert_eq!(step.as_deref().map(display).as_deref(), Some("第 2/3 步"));
+            assert_eq!(preview(&ev), "Ada：第 2/3 步");
         }
     }
 
