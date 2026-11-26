@@ -16,11 +16,14 @@
 //! Light or Dark (see [`prefs`]; `ROBROZ_THEME=light|dark` in fake runs).
 
 mod api;
+mod cli;
 mod conn;
 mod event_decode;
 mod gallery;
 mod host_state;
 mod jump;
+#[cfg(any(windows, test))]
+mod logfile;
 mod model;
 mod prefs;
 mod source;
@@ -72,6 +75,9 @@ use source::{
 const UNREAD_EVERY: Duration = Duration::from_secs(3);
 
 pub fn main() -> iced::Result {
+    cli::exit_if_requested();
+    #[cfg(windows)]
+    logfile::install();
     let size = env_size().unwrap_or((1040.0, 680.0));
     iced::application(App::boot, App::update, App::view)
         .title("robroz")
