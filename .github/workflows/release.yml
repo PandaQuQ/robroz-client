@@ -43,6 +43,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build release binaries
         run: cargo build --release --locked ${{ matrix.packages }}
+      # `[profile.release] strip = true` already strips the binary. Log the
+      # resulting size so a release can be compared with earlier builds.
+      - name: Report binary sizes
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext=""
+          [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          for bin in ${{ matrix.bins }}; do
+            path="target/release/${bin}${ext}"
+            if stat -c %s "$path" >/dev/null 2>&1; then
+              bytes=$(stat -c %s "$path")
+            else
+              bytes=$(stat -f %z "$path")
+            fi
+            echo "release ${bin}${ext}: ${bytes} bytes (stripped via profile.release.strip)"
+            ls -l "$path"
+          done
       - name: Check glibc floor
         if: runner.os == 'Linux'
         shell: bash
