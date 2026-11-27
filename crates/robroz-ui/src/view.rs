@@ -309,7 +309,7 @@ pub enum Action {
     },
     McpDeleteConfirm,
     McpDeleteCancel,
-    /// Turn the server off (Disconnect in a connected row's expanded part).
+    /// Turn the server off (Disconnect in an enabled row's expanded part).
     McpToggleEnabled {
         id: String,
     },
@@ -2872,8 +2872,8 @@ fn mcp_title_actions<'a>(t: &Skin, book: &'a McpBook) -> Element<'a, Action> {
                 .color(color(t.palette.text2)),
         );
     }
-    // Phone: no add / edit / disconnect / delete (desktop only).
-    if book.form.is_none() && !t.narrow {
+    // Phone is view-only. A narrow desktop window still shows Add.
+    if book.form.is_none() && mcp::can_edit(t) {
         actions = actions.push(btn(
             t,
             mcp::ADD.into(),
@@ -3410,10 +3410,11 @@ fn mcp_delete_button<'a>(t: &Skin, on_press: Option<Action>) -> Element<'a, Acti
     hit_area(&t, shown, None, t.controls.button_h, on_press)
 }
 
-/// 6px `status.done` dot used in front of the Connected label.
-fn mcp_connected_dot<'a>(t: &Skin) -> Element<'a, Action> {
+/// 6px status dot (Connected uses `status.done`; unapproved command uses
+/// `status.blocked`).
+fn mcp_status_dot<'a>(_t: &Skin, rgb: [u8; 3]) -> Element<'a, Action> {
     let size = robroz_tokens::mcp::CONNECTED_DOT;
-    let c = color(t.status.done);
+    let c = color(rgb);
     container(Space::new().width(size).height(size))
         .style(move |_| container::Style {
             background: Some(c.into()),
@@ -3421,6 +3422,11 @@ fn mcp_connected_dot<'a>(t: &Skin) -> Element<'a, Action> {
             ..container::Style::default()
         })
         .into()
+}
+
+/// 6px `status.done` dot used in front of the Connected label.
+fn mcp_connected_dot<'a>(t: &Skin) -> Element<'a, Action> {
+    mcp_status_dot(t, t.status.done)
 }
 
 /// 44px r12 icon tile. The contract has no icon field, so the tile carries
@@ -3467,23 +3473,27 @@ fn mcp_row<'a>(
         .color(color(t.palette.text));
     // The second line: the latest test result when there is one, else the
     // tool count (or "needs approval").
+    let has_test = book.test_for(&server.id).is_some();
     let (sub, sub_rgb) = match book.test_for(&server.id) {
         Some(test @ mcp::TestState::Running) => (test.text(), t.palette.text3),
         Some(test) => (test.text(), t.palette.text2),
         None => (mcp::row_subtitle(server), t.palette.text3),
     };
-    let title = container(
-        column![
-            name,
-            text(sub)
-                .size(robroz_tokens::mcp::ROW_SUB)
-                .wrapping(text::Wrapping::None)
-                .color(color(sub_rgb)),
-        ]
-        .spacing(2.0),
-    )
-    .width(Fill)
-    .clip(true);
+    let sub_text = text(sub)
+        .size(robroz_tokens::mcp::ROW_SUB)
+        .wrapping(text::Wrapping::None)
+        .color(color(sub_rgb));
+    let sub_line: Element<'a, Action> = if mcp::shows_approval_status(server, has_test) {
+        row![mcp_status_dot(t, t.status.blocked), sub_text]
+            .spacing(6.0)
+            .align_y(Alignment::Center)
+            .into()
+    } else {
+        sub_text.into()
+    };
+    let title = container(column![name, sub_line].spacing(2.0))
+        .width(Fill)
+        .clip(true);
     let right: Element<'a, Action> = if mcp::is_connected(server) {
         // Inert: muted status text with a 6px done dot, not a button.
         row![
@@ -3530,9 +3540,10 @@ fn mcp_row<'a>(
         if !book.chats.is_empty() {
             col = col.push(mcp_group_toggles(t, book, &server.id, busy));
         }
-        // Phone is read-only: no add / edit / disconnect / delete, so no
+        // Phone is view-only: no add / edit / disconnect / delete, so no
         // action row and no delete confirm (no dead or greyed controls).
-        if !t.narrow {
+        // Gated on platform (`can_edit`), not window width.
+        if mcp::can_edit(t) {
             if asking {
                 col = col.push(
                     column![
@@ -3567,7 +3578,7 @@ fn mcp_row<'a>(
                     Leading::None,
                     (!busy).then_some(Action::McpEdit { id: id.clone() }),
                 )];
-                if mcp::is_connected(server) {
+                if mcp::shows_disconnect(server) {
                     actions = actions.push(btn(
                         t,
                         mcp::DISCONNECT.into(),
@@ -3695,6 +3706,10 @@ fn mcp_group_toggles<'a>(
         .size(t.type_.foot)
         .color(color(t.palette.text3))]
     .spacing(m.dot_gap);
+    // Toggle rows are a fixed 44px (`mcp::GROUP_ROW`) on wide and narrow
+    // desktop. Spacing them with `dot_gap` on top of `touch_target` made
+    // the pitch ~38px wide and ~50px narrow.
+    let mut rows = column![];
     for (group, name) in &book.chats {
         let load = book.group_load_state(group);
         let known = (load == mcp::GroupLoad::Ready)
@@ -3735,12 +3750,15 @@ fn mcp_group_toggles<'a>(
         if let Some(hint) = hint {
             label = label.push(text(hint).size(t.type_.foot).color(color(t.palette.text3)));
         }
-        list = list.push(
+        rows = rows.push(
             row![container(label).width(Fill), toggle]
                 .spacing(t.controls.button_gap)
-                .align_y(Alignment::Center),
+                .align_y(Alignment::Center)
+                .height(Length::Fixed(robroz_tokens::mcp::GROUP_ROW))
+                .width(Fill),
         );
     }
+    list = list.push(rows);
     list.into()
 }
 

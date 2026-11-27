@@ -76,6 +76,26 @@ pub fn is_connected(s: &McpServer) -> bool {
     s.enabled && !command_unapproved(s)
 }
 
+/// Disconnect appears on any enabled server, including an unapproved
+/// stdio one that still shows Connect, so it can be turned off with
+/// `PATCH {"enabled":false}`. Phone UI never draws this button.
+pub fn shows_disconnect(s: &McpServer) -> bool {
+    s.enabled
+}
+
+/// Add / Edit / Disconnect / Delete. Platform, not window width: a
+/// desktop window under 480px stays editable. The phone (Slint) target
+/// is view-only.
+pub fn can_edit(t: &crate::theme::Skin) -> bool {
+    t.can_edit()
+}
+
+/// Yellow `status.blocked` dot next to [`TOOLS_NEED_APPROVAL`] when the
+/// command is unapproved and no test result has replaced the subtitle.
+pub fn shows_approval_status(s: &McpServer, has_test: bool) -> bool {
+    command_unapproved(s) && !has_test
+}
+
 /// The letter on a server's icon tile: the first letter or digit of the
 /// name, upper-cased. The contract has no icon field.
 pub fn icon_letter(name: &str) -> String {
@@ -1119,7 +1139,7 @@ mod tests {
             b.servers.iter().find(|s| s.id == "s3").unwrap()
         ));
         assert_eq!(COMMAND_UNAPPROVED, "命令未批准");
-        assert_eq!(TOOLS_NEED_APPROVAL, "批准命令后才能读取工具");
+        assert_eq!(TOOLS_NEED_APPROVAL, "批准命令后才能加载工具");
         assert_eq!(APPROVE_RUN, "批准运行");
 
         b.show_command_prompt("s3", "echo".into(), vec!["hello".into(), "world".into()]);
@@ -1220,6 +1240,48 @@ mod tests {
         assert!(is_connected(&http("d", "D", true)));
         let b = book();
         assert_eq!(b.connected_count(), 1);
+    }
+
+    #[test]
+    fn disconnect_shows_on_enabled_unapproved_stdio() {
+        assert!(shows_disconnect(&unapproved("c", "C")));
+        assert!(shows_disconnect(&server("a", "A", true, None)));
+        assert!(!shows_disconnect(&server("b", "B", false, None)));
+        let mut off = unapproved("d", "D");
+        off.enabled = false;
+        assert!(!shows_disconnect(&off));
+        assert!(shows_approval_status(&unapproved("c", "C"), false));
+        assert!(!shows_approval_status(&unapproved("c", "C"), true));
+        assert!(!shows_approval_status(&server("a", "A", true, None), false));
+        let _zh = crate::i18n::scoped(crate::i18n::Locale::Zh);
+        assert_eq!(TOOLS_NEED_APPROVAL, "批准命令后才能加载工具");
+        drop(_zh);
+        let _en = crate::i18n::scoped(crate::i18n::Locale::En);
+        assert_eq!(TOOLS_NEED_APPROVAL, "Approve the command to load its tools");
+    }
+
+    #[test]
+    fn editability_is_platform_not_window_width() {
+        let desktop = crate::theme::Skin::light().for_input(false, 390.0);
+        assert!(desktop.narrow);
+        assert!(can_edit(&desktop));
+        let mut phone = crate::theme::Skin::light();
+        phone.phone = true;
+        assert!(!can_edit(&phone.for_input(false, 1040.0)));
+        assert!(!phone.for_input(false, 390.0).can_edit());
+    }
+
+    #[test]
+    fn unapproved_enabled_server_can_be_turned_off() {
+        let mut b = Book::default();
+        b.load(vec![unapproved("s3", "回声")]);
+        assert_eq!(b.toggle_enabled_to_send("s3"), Some(false));
+        assert!(b.busy);
+        b.set_enabled("s3", false);
+        assert!(!b.servers.iter().find(|s| s.id == "s3").unwrap().enabled);
+        assert!(!shows_disconnect(
+            b.servers.iter().find(|s| s.id == "s3").unwrap()
+        ));
     }
 
     #[test]

@@ -302,6 +302,7 @@ fn apply_mcp(ui: &MainWindow, st: &State) {
             letter: l.letter.into(),
             sub: l.sub.into(),
             connected: l.connected,
+            needs_approval: l.needs_approval,
         })
         .collect();
     ui.set_mcp_rows(ModelRc::new(VecModel::from(rows)));
