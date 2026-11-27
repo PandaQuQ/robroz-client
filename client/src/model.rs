@@ -226,33 +226,48 @@ pub fn preview_wins(new: (&str, u8), cur: Option<(&str, u8)>) -> bool {
 
 /// The event behind each chat's list preview. The event is kept, not its
 /// text, so a language switch can redraw every preview at once.
+/// `owner_id` is the bro's owner for a status waiting on approval, looked
+/// up when the event arrived.
 #[derive(Debug, Default)]
 pub struct Previews {
-    by_group: std::collections::HashMap<String, (String, u8, Event)>,
+    by_group: std::collections::HashMap<String, (String, u8, Event, Option<String>)>,
 }
 
 impl Previews {
     /// Offer `event` for `group`'s preview; the preview text if it wins.
-    /// `me` is the signed-in user id, so a reminder uses the owner or
-    /// non-owner sentence.
-    pub fn offer(&mut self, group: &str, event: &Event, me: Option<&str>) -> Option<String> {
+    /// `me` is the signed-in user id. `owner_id` is the bro's owner, used
+    /// when a status is waiting on approval (reminders carry their own).
+    pub fn offer(
+        &mut self,
+        group: &str,
+        event: &Event,
+        me: Option<&str>,
+        owner_id: Option<&str>,
+    ) -> Option<String> {
         let at = change_time(event);
         let rank = preview_rank(event);
         let cur = self.by_group.get(group);
-        if !preview_wins((at, rank), cur.map(|(t, r, _)| (t.as_str(), *r))) {
+        if !preview_wins((at, rank), cur.map(|(t, r, _, _)| (t.as_str(), *r))) {
             return None;
         }
-        self.by_group
-            .insert(group.to_string(), (at.to_string(), rank, event.clone()));
-        Some(preview_of(event, me))
+        self.by_group.insert(
+            group.to_string(),
+            (
+                at.to_string(),
+                rank,
+                event.clone(),
+                owner_id.map(str::to_owned),
+            ),
+        );
+        Some(preview_of(event, me, owner_id))
     }
 
     /// Every chat's preview, drawn again in the active language.
     pub fn redraw(&self, me: Option<&str>) -> impl Iterator<Item = (&str, String)> + '_ {
         let me = me.map(str::to_owned);
-        self.by_group
-            .iter()
-            .map(move |(g, (_, _, ev))| (g.as_str(), preview_of(ev, me.as_deref())))
+        self.by_group.iter().map(move |(g, (_, _, ev, owner))| {
+            (g.as_str(), preview_of(ev, me.as_deref(), owner.as_deref()))
+        })
     }
 }
 
@@ -742,12 +757,14 @@ pub fn change_time(event: &Event) -> &str {
 
 /// One-line preview of an event for the conversation list.
 pub fn preview(event: &Event) -> String {
-    preview_of(event, None)
+    preview_of(event, None, None)
 }
 
-/// Like [`preview`], with the signed-in user id so a reminder can choose
-/// the owner or non-owner sentence.
-pub fn preview_of(event: &Event, me: Option<&str>) -> String {
+/// Like [`preview`], with the signed-in user id and, for a status waiting
+/// on approval, the bro's owner id. A reminder already carries its owner
+/// on the event. Unknown `me` or `owner_id` uses the non-owner sentence,
+/// same as the card (`can_answer` is false unless both ids match).
+pub fn preview_of(event: &Event, me: Option<&str>, owner_id: Option<&str>) -> String {
     match event {
         Event::Message { kind, body, .. } => match kind {
             MessageKind::Text => body.clone(),
@@ -770,7 +787,17 @@ pub fn preview_of(event: &Event, me: Option<&str>) -> String {
             state,
             waiting_for,
             ..
-        } if awaits_approval(*state, *waiting_for) => line(bot_name, &display(AWAITING_APPROVAL)),
+        } if awaits_approval(*state, *waiting_for) => {
+            // Bro cards: only the owner may answer (`can_answer` /
+            // `viewer == Owner`). Unknown me or owner is not the owner,
+            // same as reminder.rs and group_approval.rs.
+            let text = if me.is_some() && me == owner_id {
+                display(AWAITING_APPROVAL)
+            } else {
+                std::borrow::Cow::Borrowed(Text::ApprovalWaitingFor.as_str())
+            };
+            line(bot_name, &text)
+        }
         // A live run with a progress line: say what the bro is doing, not 进行中.
         Event::Status {
             bot_name,
@@ -1747,7 +1774,7 @@ mod tests {
             card.action, None,
             "the approval card is the only way to act"
         );
-        assert_eq!(preview(&ev), "Ada：等你批准");
+        assert_eq!(preview_of(&ev, Some("u-me"), Some("u-me")), "Ada：等你批准");
 
         // Real takeovers (captcha) and older hosts without the field keep amber.
         for waiting in [Some(WaitingFor::Takeover), None] {
@@ -1782,8 +1809,9 @@ mod tests {
         assert_eq!(card.status_line, "等你批准");
         assert_eq!(card.action, None);
         assert_eq!(zh(&card.progress).as_deref(), Some("在用 notes.write_note"));
-        // The list preview stays 等你批准; the progress line is on the card.
-        assert_eq!(preview(&ev), "Ada：等你批准");
+        // The owner's list preview stays 等你批准; the progress line is
+        // on the card. A non-owner sees the card sentence, tested below.
+        assert_eq!(preview_of(&ev, Some("u-me"), Some("u-me")), "Ada：等你批准");
         // A stuck takeover still has no progress line.
         let stuck = with_progress(
             blocked_waiting(Some(WaitingFor::Takeover)),
@@ -1796,6 +1824,43 @@ mod tests {
             },
             None
         );
+    }
+
+    #[test]
+    fn awaiting_approval_preview_follows_the_viewer() {
+        use robroz_ui::i18n::{scoped, Locale};
+        let ev = blocked_waiting(Some(WaitingFor::Approval));
+        let owner = "u-me";
+        {
+            let _zh = scoped(Locale::Zh);
+            assert_eq!(preview_of(&ev, Some(owner), Some(owner)), "Ada：等你批准");
+            assert_eq!(
+                preview_of(&ev, Some("u-lin"), Some(owner)),
+                "Ada：等这个 bro 的主人审批"
+            );
+            assert_eq!(
+                preview_of(&ev, None, Some(owner)),
+                "Ada：等这个 bro 的主人审批",
+                "unknown me is not the owner, same as the card"
+            );
+            assert_eq!(
+                preview_of(&ev, Some(owner), None),
+                "Ada：等这个 bro 的主人审批",
+                "unknown owner is not the owner"
+            );
+            assert_eq!(preview(&ev), "Ada：等这个 bro 的主人审批");
+        }
+        {
+            let _en = scoped(Locale::En);
+            assert_eq!(
+                preview_of(&ev, Some(owner), Some(owner)),
+                "Ada: Needs your approval"
+            );
+            assert_eq!(
+                preview_of(&ev, Some("u-lin"), Some(owner)),
+                "Ada: Waiting for this bro's owner"
+            );
+        }
     }
 
     #[test]
@@ -2140,7 +2205,7 @@ mod tests {
         let mut previews = Previews::default();
         let shown = {
             let _en = scoped(Locale::En);
-            previews.offer("g1", &status, None).unwrap()
+            previews.offer("g1", &status, None, None).unwrap()
         };
         let _zh = scoped(Locale::Zh);
         let redrawn: Vec<_> = previews.redraw(None).collect();
@@ -2148,7 +2213,7 @@ mod tests {
         assert_eq!(redrawn, vec![("g1", preview(&status))]);
         // Same time and rank: the newer arrival still wins.
         assert!(
-            previews.offer("g1", &status, None).is_some(),
+            previews.offer("g1", &status, None, None).is_some(),
             "tie, same rank"
         );
     }
@@ -2450,11 +2515,11 @@ mod tests {
         let ev = reminder(ReminderState::Waiting, None);
         let _en = scoped(Locale::En);
         assert_eq!(
-            preview_of(&ev, Some("u-me")),
+            preview_of(&ev, Some("u-me"), None),
             "Ada is waiting for your approval in Site"
         );
         assert_eq!(
-            preview_of(&ev, Some("u-lin")),
+            preview_of(&ev, Some("u-lin"), None),
             "Waiting for this bro's owner"
         );
         assert_eq!(change_time(&ev), "2026-10-07T19:00:00.000Z");
