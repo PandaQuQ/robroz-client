@@ -37,9 +37,6 @@ pub struct GroupEvent {
     pub event: Event,
     /// Client-side approval fields the contract event cannot carry yet.
     pub approval_extras: Option<ApprovalExtras>,
-    /// Host `startedAt` on a status event, if the JSON carried it. The
-    /// contract crate (v0.3.0) does not have this field yet.
-    pub started_at: Option<String>,
 }
 
 /// A new-kind card the contract has no event for yet (approval, draft),

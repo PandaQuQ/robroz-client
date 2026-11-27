@@ -46,8 +46,6 @@ pub struct StatusCard {
     pub waiting_for: Option<WaitingFor>,
     pub created_at: String,
     pub updated_at: String,
-    /// Host `startedAt` when the event JSON carried it.
-    pub started_at: Option<String>,
     /// First transition into `running` seen this session.
     pub local_started: Option<i64>,
     /// Progress lines recorded this session, in order.
@@ -67,10 +65,6 @@ impl StatusCard {
             state: self.state,
             live: self.is_live(),
             failed: self.failure.is_some() || self.failure_code.is_some(),
-            started_at: self
-                .started_at
-                .as_deref()
-                .and_then(robroz_ui::process::parse_unix),
             local_started: self.local_started,
             created_at: robroz_ui::process::parse_unix(&self.created_at),
             updated_at: robroz_ui::process::parse_unix(&self.updated_at),
@@ -567,47 +561,27 @@ impl Feed {
     /// empty now that `rule_*` is on the contract). Settings-page rule
     /// cards are ignored: they do not belong in a chat feed.
     pub fn apply_with(&mut self, event: &Event, extras: Option<&ApprovalExtras>) {
-        self.apply_status(event, extras, None);
-    }
-
-    /// Apply an event, with a host `startedAt` when the JSON carried one.
-    pub fn apply_status(
-        &mut self,
-        event: &Event,
-        extras: Option<&ApprovalExtras>,
-        started_at: Option<&str>,
-    ) {
         if crate::event_decode::is_settings_approval(event) {
             return;
         }
         let (key, row) = to_row(event, extras);
         let row = match row {
-            Row::Status(card) => Row::Status(self.merge_status(card, started_at)),
+            Row::Status(card) => Row::Status(self.merge_status(card)),
             other => other,
         };
         let meta = meta_of(event);
         self.upsert(key, row, Some(meta));
     }
 
-    fn merge_status(&self, mut card: StatusCard, started_at: Option<&str>) -> StatusCard {
-        if let Some(s) = started_at.filter(|s| !s.is_empty()) {
-            card.started_at = Some(s.to_string());
-        }
+    fn merge_status(&self, mut card: StatusCard) -> StatusCard {
         let key = Key::Task(card.task_id.clone());
         if let Some((_, Row::Status(old), _)) = self.rows.iter().find(|(k, _, _)| *k == key) {
             card.steps = old.steps.clone();
             card.local_started = old.local_started;
             card.expanded = old.expanded;
-            if card.started_at.is_none() {
-                card.started_at = old.started_at.clone();
-            }
             // Only start the local timer when we see the transition into a
             // live run this session, not when a snapshot was already running.
-            if card.is_live()
-                && !old.is_live()
-                && card.started_at.is_none()
-                && card.local_started.is_none()
-            {
+            if card.is_live() && !old.is_live() && card.local_started.is_none() {
                 card.local_started = Some(robroz_ui::process::now_unix());
             }
         }
@@ -912,7 +886,6 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
                 waiting_for: *waiting_for,
                 created_at: created_at.clone(),
                 updated_at: updated_at.clone(),
-                started_at: None,
                 local_started: None,
                 steps: Vec::new(),
                 expanded: false,

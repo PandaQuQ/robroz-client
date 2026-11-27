@@ -2,10 +2,14 @@
 //!
 //! One collapsed line per task round, expanded to the progress steps
 //! recorded in this session. Duration is wall-clock, including blocked
-//! time. `Status.startedAt` is used when the host sent it (contract
-//! v0.3.1, read from JSON without bumping the crate tag); otherwise a
-//! local timer from the first `running` seen this session, or
-//! `updatedAt − createdAt` marked approximate after a restart.
+//! time. The local timer starts when this session sees a transition
+//! into a live run, and is exact. Otherwise a fallback is used and
+//! always marked approximate: a live card uses `now − createdAt`
+//! (`updatedAt` refreshes on every progress write, so it would be too
+//! short); a finished card uses `updatedAt − createdAt`. After a
+//! follow-up re-queue, `createdAt` is not reset, so from the second
+//! round on the fallback is cumulative. Host `startedAt` is not read
+//! in this crate (contract still v0.3.0; that lands in the v0.3.1 PR).
 //!
 //! While the task is blocked or queued the line shows no timer. On
 //! `done` it shows the total.
@@ -48,8 +52,6 @@ pub struct TimerInput {
     /// `true` when this is a live run (`Running` and `containerUp`).
     pub live: bool,
     pub failed: bool,
-    /// Host `startedAt`, if the event carried it.
-    pub started_at: Option<i64>,
     /// First `running` seen in this session, only if we saw the
     /// transition into running (not a snapshot that was already running).
     pub local_started: Option<i64>,
@@ -81,7 +83,7 @@ impl TimerPhase {
             Self::Running { secs, approx } => {
                 let d = format_duration(secs);
                 if approx {
-                    Some(Key::ProcessWorkedAbout.fill(&[&d]))
+                    Some(Key::ProcessWorkingAbout.fill(&[&d]))
                 } else {
                     Some(Key::ProcessWorking.fill(&[&d]))
                 }
@@ -112,14 +114,10 @@ pub fn timer_phase(input: TimerInput) -> TimerPhase {
         return TimerPhase::Hidden;
     }
 
-    let (start, end, approx) = if let Some(start) = input.started_at {
-        let end = if input.live {
-            input.now
-        } else {
-            input.updated_at.unwrap_or(input.now)
-        };
-        (start, end, false)
-    } else if let Some(start) = input.local_started {
+    // The local timer is exact. Any fallback (no local start this
+    // session) is approximate: after a restart, or from the second
+    // round on, when `createdAt` still belongs to the first round.
+    let (start, end, approx) = if let Some(start) = input.local_started {
         let end = if input.live {
             input.now
         } else {
@@ -127,10 +125,6 @@ pub fn timer_phase(input: TimerInput) -> TimerPhase {
         };
         (start, end, false)
     } else if let Some(created) = input.created_at {
-        // After a restart there is no local timer and the host did not
-        // send `startedAt`. `createdAt` is enqueue time, so this is
-        // approximate. A still-running card uses `now`; a finished one
-        // uses `updatedAt − createdAt`.
         let end = if input.live {
             input.now
         } else {
@@ -224,16 +218,6 @@ pub fn parse_unix(iso: &str) -> Option<i64> {
     crate::runs::parse_unix(iso)
 }
 
-/// Host `startedAt` on a status JSON object, if present and non-empty.
-pub fn started_at_of(value: &serde_json::Value) -> Option<String> {
-    value
-        .get("startedAt")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-}
-
 /// Show the reconnecting banner after `failing_since` has been in a
 /// continuous failed state for more than [`SSE_BANNER_SECS`].
 pub fn show_reconnect_banner(failing_since: Option<i64>, now: i64) -> bool {
@@ -258,7 +242,6 @@ mod tests {
             state: TaskState::Running,
             live: true,
             failed: false,
-            started_at: None,
             local_started: None,
             created_at: None,
             updated_at: None,
@@ -281,11 +264,10 @@ mod tests {
     }
 
     #[test]
-    fn running_line_uses_started_at_when_present() {
+    fn local_timer_is_exact() {
         let _en = scoped(Locale::En);
         let phase = timer_phase(TimerInput {
-            started_at: Some(1_000 - 12),
-            local_started: Some(1_000 - 3),
+            local_started: Some(1_000 - 12),
             created_at: Some(1_000 - 40),
             ..input()
         });
@@ -303,23 +285,12 @@ mod tests {
     }
 
     #[test]
-    fn local_timer_is_the_fallback_before_started_at() {
-        let _en = scoped(Locale::En);
-        let phase = timer_phase(TimerInput {
-            local_started: Some(1_000 - 12),
-            created_at: Some(1_000 - 40),
-            ..input()
-        });
-        assert_eq!(phase.line().as_deref(), Some("Working 12s"));
-    }
-
-    #[test]
     fn blocked_and_queued_hide_the_timer() {
         for state in [TaskState::Blocked, TaskState::Queued] {
             let phase = timer_phase(TimerInput {
                 state,
                 live: false,
-                started_at: Some(900),
+                created_at: Some(900),
                 updated_at: Some(1_000),
                 ..input()
             });
@@ -329,13 +300,12 @@ mod tests {
     }
 
     #[test]
-    fn done_shows_the_total_including_blocked_time() {
+    fn done_local_timer_is_exact_and_includes_blocked_time() {
         let _en = scoped(Locale::En);
-        // started 38s before updatedAt; blocked time is included.
         let phase = timer_phase(TimerInput {
             state: TaskState::Done,
             live: false,
-            started_at: Some(1_000 - 38),
+            local_started: Some(1_000 - 38),
             updated_at: Some(1_000),
             now: 1_000,
             ..input()
@@ -354,29 +324,10 @@ mod tests {
     }
 
     #[test]
-    fn after_restart_without_started_at_the_span_is_approximate() {
+    fn live_fallback_uses_now_minus_created_at() {
         let _en = scoped(Locale::En);
-        let done = timer_phase(TimerInput {
-            state: TaskState::Done,
-            live: false,
-            created_at: Some(1_000 - 38),
-            updated_at: Some(1_000),
-            now: 1_000,
-            ..input()
-        });
-        assert_eq!(
-            done,
-            TimerPhase::Done {
-                secs: 38,
-                approx: true
-            }
-        );
-        assert_eq!(done.line().as_deref(), Some("Worked for ~38s"));
-        drop(_en);
-        let _zh = scoped(Locale::Zh);
-        assert_eq!(done.line().as_deref(), Some("约 38 秒"));
-
-        let _en = scoped(Locale::En);
+        // updatedAt is only 5s ago (a progress write); the card has been
+        // running for 20s. The fallback must use now − createdAt.
         let running = timer_phase(TimerInput {
             created_at: Some(1_000 - 20),
             updated_at: Some(1_000 - 5),
@@ -390,6 +341,84 @@ mod tests {
                 approx: true
             }
         );
+        assert_eq!(running.line().as_deref(), Some("Working ~20s"));
+        drop(_en);
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(running.line().as_deref(), Some("处理中约 20 秒"));
+    }
+
+    #[test]
+    fn done_fallback_uses_updated_at_minus_created_at() {
+        let _en = scoped(Locale::En);
+        let done = timer_phase(TimerInput {
+            state: TaskState::Done,
+            live: false,
+            created_at: Some(1_000 - 38),
+            updated_at: Some(1_000),
+            now: 1_200,
+            ..input()
+        });
+        assert_eq!(
+            done,
+            TimerPhase::Done {
+                secs: 38,
+                approx: true
+            }
+        );
+        assert_eq!(done.line().as_deref(), Some("Worked for ~38s"));
+        drop(_en);
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(done.line().as_deref(), Some("用了约 38 秒"));
+
+        let _en = scoped(Locale::En);
+        let mins = timer_phase(TimerInput {
+            state: TaskState::Done,
+            live: false,
+            created_at: Some(1_000 - 72),
+            updated_at: Some(1_000),
+            now: 1_000,
+            ..input()
+        });
+        assert_eq!(mins.line().as_deref(), Some("Worked for ~1m 12s"));
+        drop(_en);
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(mins.line().as_deref(), Some("用了约 1 分 12 秒"));
+    }
+
+    #[test]
+    fn follow_up_round_without_a_local_timer_is_approximate() {
+        // createdAt is not reset on a follow-up re-queue, so the fallback
+        // from the second round on is the cumulative span and is marked
+        // approximate. A local timer started on the re-queue transition
+        // stays exact.
+        let _en = scoped(Locale::En);
+        let fallback = timer_phase(TimerInput {
+            created_at: Some(1_000 - 200),
+            updated_at: Some(1_000 - 2),
+            now: 1_000,
+            ..input()
+        });
+        assert_eq!(
+            fallback,
+            TimerPhase::Running {
+                secs: 200,
+                approx: true
+            }
+        );
+        let exact = timer_phase(TimerInput {
+            local_started: Some(1_000 - 8),
+            created_at: Some(1_000 - 200),
+            updated_at: Some(1_000 - 2),
+            now: 1_000,
+            ..input()
+        });
+        assert_eq!(
+            exact,
+            TimerPhase::Running {
+                secs: 8,
+                approx: false
+            }
+        );
     }
 
     #[test]
@@ -398,7 +427,7 @@ mod tests {
             state: TaskState::Done,
             live: false,
             failed: true,
-            started_at: Some(900),
+            created_at: Some(900),
             updated_at: Some(1_000),
             ..input()
         });
@@ -456,7 +485,10 @@ mod tests {
         assert!(!show_reconnect_banner(Some(100), 130));
         assert!(show_reconnect_banner(Some(100), 131));
         let _en = scoped(Locale::En);
-        assert_eq!(reconnect_banner(), "Reconnecting…");
+        let line = reconnect_banner();
+        assert_eq!(line, "Reconnecting…");
+        assert_eq!(line.chars().last(), Some('\u{2026}'));
+        assert!(!line.contains("..."));
         drop(_en);
         let _zh = scoped(Locale::Zh);
         assert_eq!(reconnect_banner(), "正在重新连接");
@@ -507,6 +539,40 @@ mod tests {
             ]
         );
         assert_eq!(line_spans("卡住"), vec![("卡住".into(), false)]);
+        assert_eq!(
+            line_spans("Working ~12s"),
+            vec![
+                ("Working ~".into(), false),
+                ("12".into(), true),
+                ("s".into(), false),
+            ]
+        );
+        assert_eq!(
+            line_spans("用了约 38 秒"),
+            vec![
+                ("用了约 ".into(), false),
+                ("38".into(), true),
+                (" 秒".into(), false),
+            ]
+        );
+        assert_eq!(
+            line_spans("处理中约 12 秒"),
+            vec![
+                ("处理中约 ".into(), false),
+                ("12".into(), true),
+                (" 秒".into(), false),
+            ]
+        );
+        assert_eq!(
+            line_spans("用了约 1 分 12 秒"),
+            vec![
+                ("用了约 ".into(), false),
+                ("1".into(), true),
+                (" 分 ".into(), false),
+                ("12".into(), true),
+                (" 秒".into(), false),
+            ]
+        );
     }
 
     #[test]

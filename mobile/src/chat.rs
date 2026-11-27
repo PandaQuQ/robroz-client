@@ -126,11 +126,10 @@ pub fn build(events: &[(Event, bool)]) -> Vec<ChatItem> {
     items
 }
 
-/// Like [`build`], with a host `startedAt` per event when the JSON had one.
-pub fn build_from(events: &[(Event, bool, Option<String>)]) -> Vec<ChatItem> {
+pub fn build_from(events: &[(Event, bool)]) -> Vec<ChatItem> {
     let mut items: Vec<ChatItem> = Vec::new();
     let mut card_at: Vec<(String, usize)> = Vec::new();
-    for (event, own, started) in events {
+    for (event, own) in events {
         match event {
             Event::Message {
                 body, created_at, ..
@@ -151,7 +150,7 @@ pub fn build_from(events: &[(Event, bool, Option<String>)]) -> Vec<ChatItem> {
                 });
             }
             Event::Status { task_id, .. } => {
-                let Some(mut card) = StatusCard::from_event_at(event, started.as_deref()) else {
+                let Some(mut card) = StatusCard::from_event(event) else {
                     continue;
                 };
                 match card_at.iter().find(|(t, _)| t == task_id) {
@@ -179,11 +178,7 @@ fn merge_status(old: &StatusCard, mut card: StatusCard) -> StatusCard {
     card.steps = old.steps.clone();
     card.local_started = old.local_started;
     card.expanded = old.expanded;
-    if card.started_at.is_none() {
-        card.started_at = old.started_at.clone();
-    }
-    if card.is_live() && !old.is_live() && card.started_at.is_none() && card.local_started.is_none()
-    {
+    if card.is_live() && !old.is_live() && card.local_started.is_none() {
         card.local_started = Some(robroz_ui::process::now_unix());
     }
     if let Some(line) = card.progress.clone().or(card.step_progress.clone()) {

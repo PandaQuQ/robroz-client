@@ -71,7 +71,6 @@ fn approval(
             owner_name: Some(owner.1.into()),
         },
         approval_extras: None,
-        started_at: None,
     }
 }
 
@@ -87,7 +86,6 @@ fn say(group: &str, id: &str, body: &str) -> GroupEvent {
             author_name: Some(FAKE_ME_NAME.into()),
         },
         approval_extras: None,
-        started_at: None,
     }
 }
 
@@ -113,7 +111,6 @@ fn reminder(
             answered_at: answered.map(ts),
         },
         approval_extras: None,
-        started_at: None,
     }
 }
 
@@ -207,7 +204,6 @@ fn say_at(group: &str, id: &str, body: &str, created: String) -> GroupEvent {
             author_name: Some(FAKE_ME_NAME.into()),
         },
         approval_extras: None,
-        started_at: None,
     }
 }
 

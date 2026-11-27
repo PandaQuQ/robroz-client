@@ -41,8 +41,6 @@ pub struct StatusCard {
     pub waiting_for: Option<WaitingFor>,
     pub created_at: String,
     pub updated_at: String,
-    /// Host `startedAt` when the event JSON carried it.
-    pub started_at: Option<String>,
     pub local_started: Option<i64>,
     pub steps: Vec<ProgressLine>,
     pub expanded: bool,
@@ -77,10 +75,6 @@ impl StatusCard {
             state: self.state,
             live: self.is_live(),
             failed: self.failure.is_some(),
-            started_at: self
-                .started_at
-                .as_deref()
-                .and_then(robroz_ui::process::parse_unix),
             local_started: self.local_started,
             created_at: robroz_ui::process::parse_unix(&self.created_at),
             updated_at: robroz_ui::process::parse_unix(&self.updated_at),
@@ -139,11 +133,6 @@ fn progress_line(
 impl StatusCard {
     /// `None` for any event that is not a status card.
     pub fn from_event(event: &Event) -> Option<Self> {
-        Self::from_event_at(event, None)
-    }
-
-    /// Like [`from_event`], with a host `startedAt` when the JSON carried it.
-    pub fn from_event_at(event: &Event, started_at: Option<&str>) -> Option<Self> {
         let Event::Status {
             task_id,
             bot_id,
@@ -214,10 +203,6 @@ impl StatusCard {
             waiting_for: *waiting_for,
             created_at: created_at.clone(),
             updated_at: updated_at.clone(),
-            started_at: started_at
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string),
             local_started: None,
             steps: Vec::new(),
             expanded: false,

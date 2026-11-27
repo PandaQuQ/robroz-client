@@ -21,7 +21,7 @@ use robroz_ui::avatar;
 use robroz_ui::conversations;
 use robroz_ui::i18n::{self, Key, Locale};
 use robroz_ui::runs;
-use robroz_ui::theme::Mode;
+use robroz_ui::theme::{Mode, Skin};
 
 slint::include_modules!();
 
@@ -163,6 +163,7 @@ fn apply_theme(ui: &MainWindow, mode: Mode) {
     brand.set_border(color(p.border));
     brand.set_text3(color(p.text3));
     brand.set_danger(color(robroz_ui::theme::DANGER));
+    brand.set_stuck(color(Skin::for_mode(mode).status.blocked));
     // Own bubbles and the send button use accentStrong + white in both
     // modes. Bro bubbles use surface + border.
     brand.set_own_bg(color(p.accent_strong));
@@ -354,7 +355,7 @@ fn window_scale(ui: &MainWindow) -> f32 {
 
 fn items_from_events(
     prev: &[chat::ChatItem],
-    events: &[(robroz_contract::Event, bool, Option<String>)],
+    events: &[(robroz_contract::Event, bool)],
 ) -> Vec<chat::ChatItem> {
     let mut items = chat::build_from(events);
     chat::carry_process(prev, &mut items);

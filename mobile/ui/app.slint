@@ -20,6 +20,8 @@ export global Brand {
     in property <color> segment-text;
     in property <color> text3;
     in property <color> danger;
+    // Stuck / "pay attention" yellow; used by the reconnect capsule.
+    in property <color> stuck;
 }
 
 // Lengths from robroz-tokens `base.chat`. Rust pushes the values; this
@@ -671,8 +673,8 @@ export component MainWindow inherits Window {
                             height: 8px;
                             y: (parent.height - self.height) / 2;
                             border-radius: 4px;
-                            // Warning colour: brand accent (waiting orange).
-                            background: Brand.accent;
+                            // Same token as the 「卡住」 (stuck) dot, not brand orange.
+                            background: Brand.stuck;
                         }
                         Text {
                             text: root.reconnect-banner;

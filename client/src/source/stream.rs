@@ -39,8 +39,6 @@ pub enum StreamItem {
     Event {
         event: Event,
         extras: Option<ApprovalExtras>,
-        /// Host `startedAt` when the JSON carried it.
-        started_at: Option<String>,
     },
     /// Keep-alive comment; lets the reader notice nobody is listening.
     Ping,
@@ -282,12 +280,8 @@ pub fn read_once(
                 if let Some(id) = frame.id {
                     *last_id = Some(id);
                 }
-                match event_decode::parse_event_full(&frame.data) {
-                    Ok((event, extras, started_at)) => StreamItem::Event {
-                        event,
-                        extras,
-                        started_at,
-                    },
+                match event_decode::parse_event_str(&frame.data) {
+                    Ok((event, extras)) => StreamItem::Event { event, extras },
                     // A newer host may send a kind this client does not
                     // know yet (including a future `resync` frame): skip
                     // it rather than drop the stream. The frame's `id`

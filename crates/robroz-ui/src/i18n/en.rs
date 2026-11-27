@@ -1069,9 +1069,11 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::SecretFilled => "Set",
         // 处理中 {0}  [approved, PR3 process]
         Key::ProcessWorking => "Working {0}",
+        // 处理中约 {0}  [approved, PR3 process]
+        Key::ProcessWorkingAbout => "Working ~{0}",
         // 用了 {0}  [approved, PR3 process]
         Key::ProcessWorked => "Worked for {0}",
-        // 约 {0}  [approved, PR3 process]
+        // 用了约 {0}  [approved, PR3 process]
         Key::ProcessWorkedAbout => "Worked for ~{0}",
         // {0} 秒  [approved, PR3 process]
         Key::ProcessSecs => "{0}s",

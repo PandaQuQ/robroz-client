@@ -14,12 +14,6 @@ use serde_json::Value;
 /// A `failureCode` / `progressCode` / `reasonCode` this client does not
 /// know is logged and dropped first, so the card still shows (with the
 /// unknown-code copy) instead of the whole event failing to decode.
-/// Host `startedAt` on a status event (contract v0.3.1, not on the
-/// pinned crate yet). Absent on older hosts and on non-status events.
-pub fn started_at_of(value: &Value) -> Option<String> {
-    robroz_ui::process::started_at_of(value)
-}
-
 pub fn parse_event(mut value: Value) -> Result<(Event, Option<ApprovalExtras>), serde_json::Error> {
     robroz_ui::cards::codes::strip_unknown_codes(&mut value);
     let event = serde_json::from_value(value)?;
@@ -27,18 +21,7 @@ pub fn parse_event(mut value: Value) -> Result<(Event, Option<ApprovalExtras>), 
 }
 
 pub fn parse_event_str(body: &str) -> Result<(Event, Option<ApprovalExtras>), serde_json::Error> {
-    parse_event_full(body).map(|(event, extras, _)| (event, extras))
-}
-
-/// Like [`parse_event_str`], and the optional `startedAt` from the same JSON.
-pub fn parse_event_full(
-    body: &str,
-) -> Result<(Event, Option<ApprovalExtras>, Option<String>), serde_json::Error> {
-    let value: Value = serde_json::from_str(body)?;
-    let started = started_at_of(&value);
-    let (event, extras) = parse_event(value)?;
-    let started = started.filter(|_| matches!(event, Event::Status { .. }));
-    Ok((event, extras, started))
+    parse_event(serde_json::from_str(body)?)
 }
 
 /// Settings-page rule cards must not appear in any chat, stream or unread.
@@ -242,18 +225,24 @@ mod tests {
     }
 
     #[test]
-    fn started_at_is_read_from_status_json() {
+    fn a_started_at_field_on_status_json_is_not_read() {
+        // contract-v0.3.0 has no startedAt; a future host may send one.
+        // This PR does not parse it (that moves to the v0.3.1 follow-up).
         let json = r#"{"type":"status","id":"t","taskId":"t","botId":"b","botName":"Ada",
             "state":"running","label":"进行中","createdAt":"2026-11-20T08:00:00Z",
             "updatedAt":"2026-11-20T08:00:12Z","containerUp":true,
             "startedAt":"2026-11-20T08:00:01Z"}"#;
-        let (event, _, started) = parse_event_full(json).expect("parse");
+        let value: serde_json::Value = serde_json::from_str(json).expect("json");
+        assert_eq!(
+            value.get("startedAt").and_then(|v| v.as_str()),
+            Some("2026-11-20T08:00:01Z")
+        );
+        let (event, extras) = ev(json);
         assert!(matches!(event, Event::Status { .. }));
-        assert_eq!(started.as_deref(), Some("2026-11-20T08:00:01Z"));
-        let (_, _, none) = parse_event_full(
-            r#"{"type":"message","id":"m","kind":"text","body":"hi","createdAt":"2026-11-20T08:00:00Z"}"#,
-        )
-        .expect("msg");
-        assert_eq!(none, None);
+        assert!(extras.is_none());
+        // The decode result is only the contract event; no startedAt is returned.
+        let (event, extras) = parse_event_str(json).expect("parse");
+        assert!(matches!(event, Event::Status { .. }));
+        assert!(extras.is_none());
     }
 }

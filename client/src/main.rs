@@ -1023,16 +1023,10 @@ impl App {
     }
 
     fn apply_event(&mut self, group: String, event: &Event) {
-        self.apply_event_with(group, event, None, None);
+        self.apply_event_with(group, event, None);
     }
 
-    fn apply_event_with(
-        &mut self,
-        group: String,
-        event: &Event,
-        extras: Option<&ApprovalExtras>,
-        started_at: Option<&str>,
-    ) {
+    fn apply_event_with(&mut self, group: String, event: &Event, extras: Option<&ApprovalExtras>) {
         // Settings-page rule cards never belong in a chat, stream or unread.
         if event_decode::is_settings_approval(event) {
             self.sync_review_pending(event, extras);
@@ -1066,7 +1060,7 @@ impl App {
         self.feeds
             .entry(group)
             .or_default()
-            .apply_status(event, extras, started_at);
+            .apply_with(event, extras);
         // A 409 note ("refreshing") goes once the answered card arrives.
         let answered = match event {
             Event::Choice {
@@ -2155,7 +2149,7 @@ impl App {
                         let card = robroz_ui::cards::confirm::ConfirmCard::from_event(&event);
                         let group = card.and_then(|c| self.find_card(&c.id)).map(|(g, _)| g);
                         if let Some(group) = group {
-                            self.apply_event_with(group, &event, extras.as_ref(), None);
+                            self.apply_event_with(group, &event, extras.as_ref());
                         }
                     }
                 }
@@ -2200,7 +2194,7 @@ impl App {
                         let card = robroz_ui::cards::confirm::ConfirmCard::from_event(&event);
                         let group = card.and_then(|c| self.find_card(&c.id)).map(|(g, _)| g);
                         if let Some(group) = group {
-                            self.apply_event_with(group, &event, extras.as_ref(), None);
+                            self.apply_event_with(group, &event, extras.as_ref());
                         }
                     }
                 }
@@ -2534,11 +2528,9 @@ impl App {
                         self.stream_fail_since = None;
                     }
                 }
-                StreamItem::Event {
-                    event,
-                    extras,
-                    started_at,
-                } => self.apply_event_with(group, &event, extras.as_ref(), started_at.as_deref()),
+                StreamItem::Event { event, extras } => {
+                    self.apply_event_with(group, &event, extras.as_ref())
+                }
                 StreamItem::Ping => {}
                 // Silent reconnect until >30s of continuous failed attempts.
                 StreamItem::Down(down) => {
@@ -2608,7 +2600,6 @@ impl App {
                                 ge.group_id,
                                 &ge.event,
                                 ge.approval_extras.as_ref(),
-                                ge.started_at.as_deref(),
                             );
                         }
                         for gc in polled.cards {
@@ -2694,7 +2685,7 @@ impl App {
                         match (reply, found) {
                             // The host's answered card replaces the pending one.
                             (Some((event, extras)), Some((group, _))) => {
-                                self.apply_event_with(group, &event, extras.as_ref(), None);
+                                self.apply_event_with(group, &event, extras.as_ref());
                             }
                             // No echo (fake API): show the answer locally.
                             (None, Some((group, Card::Approval(mut c)))) => {
@@ -3641,12 +3632,12 @@ impl App {
         )
         .map(Message::Ui);
         let chrome: Element<'_, Message> = if self.show_reconnect_banner() {
-            // Small surface capsule, 12px text, warning (brand orange)
-            // dot on the left. Palette has no `warning` field; the
-            // waiting / accent orange is the project's warning colour.
+            // Small surface capsule, 12px text, stuck/warning yellow
+            // dot on the left (same token as 「卡住」). Brand orange is
+            // the "working" dot and must not be reused here.
             let pill = container(
                 row![
-                    view::rgb_dot(t, t.status.waiting),
+                    view::rgb_dot(t, t.status.blocked),
                     text(robroz_ui::process::reconnect_banner())
                         .size(t.type_.foot)
                         .color(color(t.palette.text)),
@@ -4370,7 +4361,6 @@ mod tests {
             waiting_for: None,
             created_at: String::new(),
             updated_at: String::new(),
-            started_at: None,
             local_started: None,
             steps: Vec::new(),
             expanded: false,

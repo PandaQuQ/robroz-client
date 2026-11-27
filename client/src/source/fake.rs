@@ -70,7 +70,6 @@ impl FakeSource {
                     status(SITE, "t-hero", "bot-ada", "Ada", TaskState::Running, true),
                     START_HERO,
                     START_HERO,
-                    START_HERO,
                 ),
                 "Writing the hero logo",
             )],
@@ -93,7 +92,6 @@ impl FakeSource {
             vec![
                 with_times(
                     status(SITE, "t-hero", "bot-ada", "Ada", TaskState::Done, false),
-                    START_HERO,
                     START_HERO,
                     DONE_HERO,
                 ),
@@ -217,7 +215,6 @@ impl FakeSource {
                         ),
                         START_LIVE,
                         START_LIVE,
-                        START_LIVE,
                     ),
                     "Resizing the logo",
                 ),
@@ -233,14 +230,12 @@ impl FakeSource {
                         ),
                         START_LIVE,
                         START_LIVE,
-                        START_LIVE,
                     ),
                     "Drafting the copy",
                 ),
                 with_progress(
                     with_times(
                         status(PROC, "t-done", "bot-ada", "Ada", TaskState::Running, true),
-                        START_HERO,
                         START_HERO,
                         START_HERO,
                     ),
@@ -250,7 +245,6 @@ impl FakeSource {
             vec![
                 with_times(
                     status(PROC, "t-done", "bot-ada", "Ada", TaskState::Done, false),
-                    START_HERO,
                     START_HERO,
                     DONE_HERO,
                 ),
@@ -406,8 +400,7 @@ const DONE_HERO: &str = "2026-10-07T19:00:39.000Z";
 /// Live runs in `g-two`: 12s before [`FAKE_NOW`].
 const START_LIVE: &str = "2026-10-07T19:09:48.000Z";
 
-fn with_times(mut ev: GroupEvent, started: &str, created: &str, updated: &str) -> GroupEvent {
-    ev.started_at = Some(started.into());
+fn with_times(mut ev: GroupEvent, created: &str, updated: &str) -> GroupEvent {
     if let Event::Status {
         created_at,
         updated_at,
@@ -484,7 +477,6 @@ fn choice(group: &str, id: &str, multi: bool) -> GroupEvent {
             answered_by: None,
         },
         approval_extras: None,
-        started_at: None,
     }
 }
 
@@ -566,7 +558,6 @@ fn msg_at(group: &str, id: &str, kind: MessageKind, body: &str, hms: &str) -> Gr
             author_user_id: None,
         },
         approval_extras: None,
-        started_at: None,
     }
 }
 
@@ -600,7 +591,6 @@ fn status(
             failure_detail: None,
         },
         approval_extras: None,
-        started_at: None,
     }
 }
 
@@ -636,7 +626,6 @@ fn attributed_delivery(
             failure_detail: None,
         },
         approval_extras: None,
-        started_at: None,
     }
 }
 
