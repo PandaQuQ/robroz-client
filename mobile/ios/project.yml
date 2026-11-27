@@ -20,8 +20,8 @@ targets:
       path: Info.plist
       properties:
         CFBundleDisplayName: robroz
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.2.0"
+        CFBundleVersion: "2"
         CADisableMinimumFrameDurationOnPhone: true
         UILaunchScreen: {}
         # iOS 27 needs the UIScene lifecycle; Slint's winit backend provides
