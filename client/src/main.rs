@@ -3608,8 +3608,10 @@ impl App {
             } else {
                 0.0
             };
+        // Capsule sits 4px under the title bar (12px type, 4px pad
+        // top/bottom) and leaves 8px before the first feed item.
         let banner_h = if self.show_reconnect_banner() {
-            t.type_.foot + 8.0
+            4.0 + 4.0 + t.type_.foot + 4.0 + 8.0
         } else {
             0.0
         };
@@ -3639,14 +3641,22 @@ impl App {
         )
         .map(Message::Ui);
         let chrome: Element<'_, Message> = if self.show_reconnect_banner() {
-            let banner = container(
-                text(robroz_ui::process::reconnect_banner())
-                    .size(t.type_.foot)
-                    .color(color(t.palette.text3)),
+            // Small surface capsule, 12px text, warning (brand orange)
+            // dot on the left. Palette has no `warning` field; the
+            // waiting / accent orange is the project's warning colour.
+            let pill = container(
+                row![
+                    view::rgb_dot(t, t.status.waiting),
+                    text(robroz_ui::process::reconnect_banner())
+                        .size(t.type_.foot)
+                        .color(color(t.palette.text)),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
             )
-            .width(Fill)
-            .center_x(Fill)
-            .padding(Padding {
+            .padding(Padding::from([4.0, 10.0]))
+            .style(reconnect_capsule_style(*t));
+            let banner = container(pill).width(Fill).center_x(Fill).padding(Padding {
                 top: header_h + 4.0,
                 ..Padding::ZERO
             });
@@ -3682,7 +3692,7 @@ impl App {
                     text(line).size(t.type_.foot).color(color(t.palette.text3)),
                 ]
                 .spacing(8)
-                .align_y(Alignment::Center);
+                .align_y(Alignment::End);
                 south = south.push(
                     container(container(row_el).width(Length::Fixed(column_w)))
                         .width(Fill)
@@ -3690,7 +3700,9 @@ impl App {
                         .padding(Padding {
                             top: 8.0,
                             right: side,
-                            bottom: 0.0,
+                            // Text bottom to composer top is 8px (avatars
+                            // bottom-align with the 12px line).
+                            bottom: 8.0,
                             left: side,
                         }),
                 );
@@ -3960,7 +3972,18 @@ fn item_view<'a>(
             .align_y(Alignment::Center)
             .into(),
         ),
-        Row::Status(c) => card(status_view(t, c, card_w)),
+        Row::Status(c) => {
+            let inner = status_view(t, c, card_w);
+            // Status-line-only cards shrink to their content, up to the
+            // column width. Cards with a button or expanded steps stay
+            // full width. Wrap in a row so a stretch column cannot
+            // widen a Shrink child.
+            if status_is_line_only(c) {
+                row![container(inner).max_width(card_w)].into()
+            } else {
+                card(inner)
+            }
+        }
         Row::Delivery(c) => card(delivery_view(t, c, card_w)),
         Row::Reminder(r) => view::reminder_row(t, r).map(Message::Ui),
         Row::Card(c) => {
@@ -4010,6 +4033,48 @@ fn status_dot_view<'a>(t: &Skin, card: &StatusCard) -> Element<'a, Message> {
     }
 }
 
+/// A process card that is only a status line (no action button, not
+/// expanded) shrinks to its content. Failed cards, takeover cards and
+/// expanded step lists stay full column width.
+fn status_is_line_only(card: &StatusCard) -> bool {
+    let failed =
+        card.detail_line().is_some() || card.failure.is_some() || card.failure_code.is_some();
+    !failed && card.action.is_none() && !card.expanded
+}
+
+/// Process / status line typography: 14px throughout. Digit runs use
+/// a monospace (tabular) figure font; words and the spaces around
+/// units such as 「38 秒」 stay in the UI font so they are not widened.
+fn process_line_texts<'a>(t: &Skin, line: &str) -> Element<'a, Message> {
+    use iced::widget::text::Wrapping;
+    const SIZE: f32 = 14.0;
+    let mut texts = row![].align_y(Alignment::Center);
+    for (run, mono) in robroz_ui::process::line_spans(line) {
+        let mut word = text(run)
+            .size(SIZE)
+            .color(color(t.palette.text))
+            .wrapping(Wrapping::None);
+        if mono {
+            word = word.font(Font::MONOSPACE);
+        }
+        texts = texts.push(word);
+    }
+    texts.into()
+}
+
+/// Surface capsule for the reconnecting banner.
+fn reconnect_capsule_style(t: Skin) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(color(t.palette.surface).into()),
+        text_color: Some(color(t.palette.text)),
+        border: Border::default()
+            .width(t.stroke.card)
+            .color(color(t.palette.border))
+            .rounded(12.0),
+        ..container::Style::default()
+    }
+}
+
 /// Status card: a failed card keeps the status word and detail line. A
 /// live, blocked or finished run is one collapsed process line (timer
 /// when not blocked), expandable to this session's recorded steps.
@@ -4022,15 +4087,7 @@ fn status_view<'a>(t: &Skin, card: &'a StatusCard, width: f32) -> Element<'a, Me
     }
     let now = robroz_ui::process::now_unix();
     let line_text = card.process_line(now).unwrap_or_else(|| card.shown_line());
-    let has_timer = card.timer(now) != robroz_ui::process::TimerPhase::Hidden;
-    let mut word = text(line_text)
-        .size(if has_timer { t.type_.foot + 2.0 } else { 16.0 })
-        .color(color(t.palette.text))
-        .wrapping(Wrapping::None);
-    if has_timer {
-        word = word.font(Font::MONOSPACE);
-    }
-    let mut texts = row![status_dot_view(t, card), word,]
+    let mut texts = row![status_dot_view(t, card), process_line_texts(t, &line_text),]
         .spacing(view::STATUS_DOT_TEXT_GAP)
         .align_y(Alignment::Center);
     if card.expandable() {
@@ -4041,9 +4098,14 @@ fn status_view<'a>(t: &Skin, card: &'a StatusCard, width: f32) -> Element<'a, Me
                 .color(color(t.palette.text3)),
         );
     }
-    let mut line = row![texts, space::horizontal()]
-        .spacing(12)
-        .align_y(Alignment::Center);
+    let shrink = status_is_line_only(card);
+    let mut line = if shrink {
+        row![texts]
+    } else {
+        row![texts, space::horizontal()]
+    }
+    .spacing(12)
+    .align_y(Alignment::Center);
     if let Some(action) = card.action {
         let [pad_v, pad_h] = view::TAKE_OVER_PAD;
         line = line.push(
@@ -4071,11 +4133,14 @@ fn status_view<'a>(t: &Skin, card: &'a StatusCard, width: f32) -> Element<'a, Me
             );
         }
     }
-    container(body.spacing(t.metrics.dot_gap))
+    let card_el = container(body.spacing(t.metrics.dot_gap))
         .padding(view::status_card_padding(t))
-        .width(Fill)
-        .style(view::card_style(*t))
-        .into()
+        .style(view::card_style(*t));
+    if shrink {
+        card_el.width(Length::Shrink).max_width(width).into()
+    } else {
+        card_el.width(Fill).into()
+    }
 }
 
 /// Failure cards keep the status word, optional router-step, and the

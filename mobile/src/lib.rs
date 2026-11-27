@@ -501,6 +501,17 @@ fn render_page(ui: &MainWindow, st: &State) {
     ui.set_picker_swatches(ModelRc::new(VecModel::from(swatches)));
 }
 
+fn status_runs_of(line: &str) -> ModelRc<StatusRun> {
+    let runs: Vec<StatusRun> = robroz_ui::process::line_spans(line)
+        .into_iter()
+        .map(|(text, mono)| StatusRun {
+            text: text.into(),
+            mono,
+        })
+        .collect();
+    ModelRc::new(VecModel::from(runs))
+}
+
 fn feed_entry_row(
     entry: chat::FeedEntry,
     fallback: &str,
@@ -577,17 +588,17 @@ fn feed_entry_row(
                 chat::ChatItem::Status(c) => {
                     let now = robroz_ui::process::now_unix();
                     let failed = c.failure.is_some();
-                    let (status, step, progress, status_mono, expandable) = if failed {
+                    let (status, step, progress, runs, shrink, expandable) = if failed {
                         (
                             c.shown_status(),
                             shown(&c.step_progress),
                             shown(&c.progress),
+                            ModelRc::new(VecModel::<StatusRun>::from(vec![])),
                             false,
                             false,
                         )
                     } else {
                         let status = c.process_line(now).unwrap_or_else(|| c.shown_status());
-                        let mono = c.timer(now) != robroz_ui::process::TimerPhase::Hidden;
                         let progress: SharedString = if c.expanded {
                             c.steps
                                 .iter()
@@ -598,7 +609,9 @@ fn feed_entry_row(
                         } else {
                             "".into()
                         };
-                        (status, "".into(), progress, mono, c.expandable())
+                        let shrink = !c.expanded && progress.is_empty();
+                        let runs = status_runs_of(&status);
+                        (status, "".into(), progress, runs, shrink, c.expandable())
                     };
                     ChatRow {
                         kind: 2,
@@ -622,7 +635,8 @@ fn feed_entry_row(
                         time: row.time.into(),
                         task_id: c.task_id.clone().into(),
                         expandable,
-                        status_mono,
+                        status_runs: runs,
+                        status_shrink: shrink,
                         ..ChatRow::default()
                     }
                 }

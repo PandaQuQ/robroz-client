@@ -1077,8 +1077,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ProcessSecs => "{0}s",
         // {0} 分 {1} 秒  [approved, PR3 process]
         Key::ProcessMins => "{0}m {1}s",
-        // Needs UI review.
-        // {0} 在处理…
+        // {0} 在处理…  [approved, PR3 process]
         Key::WorkingRowOne => "{0} is working…",
         // {0} 和 {1} 在处理…  [approved, PR3 process]
         Key::WorkingRowTwo => "{0} and {1} are working…",

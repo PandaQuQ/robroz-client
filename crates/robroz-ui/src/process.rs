@@ -176,7 +176,7 @@ pub fn expandable(steps: &[ProgressLine]) -> bool {
 /// The "working" row above the composer, from the live-running bros in
 /// this group, in first-seen order.
 ///
-/// - 1: 「{name} 在处理…」 / "{name} is working…" (pending UI review)
+/// - 1: 「{name} 在处理…」 / "{name} is working…"
 /// - 2: 「{a} 和 {b} 在处理…」 / "{a} and {b} are working…"
 /// - >2: 「{a} 和另外 {n} 个」 / "{a} and {n} others"
 pub fn working_row(names: &[&str]) -> Option<String> {
@@ -186,6 +186,37 @@ pub fn working_row(names: &[&str]) -> Option<String> {
         [a, b] => Some(Key::WorkingRowTwo.fill(&[a, b])),
         [a, rest @ ..] => Some(Key::WorkingRowMany.fill(&[a, &rest.len()])),
     }
+}
+
+/// Split a process or status line into `(run, tabular)` spans.
+///
+/// ASCII digit runs use a tabular / monospace figure font; everything
+/// else — including the space in 「38 秒」 — uses the UI font at the
+/// same size. iced has no `tabular-nums` feature, so the view renders
+/// each run as its own text widget.
+pub fn line_spans(line: &str) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let mut digits = false;
+    for c in line.chars() {
+        let is_digit = c.is_ascii_digit();
+        if buf.is_empty() {
+            digits = is_digit;
+            buf.push(c);
+            continue;
+        }
+        if is_digit == digits {
+            buf.push(c);
+            continue;
+        }
+        out.push((std::mem::take(&mut buf), digits));
+        digits = is_digit;
+        buf.push(c);
+    }
+    if !buf.is_empty() {
+        out.push((buf, digits));
+    }
+    out
 }
 
 /// Unix seconds from an RFC 3339 timestamp.
@@ -429,6 +460,53 @@ mod tests {
         drop(_en);
         let _zh = scoped(Locale::Zh);
         assert_eq!(reconnect_banner(), "正在重新连接");
+    }
+
+    #[test]
+    fn line_spans_keep_words_in_the_ui_font_and_digits_tabular() {
+        assert_eq!(
+            line_spans("Working 12s"),
+            vec![
+                ("Working ".into(), false),
+                ("12".into(), true),
+                ("s".into(), false),
+            ]
+        );
+        assert_eq!(
+            line_spans("用了 38 秒"),
+            vec![
+                ("用了 ".into(), false),
+                ("38".into(), true),
+                (" 秒".into(), false),
+            ]
+        );
+        assert_eq!(
+            line_spans("Worked for ~38s"),
+            vec![
+                ("Worked for ~".into(), false),
+                ("38".into(), true),
+                ("s".into(), false),
+            ]
+        );
+        assert_eq!(
+            line_spans("1m 12s"),
+            vec![
+                ("1".into(), true),
+                ("m ".into(), false),
+                ("12".into(), true),
+                ("s".into(), false),
+            ]
+        );
+        assert_eq!(
+            line_spans("1 分 12 秒"),
+            vec![
+                ("1".into(), true),
+                (" 分 ".into(), false),
+                ("12".into(), true),
+                (" 秒".into(), false),
+            ]
+        );
+        assert_eq!(line_spans("卡住"), vec![("卡住".into(), false)]);
     }
 
     #[test]
