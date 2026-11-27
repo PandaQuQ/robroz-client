@@ -97,7 +97,7 @@ The API, cards, permissions, approvals, memory, skills, search, MCP and the host
 
 ## Status
 
-The latest release is a pre-release; see [Releases](https://github.com/PandaQuQ/robroz/releases) (v0.1.1 and earlier were published from the host repository). `main` is a development branch for v0.2.
+This repository has no release yet; build the client from source (see [Quick start](#quick-start)). v0.1.1 and earlier were published from the [host repository](https://github.com/PandaQuQ/robroz/releases). `main` targets the [v0.2.0 host](https://github.com/PandaQuQ/robroz/releases/tag/v0.2.0) and `contract-v0.3.1`.
 
 ## Development
 
