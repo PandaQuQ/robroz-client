@@ -299,7 +299,7 @@ pub enum Action {
     },
     McpDeleteConfirm,
     McpDeleteCancel,
-    /// Turn the server off (Disconnect in the expanded row).
+    /// Turn the server off (Disconnect in a connected row's expanded part).
     McpToggleEnabled {
         id: String,
     },
@@ -3316,17 +3316,13 @@ fn mcp_row<'a>(
     let id = server.id.clone();
     let open = book.open.as_deref() == Some(server.id.as_str());
     let asking = book.confirm_delete.as_deref() == Some(server.id.as_str());
-    let unapproved = mcp::command_unapproved(server);
-    let mut name = row![text(server.name.as_str())
+    // An unapproved stdio command is said on the second line ("Approve the
+    // command to load its tools"), so the 64px row carries no extra tag.
+    let name = text(server.name.as_str())
         .size(robroz_tokens::mcp::ROW_NAME)
         .font(bold())
         .wrapping(text::Wrapping::None)
-        .color(color(t.palette.text))]
-    .spacing(t.controls.button_gap)
-    .align_y(Alignment::Center);
-    if unapproved {
-        name = name.push(tag(t, mcp::COMMAND_UNAPPROVED.as_str(), t.palette.accent));
-    }
+        .color(color(t.palette.text));
     // The second line: the latest test result when there is one, else the
     // tool count (or "needs approval").
     let (sub, sub_rgb) = match book.test_for(&server.id) {
@@ -3334,14 +3330,18 @@ fn mcp_row<'a>(
         Some(test) => (test.text(), t.palette.text2),
         None => (mcp::row_subtitle(server), t.palette.text3),
     };
-    let title = column![
-        name,
-        text(sub)
-            .size(robroz_tokens::mcp::ROW_SUB)
-            .wrapping(text::Wrapping::None)
-            .color(color(sub_rgb)),
-    ]
-    .spacing(2.0);
+    let title = container(
+        column![
+            name,
+            text(sub)
+                .size(robroz_tokens::mcp::ROW_SUB)
+                .wrapping(text::Wrapping::None)
+                .color(color(sub_rgb)),
+        ]
+        .spacing(2.0),
+    )
+    .width(Fill)
+    .clip(true);
     let right: Element<'a, Action> = if mcp::is_connected(server) {
         // Inert: a status, not a button.
         text(mcp::CONNECTED)
@@ -3426,7 +3426,7 @@ fn mcp_row<'a>(
                         (!busy).then_some(Action::McpDeleteAsk { id: id.clone() }),
                     ),
                 ]
-                .push(if server.enabled {
+                .push(if mcp::is_connected(server) {
                     btn(
                         t,
                         mcp::DISCONNECT.into(),
