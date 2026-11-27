@@ -470,6 +470,7 @@ mod tests {
             reason: None,
             owner_id: None,
             owner_name: None,
+            task_id: None,
         };
         let mut ui = CardUi::default();
         assert_eq!(

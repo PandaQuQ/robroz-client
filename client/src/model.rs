@@ -10,7 +10,7 @@ use robroz_contract::{
 use robroz_ui::cards::codes::{self, FailureLine, ProgressLine};
 use robroz_ui::cards::confirm::ConfirmCard;
 use robroz_ui::cards::reminder::Reminder;
-use robroz_ui::cards::{ApprovalCard, ApprovalExtras, Card, ChoiceCard};
+use robroz_ui::cards::{ApprovalCard, ApprovalExtras, ApprovalState, Card, ChoiceCard};
 use robroz_ui::i18n::{host_text, Key as Text};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +60,11 @@ impl StatusCard {
     /// Live run: `running` and the container is up, not a failure.
     pub fn is_live(&self) -> bool {
         self.failure.is_none() && self.state == TaskState::Running && self.container_up
+    }
+
+    /// The task is sitting on an approval card.
+    pub fn awaits_approval(&self) -> bool {
+        awaits_approval(self.state, self.waiting_for)
     }
 
     pub fn timer(&self, now: i64) -> robroz_ui::process::TimerPhase {
@@ -353,6 +358,19 @@ pub enum Sender {
     Reminder,
 }
 
+impl Row {
+    /// Feed order when timestamps are equal: a message, then the task
+    /// status (or a delivery), then an approval or other card.
+    pub fn feed_rank(&self) -> u8 {
+        use robroz_ui::runs::{RANK_CARD, RANK_MESSAGE, RANK_TASK};
+        match self {
+            Row::Text { .. } | Row::Attachment { .. } => RANK_MESSAGE,
+            Row::Status(_) | Row::Delivery(_) => RANK_TASK,
+            Row::Card(_) | Row::Reminder(_) => RANK_CARD,
+        }
+    }
+}
+
 impl Sender {
     /// Same sender: both own, or the same bro (by id when both have one,
     /// else by name).
@@ -452,20 +470,45 @@ impl robroz_ui::runs::RunSender for Sender {
     }
 }
 
+/// A pending approval card already covers this waiting task, so the
+/// "Needs your approval" status chip would duplicate the card title.
+/// Same rule as the Slint phone feed (#23). The status row stays in
+/// the feed; only the drawn list skips it.
+fn hide_awaiting_status_chip(rows: &[(Key, Row, Meta)], row: &Row) -> bool {
+    let Row::Status(card) = row else {
+        return false;
+    };
+    if !card.awaits_approval() {
+        return false;
+    }
+    rows.iter().any(|(_, other, _)| match other {
+        Row::Card(Card::Approval(a)) if matches!(a.state, ApprovalState::Pending) => {
+            match a.task_id.as_deref() {
+                Some(id) => id == card.task_id,
+                None => a.bot == card.bot_name,
+            }
+        }
+        _ => false,
+    })
+}
+
 /// Runs that also break at a local day change, with a date separator at
 /// the start of each day.
 pub fn chat_blocks<T, Tz: chrono::TimeZone>(
     items: impl IntoIterator<Item = (T, Meta)>,
     window: i64,
     tz: &Tz,
+    rank: impl Fn(&T) -> u8,
 ) -> Vec<robroz_ui::runs::Block<T, Sender>> {
     robroz_ui::runs::blocks(
         items.into_iter().map(|(item, meta)| {
+            let rank = rank(&item);
             (
                 item,
                 robroz_ui::runs::Meta {
                     sender: meta.sender,
                     at: meta.at,
+                    rank,
                 },
             )
         }),
@@ -578,6 +621,19 @@ impl Feed {
     /// Rows with who sent them and when, in arrival order.
     pub fn items(&self) -> impl Iterator<Item = (&Row, &Meta)> {
         self.rows.iter().map(|(_, row, meta)| (row, meta))
+    }
+
+    /// Rows drawn in the chat feed. An awaiting-approval status chip is
+    /// omitted when a pending approval card for the same task is already
+    /// in the feed, same rule as the Slint phone feed (#23).
+    pub fn visible_items(&self) -> impl Iterator<Item = (&Row, &Meta)> {
+        self.rows.iter().filter_map(|(_, row, meta)| {
+            if hide_awaiting_status_chip(&self.rows, row) {
+                None
+            } else {
+                Some((row, meta))
+            }
+        })
     }
 
     #[cfg(test)]
@@ -2165,6 +2221,7 @@ mod tests {
                 reason_code: None,
                 owner_id: None,
                 owner_name: None,
+                task_id: None,
             })
         };
         let mut feed = Feed::default();
@@ -2732,5 +2789,116 @@ mod tests {
         }
         let _zh = scoped(Locale::Zh);
         assert_eq!(card.shown_line(), "等你批准");
+    }
+
+    fn approval_for_task(id: &str, task: &str, bot: &str, summary: &str) -> Event {
+        Event::Approval {
+            reason_code: None,
+            id: id.into(),
+            bot_id: format!("bot-{bot}"),
+            bot_name: bot.into(),
+            action: robroz_contract::ApprovalAction::Send,
+            summary: summary.into(),
+            path: None,
+            decision: None,
+            created_at: "2026-10-07T19:00:01.000Z".into(),
+            answered_at: None,
+            answered_by: None,
+            task_id: Some(task.into()),
+            mcp_server: None,
+            mcp_tool: None,
+            reason: None,
+            expires_at: None,
+            owner_name: None,
+            owner_user_id: None,
+        }
+    }
+
+    #[test]
+    fn awaiting_status_chip_is_hidden_when_the_pending_approval_card_is_shown() {
+        let _en = robroz_ui::i18n::scoped(robroz_ui::i18n::Locale::En);
+        let mut feed = Feed::default();
+        feed.apply(&text("m1", "please publish the notes"));
+        feed.apply(&blocked_waiting(Some(WaitingFor::Approval)));
+        feed.apply(&approval_for_task("a1", "t5", "Ada", "Publish the notes"));
+        assert!(
+            feed.rows()
+                .any(|r| matches!(r, Row::Status(c) if c.awaits_approval())),
+            "the status card stays in the feed"
+        );
+        let kinds: Vec<_> = feed
+            .visible_items()
+            .map(|(r, _)| match r {
+                Row::Text { .. } => "text",
+                Row::Status(_) => "status",
+                Row::Card(Card::Approval(_)) => "approval",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, ["text", "approval"]);
+
+        // Awaiting, but no approval card: keep the chip.
+        let mut alone = Feed::default();
+        alone.apply(&blocked_waiting(Some(WaitingFor::Approval)));
+        let vis: Vec<_> = alone.visible_items().map(|(r, _)| r).collect();
+        assert_eq!(vis.len(), 1);
+        let Row::Status(c) = vis[0] else {
+            panic!("status item");
+        };
+        assert_eq!(c.shown_line(), "Needs your approval");
+
+        // A pending card for a different task does not hide this chip.
+        let mut other = Feed::default();
+        other.apply(&blocked_waiting(Some(WaitingFor::Approval)));
+        other.apply(&approval_for_task("a2", "t-other", "Ada", "other"));
+        assert!(
+            other
+                .visible_items()
+                .any(|(r, _)| matches!(r, Row::Status(_))),
+            "a card for another task leaves this chip visible"
+        );
+    }
+
+    #[test]
+    fn equal_timestamps_put_the_message_before_the_task_card() {
+        let at = "2026-11-27T14:12:12.360Z";
+        let mut feed = Feed::default();
+        // Task event first, the way a `/say` snapshot can arrive.
+        let mut ev = status("t-say", "Ada", TaskState::Running, true);
+        if let Event::Status {
+            created_at,
+            updated_at,
+            ..
+        } = &mut ev
+        {
+            *created_at = at.into();
+            *updated_at = at.into();
+        }
+        feed.apply(&ev);
+        let mut msg = text("m-say", "@Ada also try a version with the logo on the left");
+        if let Event::Message { created_at, .. } = &mut msg {
+            *created_at = at.into();
+        }
+        feed.apply(&msg);
+        assert!(
+            matches!(feed.rows().next(), Some(Row::Status(_))),
+            "the stored feed keeps arrival order"
+        );
+
+        let items: Vec<_> = feed.items().map(|(r, m)| (r, m.clone())).collect();
+        let kinds: Vec<_> = chat_blocks(items, 300, &chrono::Utc, |r| r.feed_rank())
+            .into_iter()
+            .filter_map(|b| match b {
+                robroz_ui::runs::Block::Run(run) => Some(run.items),
+                _ => None,
+            })
+            .flatten()
+            .map(|r| match r {
+                Row::Text { .. } => "text",
+                Row::Status(_) => "status",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, ["text", "status"]);
     }
 }

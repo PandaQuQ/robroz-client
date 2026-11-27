@@ -178,6 +178,10 @@ pub struct ApprovalCard {
     pub owner_id: Option<String>,
     /// The owner's display name (`ownerName`), for "Waiting for {owner}".
     pub owner_name: Option<String>,
+    /// Host `taskId` when this card belongs to a task. Used to hide the
+    /// awaiting-approval status chip next to this card (desktop, same
+    /// rule as the Slint phone feed).
+    pub task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,6 +246,7 @@ impl ApprovalCard {
             expires_at,
             owner_user_id,
             owner_name,
+            task_id,
             ..
         } = event
         else {
@@ -288,6 +293,7 @@ impl ApprovalCard {
             reason_code: *reason_code,
             owner_id: owner_user_id.clone(),
             owner_name: owner_name.clone(),
+            task_id: task_id.clone(),
         })
     }
 

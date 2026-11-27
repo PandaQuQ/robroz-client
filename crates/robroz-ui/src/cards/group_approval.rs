@@ -11,7 +11,7 @@ use super::interact::{ApprovalActions, CardUi, Note};
 use super::review_rules;
 use super::status::{self, clock_in, Dot};
 use super::{ApprovalCard, ApprovalState};
-use crate::i18n::Key;
+use crate::i18n::{host_text, Key};
 use robroz_contract::{UserRole, BOOTSTRAP_ADMIN_ID};
 
 /// Who is looking at an approval card.
@@ -164,6 +164,29 @@ pub struct PhoneLine {
     pub dot: Dot,
 }
 
+/// Pending-owner status line: the waiting-for-you prefix plus the host
+/// summary after [`host_text`], the same mapping the desktop approval
+/// card uses (`view::approval_summary`). Empty summaries drop the
+/// detail. A summary that already starts with the waiting-for-you
+/// prefix is left as-is so the prefix is not doubled.
+fn pending_waiting_status(summary: &str) -> String {
+    let mapped = host_text(summary.trim());
+    let mapped = mapped.trim();
+    if mapped.is_empty() {
+        return Key::ApprovalWaitingForYou.into();
+    }
+    let waiting = String::from(Key::ApprovalWaitingForYou);
+    let already = mapped == waiting
+        || mapped.starts_with(&format!("{waiting}: "))
+        || mapped.starts_with(&format!("{waiting}:"))
+        || mapped.starts_with(&format!("{waiting}："));
+    if already {
+        mapped.to_string()
+    } else {
+        Key::ApprovalWaitingForYouDetail.fill(&[&mapped])
+    }
+}
+
 pub fn phone_line<Tz: TimeZone>(
     card: &ApprovalCard,
     me: Option<&str>,
@@ -176,12 +199,7 @@ where
     match &card.state {
         ApprovalState::Pending => {
             if can_answer(card, me, role) {
-                let d = card.summary.trim();
-                let status = if d.is_empty() {
-                    Key::ApprovalWaitingForYou.into()
-                } else {
-                    Key::ApprovalWaitingForYouDetail.fill(&[&d])
-                };
+                let status = pending_waiting_status(&card.summary);
                 PhoneLine {
                     status,
                     line: Some(Key::ApprovalHandleOnDesktop.into()),
@@ -277,6 +295,7 @@ mod tests {
             reason: None,
             owner_id: owner.map(|o| o.0.into()),
             owner_name: owner.map(|o| o.1.into()),
+            task_id: None,
         }
     }
 
@@ -556,6 +575,7 @@ mod tests {
             reason: None,
             owner_id: owner.map(|o| o.0.into()),
             owner_name: owner.map(|o| o.1.into()),
+            task_id: None,
         }
     }
 
@@ -577,6 +597,73 @@ mod tests {
         let l = phone_line(&c, Some("u-me"), None, &Utc);
         assert_eq!(l.status, "等你批准：Delete 12 old log files");
         assert_eq!(l.line.as_deref(), Some("到桌面上批准或拒绝"));
+    }
+
+    #[test]
+    fn phone_owner_pending_localizes_host_write_summary() {
+        let c = pending_card(
+            Some(("u-me", "Panda")),
+            "要对外写入：Publish the release notes to the project blog",
+            false,
+        );
+        {
+            let _en = scoped(Locale::En);
+            let l = phone_line(&c, Some("u-me"), None, &Utc);
+            assert_eq!(
+                l.status,
+                "Waiting for your approval: Writes to an outside service: Publish the release notes to the project blog"
+            );
+            assert!(!l.status.contains("要对外写入"));
+            assert_eq!(l.status.matches("Waiting for your approval").count(), 1);
+            assert_eq!(l.line.as_deref(), Some("Approve or decline on desktop"));
+        }
+        let _zh = scoped(Locale::Zh);
+        let l = phone_line(&c, Some("u-me"), None, &Utc);
+        assert_eq!(
+            l.status,
+            "等你批准：要对外写入：Publish the release notes to the project blog"
+        );
+        assert_eq!(l.status.matches("等你批准").count(), 1);
+        assert_eq!(l.line.as_deref(), Some("到桌面上批准或拒绝"));
+    }
+
+    #[test]
+    fn phone_owner_pending_localizes_chinese_host_write_summary() {
+        let c = pending_card(
+            Some(("u-me", "Panda")),
+            "要对外写入：把发布说明发到项目博客",
+            false,
+        );
+        {
+            let _en = scoped(Locale::En);
+            let l = phone_line(&c, Some("u-me"), None, &Utc);
+            assert_eq!(
+                l.status,
+                "Waiting for your approval: Writes to an outside service: 把发布说明发到项目博客"
+            );
+            assert!(!l.status.contains("要对外写入"));
+            assert_eq!(l.status.matches("Waiting for your approval").count(), 1);
+        }
+        let _zh = scoped(Locale::Zh);
+        let l = phone_line(&c, Some("u-me"), None, &Utc);
+        assert_eq!(l.status, "等你批准：要对外写入：把发布说明发到项目博客");
+        assert_eq!(l.status.matches("等你批准").count(), 1);
+    }
+
+    #[test]
+    fn phone_owner_pending_does_not_double_a_waiting_prefix() {
+        let _en = scoped(Locale::En);
+        let already = pending_card(
+            Some(("u-me", "Panda")),
+            "Waiting for your approval: Delete 12 old log files",
+            false,
+        );
+        let l = phone_line(&already, Some("u-me"), None, &Utc);
+        assert_eq!(
+            l.status,
+            "Waiting for your approval: Delete 12 old log files"
+        );
+        assert_eq!(l.status.matches("Waiting for your approval").count(), 1);
     }
 
     #[test]

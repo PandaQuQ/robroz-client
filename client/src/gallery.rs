@@ -66,6 +66,7 @@ fn approval(state: ApprovalState, bot: &str) -> Card {
         reason_code: None,
         owner_id: None,
         owner_name: None,
+        task_id: None,
     })
 }
 

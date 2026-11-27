@@ -27,6 +27,44 @@ pub trait RunSender: Clone {
 pub struct Meta<S> {
     pub sender: S,
     pub at: Option<i64>,
+    /// Tie-break when `at` is equal: a lower rank is drawn first.
+    /// [`RANK_MESSAGE`] sits above [`RANK_TASK`], which sits above
+    /// [`RANK_CARD`], so a `/say` trigger message appears above the
+    /// task card created at the same instant.
+    pub rank: u8,
+}
+
+/// A chat message or attachment.
+pub const RANK_MESSAGE: u8 = 0;
+/// A task status card, or a delivery.
+pub const RANK_TASK: u8 = 1;
+/// An approval, confirm, choice, draft, or reminder card.
+pub const RANK_CARD: u8 = 2;
+
+/// Effective timestamp for sorting: an item with no time inherits the
+/// previous item's effective time, in arrival order. Leading items
+/// with no time use [`i64::MIN`] so they sort first and keep arrival
+/// order among themselves when rank is equal.
+fn effective_times<T, S>(items: &[(T, Meta<S>)]) -> Vec<i64> {
+    let mut out = Vec::with_capacity(items.len());
+    let mut prev = None;
+    for (_, meta) in items {
+        let at = meta.at.or(prev).unwrap_or(i64::MIN);
+        out.push(at);
+        prev = Some(at);
+    }
+    out
+}
+
+/// Total order: `(effective_at, kind rank, arrival index)`. A `/say`
+/// trigger message and its task at the same instant therefore sort as
+/// message then task, and a missing time cannot make the order
+/// unspecified or panic.
+fn sort_by_time_and_rank<T, S>(items: &mut Vec<(T, Meta<S>)>) {
+    let times = effective_times(items);
+    let mut indexed: Vec<(usize, (T, Meta<S>))> = items.drain(..).enumerate().collect();
+    indexed.sort_by_key(|(i, (_, meta))| (times[*i], meta.rank, *i));
+    items.extend(indexed.into_iter().map(|(_, item)| item));
 }
 
 /// Consecutive items of one sender, drawn as one block.
@@ -110,6 +148,8 @@ pub fn blocks<T, S: RunSender, Tz: TimeZone>(
     window: i64,
     tz: &Tz,
 ) -> Vec<Block<T, S>> {
+    let mut items: Vec<_> = items.into_iter().collect();
+    sort_by_time_and_rank(&mut items);
     let runs = group_items_if(items, window, |a, b| day_of(a, tz) == day_of(b, tz));
     let mut out = Vec::new();
     let mut last_day = None;
@@ -196,6 +236,7 @@ mod tests {
         Meta {
             sender: Who::Own,
             at,
+            rank: 0,
         }
     }
 
@@ -203,6 +244,7 @@ mod tests {
         Meta {
             sender: Who::Bro(name),
             at,
+            rank: 0,
         }
     }
 
@@ -322,5 +364,82 @@ mod tests {
         assert_eq!(date_label(yesterday, now, &tz), "昨天");
         assert_eq!(date_label(same_year, now, &tz), "1月1日");
         assert_eq!(date_label(older, now, &tz), "2024年1月1日");
+    }
+
+    fn run_items<'a>(blocks: &'a [Block<&'a str, Who>]) -> Vec<&'a str> {
+        blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Run(r) => Some(r.items.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .copied()
+            .collect()
+    }
+
+    fn ranked(sender: Who, at: Option<i64>, rank: u8) -> Meta<Who> {
+        Meta { sender, at, rank }
+    }
+
+    #[test]
+    fn equal_timestamps_put_a_lower_rank_first() {
+        // Status arrives first, as `/say` may write the task event before
+        // the client sees the trigger message. Same created_at: the
+        // message must still be drawn first.
+        let ordered = super::blocks(
+            [
+                ("status", ranked(Who::Bro("Ada"), Some(T0), RANK_TASK)),
+                ("message", ranked(Who::Own, Some(T0), RANK_MESSAGE)),
+                ("approval", ranked(Who::Bro("Ada"), Some(T0), RANK_CARD)),
+                ("later", ranked(Who::Own, Some(T0 + 60), RANK_MESSAGE)),
+            ],
+            GROUP_SECS,
+            &chrono::Utc,
+        );
+        assert_eq!(
+            run_items(&ordered),
+            ["message", "status", "approval", "later"]
+        );
+
+        // Same time and rank: arrival order is kept (stable sort).
+        let ordered = super::blocks(
+            [
+                ("first", ranked(Who::Own, Some(T0), RANK_MESSAGE)),
+                ("second", ranked(Who::Own, Some(T0), RANK_MESSAGE)),
+            ],
+            GROUP_SECS,
+            &chrono::Utc,
+        );
+        assert_eq!(run_items(&ordered), ["first", "second"]);
+    }
+
+    #[test]
+    fn untimed_items_inherit_the_previous_effective_time() {
+        // A(10), B(None), C(5) is not a partial-order trap: C sorts first,
+        // then A, then B which inherits A's time.
+        let ordered = super::blocks(
+            [
+                ("A", ranked(Who::Own, Some(T0 + 10), RANK_MESSAGE)),
+                ("B", ranked(Who::Own, None, RANK_MESSAGE)),
+                ("C", ranked(Who::Own, Some(T0 + 5), RANK_MESSAGE)),
+            ],
+            GROUP_SECS,
+            &chrono::Utc,
+        );
+        assert_eq!(run_items(&ordered), ["C", "A", "B"]);
+
+        // Leading items with no time sort first, in arrival order when
+        // rank is equal, before any real timestamp.
+        let ordered = super::blocks(
+            [
+                ("lead1", ranked(Who::Own, None, RANK_MESSAGE)),
+                ("lead2", ranked(Who::Own, None, RANK_MESSAGE)),
+                ("later", ranked(Who::Own, Some(T0), RANK_MESSAGE)),
+            ],
+            GROUP_SECS,
+            &chrono::Utc,
+        );
+        assert_eq!(run_items(&ordered), ["lead1", "lead2", "later"]);
     }
 }

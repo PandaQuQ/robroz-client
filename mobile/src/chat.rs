@@ -287,6 +287,14 @@ fn hide_awaiting_status_pill(items: &[ChatItem], item: &ChatItem) -> bool {
     })
 }
 
+fn item_rank(item: &ChatItem) -> u8 {
+    match item {
+        ChatItem::Text { .. } => runs::RANK_MESSAGE,
+        ChatItem::Status(_) => runs::RANK_TASK,
+        ChatItem::Approval(_) => runs::RANK_CARD,
+    }
+}
+
 /// Group items into runs and date separators for the feed.
 /// `in_group` shows the bro name once at the start of each bro run.
 pub fn feed(items: &[ChatItem], fallback: &str, in_group: bool, now: i64) -> Vec<FeedEntry> {
@@ -304,7 +312,14 @@ pub fn feed(items: &[ChatItem], fallback: &str, in_group: bool, now: i64) -> Vec
         .enumerate()
         .map(|(i, item)| {
             let (sender, at) = item_meta(item, fallback);
-            (i, Meta { sender, at })
+            (
+                i,
+                Meta {
+                    sender,
+                    at,
+                    rank: item_rank(item),
+                },
+            )
         })
         .collect();
     let blocks = runs::blocks_local(prepared, GROUP_SECS);
@@ -701,5 +716,37 @@ mod tests {
             panic!("status item");
         };
         assert_eq!(c.shown_status(), "Needs your approval");
+    }
+
+    #[test]
+    fn equal_timestamps_put_the_message_before_the_status_card() {
+        let at = "2026-11-27T14:12:12.360Z";
+        let mut ev = status_event("t-say", "b1", "Ada", TaskState::Running);
+        if let Event::Status {
+            created_at,
+            updated_at,
+            ..
+        } = &mut ev
+        {
+            *created_at = at.into();
+            *updated_at = at.into();
+        }
+        // Status first, as a `/say` snapshot can arrive.
+        let items = build(&[
+            (ev, false),
+            (
+                msg_at(
+                    "m-say",
+                    "@Ada also try a version with the logo on the left",
+                    at,
+                ),
+                true,
+            ),
+        ]);
+        assert!(
+            matches!(items[0], ChatItem::Status(_)),
+            "the item list keeps arrival order"
+        );
+        assert_eq!(feed_row_kinds(&items), ["text", "status"]);
     }
 }
