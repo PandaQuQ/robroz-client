@@ -4481,8 +4481,8 @@ fn fail_detail_line<'a>(t: &Skin, detail: &str) -> Element<'a, Message> {
         .into()
 }
 
-/// The status dot: accent for a running card, green done, amber stuck,
-/// grey otherwise (queued, a dead run, waiting on approval).
+/// The status dot: accent for a running card, green done, amber stuck
+/// (including a task waiting on approval), grey otherwise (queued, a dead run).
 fn status_dot_kind(card: &StatusCard) -> Option<robroz_ui::cards::status::Dot> {
     use robroz_ui::cards::status::Dot;
     match card.tone {

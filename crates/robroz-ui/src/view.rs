@@ -8,7 +8,7 @@ use chrono::Local;
 use iced::widget::text::{LineHeight, Wrapping};
 use iced::widget::{
     button, canvas, column, container, hover, mouse_area, pick_list, row, scrollable, space, text,
-    text_input, Space,
+    text_input, tooltip, Space,
 };
 use iced::{
     font, Alignment, Background, Border, Color, Element, Fill, Font, Length, Padding, Pixels,
@@ -3577,6 +3577,7 @@ fn conversation_row<'a>(
         .align_x(Alignment::Center);
     let body_w = width - 2.0 * ROW_PAD_H - ROW_GAP - h::ROW_FACE_W;
     let name = conversations::fit(&c.name, units_in(t, body_w - TIME_W, h::ROW_NAME));
+    let truncated = name != c.name;
     let has_preview = conversations::has_preview(c);
     let preview = conversations::fit(
         c.preview.as_deref().unwrap_or_default(),
@@ -3655,14 +3656,45 @@ fn conversation_row<'a>(
     } else {
         content
     };
-    button(inner)
+    let row_btn: Element<'a, Action> = button(inner)
         .width(Fill)
         .padding(0)
         .style(conversation_row_style(*t, selected))
         .on_press(Action::OpenChat {
             group: c.group_id.clone(),
         })
-        .into()
+        .into();
+    // Truncated names show the full name on hover. The sidebar stays 220px.
+    if truncated {
+        name_tooltip(t, row_btn, c.name.clone())
+    } else {
+        row_btn
+    }
+}
+
+fn name_tooltip<'a>(t: &Skin, content: Element<'a, Action>, full: String) -> Element<'a, Action> {
+    let t = *t;
+    tooltip(
+        content,
+        container(
+            text(full)
+                .size(t.type_.foot)
+                .color(color(t.palette.text))
+                .wrapping(Wrapping::None),
+        )
+        .padding(Padding::from([6.0, 8.0]))
+        .style(move |_| container::Style {
+            background: Some(color(t.palette.surface).into()),
+            border: Border::default()
+                .width(1.0)
+                .color(color(t.palette.border2))
+                .rounded(8.0),
+            ..container::Style::default()
+        }),
+        tooltip::Position::FollowCursor,
+    )
+    .gap(8)
+    .into()
 }
 
 /// Inputs for the v0.2 home list (sidebar or narrow full-screen).
@@ -3723,14 +3755,37 @@ fn plus_button(t: &Skin) -> Element<'static, Action> {
 /// Search capsule: the capsule draws the fill and border; the input is
 /// borderless and transparent, 16px in from each side.
 fn search_capsule<'a>(t: &Skin, query: &'a str) -> Element<'a, Action> {
+    capsule_search(
+        t,
+        Key::HomeSearchPlaceholder.as_str(),
+        query,
+        Some(|text| Action::HomeSearchEdit { text }),
+        None,
+    )
+}
+
+/// The home search capsule: a borderless transparent input inside a
+/// pill, 16px side padding. Find-in-chat uses the same component.
+fn capsule_search<'a>(
+    t: &Skin,
+    placeholder: &'static str,
+    query: &'a str,
+    on_input: Option<fn(String) -> Action>,
+    on_submit: Option<Action>,
+) -> Element<'a, Action> {
     use robroz_tokens::home as h;
     let t = *t;
-    let input = text_input(Key::HomeSearchPlaceholder.as_str(), query)
+    let mut input = text_input(placeholder, query)
         .size(t.type_.body)
         .padding(0)
         .width(Fill)
-        .style(composer_input_style(t))
-        .on_input(|text| Action::HomeSearchEdit { text });
+        .style(composer_input_style(t));
+    if let Some(on_input) = on_input {
+        input = input.on_input(on_input);
+    }
+    if let Some(on_submit) = on_submit {
+        input = input.on_submit(on_submit);
+    }
     container(input)
         .width(Fill)
         .height(Length::Fixed(h::SEARCH))
@@ -5435,13 +5490,13 @@ pub fn find_in_chat_page<'a>(
     let bar = container(row![back, title].spacing(12).align_y(Alignment::Center))
         .width(Fill)
         .padding(Padding::from([8.0, t.metrics.stream_padding]));
-    let mut input = text_input(Key::FindInChatPlaceholder.as_str(), query)
-        .size(t.type_.body)
-        .padding(Padding::from([10.0, 14.0]))
-        .on_submit(Action::FindInChatSubmit);
-    if !busy {
-        input = input.on_input(|text| Action::FindInChatEdit { text });
-    }
+    let input = capsule_search(
+        t,
+        Key::FindInChatPlaceholder.as_str(),
+        query,
+        (!busy).then_some(|text| Action::FindInChatEdit { text }),
+        Some(Action::FindInChatSubmit),
+    );
     let mut col = column![
         bar,
         container(input).padding(Padding::from([0.0, t.metrics.stream_padding]))

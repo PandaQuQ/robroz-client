@@ -160,7 +160,7 @@ impl StatusCard {
                 robroz_card::failure_line(f),
             ),
             None if awaits_approval(*state, *waiting_for) => (
-                robroz_card::appearance(TaskState::Running, false),
+                robroz_card::awaiting_approval(),
                 AWAITING_APPROVAL.to_string(),
             ),
             None => (
@@ -388,13 +388,13 @@ mod tests {
     }
 
     #[test]
-    fn waiting_for_approval_is_grey_with_its_own_line() {
+    fn waiting_for_approval_is_amber_with_its_own_line() {
         let mut ev = status(TaskState::Blocked, true);
         if let Event::Status { waiting_for, .. } = &mut ev {
             *waiting_for = Some(WaitingFor::Approval);
         }
         let card = StatusCard::from_event(&ev).unwrap();
-        assert_eq!(card.tone, Tone::Gray);
+        assert_eq!(card.tone, Tone::Amber, "blocked yellow, not dead-run grey");
         let _en = scoped(Locale::En);
         assert_eq!(card.shown_status(), "Needs your approval");
     }

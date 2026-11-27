@@ -242,7 +242,7 @@ pub(super) fn text(key: Key) -> &'static str {
         // ---- Card footnotes after a click (cards/interact.rs) ----
         Key::InteractAlreadyPicked => "已经有人选过了，正在刷新",
         Key::InteractAlreadyDecided => "这张卡已经处理过了，正在刷新",
-        Key::ApprovalWaitingFor => "等待 {0} 审批",
+        Key::ApprovalWaitingFor => "等这个 bro 的主人审批",
         Key::ApprovalApprovedBy => "{0} 于 {1} 批准",
         Key::ApprovalDeniedBy => "{0} 于 {1} 拒绝",
         Key::ApprovalApprovedByYou => "你于 {0} 批准",
@@ -573,6 +573,8 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ProcessWorkingAbout => "处理中约 {0}",
         Key::ProcessWorked => "用了 {0}",
         Key::ProcessWorkedAbout => "用了约 {0}",
+        Key::ProcessWorkingUnder1 => "处理中不到 1 秒",
+        Key::ProcessWorkedUnder1 => "用了不到 1 秒",
         Key::ProcessSecs => "{0} 秒",
         Key::ProcessMins => "{0} 分 {1} 秒",
         Key::WorkingRowOne => "{0} 在处理…",

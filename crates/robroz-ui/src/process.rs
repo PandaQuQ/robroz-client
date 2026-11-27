@@ -80,6 +80,9 @@ impl TimerPhase {
     pub fn line(self) -> Option<String> {
         match self {
             Self::Hidden => None,
+            // Under 1s never reads "0s" / 「约 0 秒」, exact or approximate.
+            Self::Running { secs: 0, .. } => Some(Key::ProcessWorkingUnder1.into()),
+            Self::Done { secs: 0, .. } => Some(Key::ProcessWorkedUnder1.into()),
             Self::Running { secs, approx } => {
                 let d = format_duration(secs);
                 if approx {
@@ -261,6 +264,39 @@ mod tests {
         let _zh = scoped(Locale::Zh);
         assert_eq!(format_duration(12), "12 秒");
         assert_eq!(format_duration(72), "1 分 12 秒");
+    }
+
+    #[test]
+    fn under_one_second_never_says_zero() {
+        let running = |approx| TimerPhase::Running { secs: 0, approx };
+        let done = |approx| TimerPhase::Done { secs: 0, approx };
+        let _en = scoped(Locale::En);
+        for approx in [false, true] {
+            assert_eq!(running(approx).line().as_deref(), Some("Working under 1s"));
+            assert_eq!(done(approx).line().as_deref(), Some("Worked for under 1s"));
+        }
+        assert_eq!(
+            line_spans("Worked for under 1s"),
+            vec![
+                ("Worked for under ".into(), false),
+                ("1".into(), true),
+                ("s".into(), false),
+            ]
+        );
+        drop(_en);
+        let _zh = scoped(Locale::Zh);
+        for approx in [false, true] {
+            assert_eq!(running(approx).line().as_deref(), Some("处理中不到 1 秒"));
+            assert_eq!(done(approx).line().as_deref(), Some("用了不到 1 秒"));
+        }
+        assert_eq!(
+            line_spans("用了不到 1 秒"),
+            vec![
+                ("用了不到 ".into(), false),
+                ("1".into(), true),
+                (" 秒".into(), false),
+            ]
+        );
     }
 
     #[test]

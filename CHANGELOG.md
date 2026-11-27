@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Client on `contract-v0.3.0`: failure, progress and approval-reason lines are drawn from `failureCode` + `failureDetail`, `progressCode` + `progressParams` and `reasonCode` with the client's own zh/en copy; host text is never shown. Raw details such as `response_not_json` sit on a monospace detail line under the failure (the old "Show details" toggle is gone). Unknown codes show 「出错了」/ "Something went wrong" (progress: 「进行中」/ "In progress") and are logged.
 - `POST /api/approvals/{id}/approve` and `/deny` return 403 `{"code":"approval_forbidden","reason":"not_owner"|"decided"|"expired"}` instead of 409 for an answered or expired card, and for a caller who is not the bro's owner. Renaming a bro, opening its DM or adding it to a group by someone else is 403 `not_bro_owner`. `GET /api/bros` lists the caller's bros. The host no longer writes 「已发到主人私聊」.
 
+### Fixed
+
+- Approval, process and find-in-chat follow-ups from the PR4 review: a non-owner sees "Waiting for this bro's owner" / 「等这个 bro 的主人审批」 (not the owner's account name); a duration under 1s reads "Worked for under 1s" / 「用了不到 1 秒」 (live: "Working under 1s" / 「处理中不到 1 秒」); a task blocked on an approval keeps the `status.blocked` yellow dot; find-in-chat uses the same search capsule as the home list. A truncated sidebar name shows the full name on hover. The sidebar stays 220px.
+
 ## [0.1.1] - 2026-11-25
 
 Published as a pre-release.

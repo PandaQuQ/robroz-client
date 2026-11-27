@@ -414,4 +414,12 @@ fn pr4_review_copy_is_in_place() {
     // The confirm button keeps the short verb.
     assert_eq!(zh(Key::GroupDeleteConfirm), "删除");
     assert_eq!(en(Key::GroupDeleteConfirm), "Delete");
+    assert_eq!(zh(Key::GroupMenuRename), "改名");
+    assert_eq!(en(Key::GroupMenuRename), "Rename");
+    assert_eq!(zh(Key::ApprovalWaitingFor), "等这个 bro 的主人审批");
+    assert_eq!(en(Key::ApprovalWaitingFor), "Waiting for this bro's owner");
+    assert_eq!(zh(Key::ProcessWorkedUnder1), "用了不到 1 秒");
+    assert_eq!(en(Key::ProcessWorkedUnder1), "Worked for under 1s");
+    assert_eq!(zh(Key::ProcessWorkingUnder1), "处理中不到 1 秒");
+    assert_eq!(en(Key::ProcessWorkingUnder1), "Working under 1s");
 }

@@ -481,8 +481,8 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::InteractAlreadyPicked => "Someone already picked. Refreshing…",
         // 这张卡已经处理过了，正在刷新  [approved, batch 2]
         Key::InteractAlreadyDecided => "This card was already handled. Refreshing…",
-        // 等待 {owner} 审批  [approved, group approval spec]
-        Key::ApprovalWaitingFor => "Waiting for {0}",
+        // 等这个 bro 的主人审批  [approved, UI姐 review]
+        Key::ApprovalWaitingFor => "Waiting for this bro's owner",
         // {0} 于 {1} 批准  [approved, group approval spec]
         Key::ApprovalApprovedBy => "Approved by {0} at {1}",
         // {0} 于 {1} 拒绝  [approved, group approval spec]
@@ -671,7 +671,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::GroupMenuProfile => "View profile",
         // PR4 copy  [approved, UI姐 review]
         Key::GroupMenuFind => "Find in chat",
-        // Needs UI review.
+        // 改名  [approved, UI姐 review]
         Key::GroupMenuRename => "Rename",
         // 删除群  [approved, UI姐 PR4 review]
         Key::GroupMenuDelete => "Delete group",
@@ -1121,6 +1121,10 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ProcessWorked => "Worked for {0}",
         // 用了约 {0}  [approved, PR3 process]
         Key::ProcessWorkedAbout => "Worked for ~{0}",
+        // 处理中不到 1 秒  [approved, UI姐 review]
+        Key::ProcessWorkingUnder1 => "Working under 1s",
+        // 用了不到 1 秒  [approved, UI姐 review]
+        Key::ProcessWorkedUnder1 => "Worked for under 1s",
         // {0} 秒  [approved, PR3 process]
         Key::ProcessSecs => "{0}s",
         // {0} 分 {1} 秒  [approved, PR3 process]
