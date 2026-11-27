@@ -465,4 +465,34 @@ mod tests {
         let _zh = scoped(Locale::Zh);
         assert_eq!(card.shown_status(), "等你批准");
     }
+
+    #[test]
+    fn a_task_that_started_two_hours_ago_shows_the_elapsed_duration() {
+        let mut ev = status(TaskState::Running, true);
+        if let Event::Status {
+            started_at,
+            created_at,
+            updated_at,
+            ..
+        } = &mut ev
+        {
+            *created_at = "2026-11-27T14:12:12.000Z".into();
+            *started_at = Some("2026-11-27T14:12:13.000Z".into());
+            *updated_at = "2026-11-27T14:12:13.000Z".into();
+        }
+        let card = StatusCard::from_event(&ev).unwrap();
+        let start = robroz_ui::process::parse_unix("2026-11-27T14:12:13.000Z").unwrap();
+        let now = start + 2 * 60 * 60 + 5 * 60;
+        {
+            let _en = scoped(Locale::En);
+            assert_eq!(card.process_line(now).as_deref(), Some("Working 125m 0s"));
+            assert_ne!(card.process_line(now).as_deref(), Some("Working under 1s"));
+        }
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(
+            card.process_line(now).as_deref(),
+            Some("处理中 125 分 0 秒")
+        );
+        assert_ne!(card.process_line(now).as_deref(), Some("处理中不到 1 秒"));
+    }
 }
