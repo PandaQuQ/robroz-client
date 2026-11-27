@@ -681,17 +681,17 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::AvatarNotOwner => "Only this bro's owner can change its avatar",
         // 头像没存上，再试一次  [approved, PR2 avatar]
         Key::AvatarSaveFailed => "Couldn't save the avatar. Try again",
-        // 头像  // Needs UI review.
+        // 头像  [approved, PR2 avatar]
         Key::AvatarTitle => "Avatar",
-        // 形状  // Needs UI review.
+        // 形状  [approved, PR2 avatar]
         Key::AvatarShape => "Shape",
-        // 颜色  // Needs UI review.
+        // 颜色  [approved, PR2 avatar]
         Key::AvatarColor => "Color",
-        // 用默认头像  // Needs UI review.
+        // 用默认头像  [approved, PR2 avatar]
         Key::AvatarUseDefault => "Use default",
-        // 给 bro 起个名字  // Needs UI review.
+        // 给 bro 起个名字  [approved, PR2 avatar]
         Key::CreateBroNamePlaceholder => "Name your bro",
-        // 引入  // Needs UI review.
+        // 引入  [approved, PR2 avatar]
         Key::CreateBroCreate => "Add",
         // 没发出去：{0}  [approved, batch 2]
         Key::ClientSendFailed => "Didn't send: {0}",

@@ -56,7 +56,7 @@ pub mod base {
         pub const SECTION_GAP: f32 = 24.0;
         pub const SELECTED_RING: f32 = 2.0;
         pub const SHAPE_CELL: f32 = 56.0;
-        pub const SHAPE_COLS: f32 = 5.0;
+        pub const SHAPE_COLS: f32 = 6.0;
         pub const SHAPE_GLYPH: f32 = 36.0;
         pub const SHAPES: f32 = 12.0;
         pub const SWATCH: f32 = 32.0;

@@ -162,6 +162,7 @@ fn apply_theme(ui: &MainWindow, mode: Mode) {
     brand.set_surface(color(p.surface));
     brand.set_border(color(p.border));
     brand.set_text3(color(p.text3));
+    brand.set_danger(color(robroz_ui::theme::DANGER));
     // Own bubbles and the send button use accentStrong + white in both
     // modes. Bro bubbles use surface + border.
     brand.set_own_bg(color(p.accent_strong));
@@ -218,8 +219,9 @@ fn apply_metrics(ui: &MainWindow) {
     am.set_preview_radius(a::PREVIEW_RADIUS);
     am.set_name_height(a::NAME_HEIGHT);
     am.set_name_radius(a::NAME_RADIUS);
-    am.set_cell(a::SHAPE_CELL);
-    am.set_cell_glyph(a::SHAPE_GLYPH);
+    // Phone: 48px cells, 12px gap, six per row (two rows). Desktop keeps 56.
+    am.set_cell(48.0);
+    am.set_cell_glyph(32.0);
     am.set_swatch(a::SWATCH);
     am.set_swatch_hit(a::SWATCH_HIT);
     am.set_ring(a::SELECTED_RING);
@@ -676,9 +678,9 @@ fn prepare_shot(ui: &MainWindow, state: &Arc<Mutex<State>>, shot: &str) {
                 let mut st = state.lock().unwrap();
                 st.chat = items;
                 st.chat_name = name.clone();
-                st.chat_in_group = true;
                 st.chat_group = group_id.to_string();
-                set_composer_hint(ui, &name, false);
+                st.chat_in_group = avatars::dm_bro(&st.bros, &st.chat_group).is_none();
+                set_composer_hint(ui, &name, !st.chat_in_group);
                 ui.set_composer_draft("".into());
                 ui.set_composer_focused(false);
                 ui.set_screen(screen);
@@ -924,8 +926,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             }
                             st.chat = items;
                             st.chat_name = name.clone();
-                            st.chat_in_group = true;
-                            set_composer_hint(&ui, &name, false);
+                            st.chat_in_group = avatars::dm_bro(&st.bros, &id).is_none();
+                            set_composer_hint(&ui, &name, !st.chat_in_group);
                             ui.set_composer_draft("".into());
                             ui.set_composer_focused(false);
                             render_chat(&ui, &st);

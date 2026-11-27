@@ -3478,14 +3478,6 @@ impl App {
         // composer_height + 16 instead; here the composer sits under the
         // feed, so the extra 16px is the visible gap.
         feed_col = feed_col.push(iced::widget::Space::new().height(16.0));
-        let feed_body = container(container(feed_col).width(Length::Fixed(column_w)))
-            .width(Fill)
-            .center_x(Fill);
-        let feed = scrollable(feed_body)
-            .id(FEED_ID)
-            .height(Fill)
-            .width(Fill)
-            .anchor_bottom();
         let (name, dm) = self
             .convs
             .get(id)
@@ -3535,21 +3527,43 @@ impl App {
         // The scrollable is the full main area so the scrollbar sits against
         // the window edge, not on the 720px column (where it clipped cards
         // and the own-bubble timestamp). The column width is unchanged.
+        // The title bar is stacked on top with a solid `window` fill, and
+        // the feed is padded by the bar's height so the first card starts
+        // below it. Scrolling then tucks messages under the bar, not
+        // through it.
+        let header_h = view::chat_header_height(t)
+            + if rename.is_some_and(|r| r.note.is_some()) {
+                t.type_.foot + 6.0
+            } else {
+                0.0
+            };
+        let feed_body = container(container(feed_col).width(Length::Fixed(column_w)))
+            .width(Fill)
+            .center_x(Fill)
+            .padding(Padding {
+                top: header_h,
+                ..Padding::ZERO
+            });
+        let feed = scrollable(feed_body)
+            .id(FEED_ID)
+            .height(Fill)
+            .width(Fill)
+            .anchor_bottom();
+        let header = view::chat_header(
+            t,
+            name,
+            dm,
+            self.narrow(),
+            rename,
+            view::HeaderBros {
+                avatars: &header_avatars,
+                more,
+                can_edit,
+            },
+        )
+        .map(Message::Ui);
         column![
-            view::chat_header(
-                t,
-                name,
-                dm,
-                self.narrow(),
-                rename,
-                view::HeaderBros {
-                    avatars: &header_avatars,
-                    more,
-                    can_edit,
-                },
-            )
-            .map(Message::Ui),
-            feed,
+            iced::widget::stack![feed, header].width(Fill).height(Fill),
             container(view::composer(t, draft, &hint, self.sending, note).map(Message::Ui))
                 .width(Fill)
                 .center_x(Fill)
@@ -3701,10 +3715,11 @@ fn group_view<'a>(
     let n = group.items.len();
     let mut col = column![].spacing(t.chat.gap_in);
     if in_group {
-        if let model::Sender::Bro { id, name } = &group.sender {
-            // The bro's colour; every palette entry is ≥4.5:1 on this theme.
-            let tint = avatar::color(avatar_for(bros, id).color, t.mode == Mode::Dark);
-            let label = text(name.clone()).size(t.type_.foot).color(color(tint));
+        if let model::Sender::Bro { name, .. } = &group.sender {
+            // Names stay `text2` (muted). Colour lives only on the avatar.
+            let label = text(name.clone())
+                .size(t.type_.foot)
+                .color(color(t.palette.text2));
             col = col.push(row![iced::widget::Space::new().width(gutter), label]);
         }
     }

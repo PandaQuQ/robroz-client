@@ -56,6 +56,12 @@ pub enum MaterialKind {
 /// sRGB with alpha.
 pub use robroz_tokens::Rgba;
 
+/// Destructive actions and inline error lines (`danger`). Same red in
+/// both themes; used for 「删除规则」 and the avatar save-failure line.
+pub const DANGER: Rgb = [0xc4, 0x47, 0x3a];
+/// Hover fill for a danger button.
+pub const DANGER_HOVER: Rgb = [0xb0, 0x3c, 0x32];
+
 /// Colours (THEMES.md `palette.*`; SPEC §1).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Palette {

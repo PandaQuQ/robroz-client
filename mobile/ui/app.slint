@@ -19,6 +19,7 @@ export global Brand {
     in property <color> segment-fill;
     in property <color> segment-text;
     in property <color> text3;
+    in property <color> danger;
 }
 
 // Lengths from robroz-tokens `base.chat`. Rust pushes the values; this
@@ -341,29 +342,30 @@ component AvatarPreview inherits VerticalLayout {
     // UI姐: one line under the preview, no pop-up.
     if root.note != "": Text {
         text: root.note;
-        color: Brand.muted;
+        color: Brand.danger;
         font-size: 13px;
         horizontal-alignment: center;
         overflow: elide;
     }
 }
 
-// 12 shapes, five per row (56px cells, 2px `ink` ring on the selected
-// one), then 10 colours as 32px circles in 44px hit areas. A phone is too
-// narrow for ten 44px targets in one row, so colours wrap five per row.
+// 12 shapes, six per row (48px cells, 12px gap, two rows), then 10
+// colours as 32px circles in 44px hit areas. A phone is too narrow for
+// ten 44px targets in one row, so colours wrap five per row.
 component AvatarPicker inherits VerticalLayout {
     in property <[PickerCell]> shapes;
     in property <[PickerCell]> swatches;
     callback pick-shape(int);
     callback pick-color(int);
     spacing: 8px;
-    property <length> gap: (self.width - 5 * AvatarMetrics.cell) / 4;
+    property <int> shape-cols: 6;
+    property <length> gap: 12px;
     Text { text: Tr.shape; color: Brand.text3; font-size: 13px; }
     Rectangle {
-        height: 3 * AvatarMetrics.cell + 2 * 12px;
+        height: 2 * AvatarMetrics.cell + root.gap;
         for c[i] in root.shapes: Rectangle {
-            x: mod(i, 5) * (AvatarMetrics.cell + root.gap);
-            y: floor(i / 5) * (AvatarMetrics.cell + 12px);
+            x: mod(i, root.shape-cols) * (AvatarMetrics.cell + root.gap);
+            y: floor(i / root.shape-cols) * (AvatarMetrics.cell + root.gap);
             width: AvatarMetrics.cell;
             height: AvatarMetrics.cell;
             border-radius: AvatarMetrics.cell / 4;
@@ -586,10 +588,14 @@ export component MainWindow inherits Window {
                         padding-left: root.title-avatars-width > 0 ? AvatarMetrics.title-pad : 14px;
                         padding-right: 14px;
                         spacing: 8px;
-                        if root.title-avatars-width > 0: Image {
-                            source: root.title-avatars;
+                        if root.title-avatars-width > 0: VerticalLayout {
+                            alignment: center;
                             width: root.title-avatars-width * 1px;
-                            height: AvatarMetrics.title-size;
+                            Image {
+                                source: root.title-avatars;
+                                width: root.title-avatars-width * 1px;
+                                height: AvatarMetrics.title-size;
+                            }
                         }
                         if root.title-more > 0: Text {
                             text: "+" + root.title-more;

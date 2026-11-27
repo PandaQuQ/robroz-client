@@ -170,7 +170,7 @@ fn preview_note<'a>(t: &Skin, note: Option<&'a str>) -> Element<'a, Action> {
         Some(n) => container(
             text(n.to_string())
                 .size(t.type_.foot)
-                .color(color(t.palette.text2)),
+                .color(color(crate::theme::DANGER)),
         )
         .width(Fill)
         .center_x(Fill)
@@ -227,7 +227,7 @@ fn cell_style(t: Skin, selected: bool) -> impl Fn(&IcedTheme, button::Status) ->
     }
 }
 
-/// 12 shapes, five per row, 56px cells (the selected one has a 2px `text`
+/// 12 shapes, six per row, 56px cells (the selected one has a 2px `text`
 /// ring); then 10 colour circles, 32px inside a 44px hit area. Each cell
 /// shows the shape in the current colour.
 pub fn avatar_picker<'a>(t: &Skin, current: BroAvatar) -> Element<'a, Action> {

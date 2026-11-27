@@ -35,7 +35,7 @@ use crate::conversations::{self, Conversation, Conversations};
 use robroz_contract::{McpSecretIn, McpServer};
 
 use crate::theme::{Mode, Rgb, Skin};
-use crate::widgets::{Check, CheckBox, Rings, Toggle};
+use crate::widgets::{CheckBox, Rings, Toggle};
 
 /// What a click on a new card or the routines panel asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1002,29 +1002,28 @@ fn btn_padded<'a>(
         match leading {
             Leading::None => {}
             Leading::Check => {
-                content = content.push(
-                    canvas(Check {
-                        color: fg_color,
-                        stroke: t.metrics.check_stroke,
-                    })
-                    .width(t.metrics.check_w)
-                    .height(t.metrics.check_h),
-                );
+                content = content.push(crate::widgets::check_mark(
+                    fg_color,
+                    t.metrics.check_stroke,
+                    t.metrics.check_w,
+                    t.metrics.check_h,
+                ));
             }
             Leading::Box(checked) => {
-                content = content.spacing(t.metrics.checkbox_gap).push(
-                    canvas(CheckBox {
-                        checked,
-                        fill: faded(t.palette.text, alpha),
-                        mark: color(t.palette.surface),
-                        border: faded(t.palette.border2, alpha),
-                        border_width: t.stroke.checkbox,
-                        radius: t.radii.checkbox,
-                        mark_stroke: t.metrics.check_stroke,
-                    })
-                    .width(t.controls.checkbox)
-                    .height(t.controls.checkbox),
-                );
+                content = content
+                    .spacing(t.metrics.checkbox_gap)
+                    .push(crate::widgets::checkbox(
+                        CheckBox {
+                            checked,
+                            fill: faded(t.palette.text, alpha),
+                            mark: color(t.palette.surface),
+                            border: faded(t.palette.border2, alpha),
+                            border_width: t.stroke.checkbox,
+                            radius: t.radii.checkbox,
+                            mark_stroke: t.metrics.check_stroke,
+                        },
+                        t.controls.checkbox,
+                    ));
             }
         }
         content = content.push(
@@ -1044,9 +1043,9 @@ fn btn_padded<'a>(
             // Proposed red for 「删除规则」; UI姐 to confirm the exact colour.
             Look::Danger => {
                 let fill = if hovered {
-                    [0xb0, 0x3c, 0x32]
+                    crate::theme::DANGER_HOVER
                 } else {
-                    [0xc4, 0x47, 0x3a]
+                    crate::theme::DANGER
                 };
                 (Some(faded(fill, alpha)), Border::default())
             }
@@ -3667,6 +3666,14 @@ pub struct HeaderRename<'a> {
 /// Widget id of the rename box, focused when editing starts.
 pub const RENAME_INPUT: &str = "robroz-rename-bro";
 
+/// Reserved height of the chat title bar, not counting a rename error line.
+/// The feed is padded by this so the first card sits below the bar, and
+/// the bar itself is an opaque `window` fill so scrolled messages cannot
+/// draw through it.
+pub fn chat_header_height(t: &Skin) -> f32 {
+    t.controls.touch_target.max(t.controls.button_h) + 12.0
+}
+
 /// Who is in the title capsule: up to three avatars, then `+N`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HeaderBros<'a> {
@@ -3808,7 +3815,7 @@ pub fn chat_header<'a>(
     }
     let mut col = column![container(bar)
         .width(Fill)
-        .height(Length::Fixed(h + 12.0))
+        .height(Length::Fixed(chat_header_height(t)))
         .align_y(Alignment::Center)]
     .spacing(0);
     if let Some(note) = rename.and_then(|r| r.note) {
@@ -3817,9 +3824,14 @@ pub fn chat_header<'a>(
             ..Padding::ZERO
         }));
     }
+    let bg = t.palette.window;
     container(col)
         .width(Fill)
         .padding(Padding::from([0.0, t.metrics.stream_padding]))
+        .style(move |_| container::Style {
+            background: Some(color(bg).into()),
+            ..container::Style::default()
+        })
         .into()
 }
 
