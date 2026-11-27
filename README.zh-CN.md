@@ -34,7 +34,7 @@
 
 语言那一行下面是 Appearance / 「外观」，点开是一个列表：System / 「跟随系统」、Light / 「浅色」、Dark / 「深色」。默认是 System，会跟着操作系统实时切换。选择保存在 `lang` 旁边的 `theme` 文件里，一行，值为 `system`、`light` 或 `dark`。
 
-## 现在能用的
+## 功能
 
 - **聊天气泡。** 你自己的消息在右边；bro 的卡片在左边，按发送者分组。带 `bot_name` 的交付卡挂到对应的 bro 下面；没有 `bot_name` 的单独一条。
 - **群轮次。** 在群里发一条消息，每个 bro 都可以回复，也可以选择不说话。消息开头用 `@name` 点名的那个 bro 先说。
@@ -48,7 +48,7 @@
 
 还可以用联网搜索（Brave 或 SearXNG）、MCP 工具和例行任务。某一步跑得太久或卡住时，卡片上会出现一行提示；工作本身不会被取消。
 
-## 还没做的
+## 路线图
 
 下面是已接受的设计，或正在做，**还没有**合进 `main`。细节见 宿主机仓库的 [design/multi-agent.md](https://github.com/PandaQuQ/robroz/blob/main/docs/design/multi-agent.md)。
 
