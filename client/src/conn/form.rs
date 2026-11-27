@@ -459,7 +459,7 @@ fn connect_button<'a>(
     };
     let label = text(label)
         .size(t.type_.button)
-        .font(view::bold())
+        .font(view::semibold())
         .color(fade(t.palette.on_accent, alpha));
     // Same height as Settings Save (`button_h` = 32). Centre the label
     // inside a padded container so the glyphs don't sit high.

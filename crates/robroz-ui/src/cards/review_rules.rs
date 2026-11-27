@@ -50,6 +50,24 @@ pub const DELETE_ACTION: Key = Key::ReviewRulesDeleteAction;
 /// Deny button on rule confirm cards, wording from 最优雅UI姐.
 pub const DROP: Key = Key::ReviewRulesDrop;
 
+/// Status line on an open rule card for someone who may not answer it.
+pub const WAITING_FOR_ADMIN: Key = Key::ReviewRulesWaitingForAdmin;
+
+/// Whether this user may approve or deny a settings (rule) card. The host
+/// (`may_answer` in host/src/approvals.rs) lets only an admin answer a
+/// card from the settings bot; anyone may propose one. An unknown role
+/// (`GET /api/me` not answered) gets no buttons, so no click is refused.
+pub fn may_decide(role: Option<robroz_contract::UserRole>) -> bool {
+    role == Some(robroz_contract::UserRole::Admin)
+}
+
+/// The "Confirm to add / delete" line on a rule card. Only someone who
+/// can answer sees it; a member gets the waiting line and the rule text,
+/// and not this hint.
+pub fn confirm_hint(is_delete: bool, can_decide: bool) -> Option<Key> {
+    can_decide.then_some(if is_delete { DELETE_HINT } else { ADD_HINT })
+}
+
 /// Prefix on a blocked-action DM card's reason line, wording from 最优雅UI姐.
 pub const BLOCKED_REASON_PREFIX: Key = Key::ReviewRulesBlockedReasonPrefix;
 
@@ -304,6 +322,22 @@ impl Page {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_an_admin_may_decide_a_rule_card() {
+        use robroz_contract::UserRole;
+        assert!(may_decide(Some(UserRole::Admin)));
+        assert!(!may_decide(Some(UserRole::Member)));
+        assert!(!may_decide(None), "no buttons before /api/me answers");
+    }
+
+    #[test]
+    fn a_member_does_not_see_the_confirm_hint() {
+        assert_eq!(confirm_hint(false, true), Some(ADD_HINT));
+        assert_eq!(confirm_hint(true, true), Some(DELETE_HINT));
+        assert_eq!(confirm_hint(false, false), None);
+        assert_eq!(confirm_hint(true, false), None);
+    }
+
     use super::*;
     use chrono::Utc;
 

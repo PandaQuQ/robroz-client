@@ -293,8 +293,14 @@ enum Page {
     FindInChat,
     /// Members of the open group.
     Members,
-    /// Settings landing (self-row). Visual redesign is PR5.
+    /// Settings landing (self-row): grouped cards (PR5).
     Settings,
+    /// Settings → Language: English / 中文.
+    SettingsLanguage,
+    /// Settings → Appearance: System / Light / Dark.
+    SettingsAppearance,
+    /// Settings → Connection: host address and token.
+    SettingsConnection,
 }
 
 #[derive(Debug, Clone)]
@@ -550,6 +556,9 @@ struct App {
     /// The signed-in person (`GET /api/me`); decides who sees the approval
     /// buttons. `None` until the host answers, and on an older host.
     me: Option<Me>,
+    /// A bro page was opened from Settings: on a phone its back bar
+    /// returns to Settings instead of the chat list.
+    settings_return: bool,
     /// Composer text per chat.
     drafts: HashMap<String, String>,
     sending: bool,
@@ -748,6 +757,7 @@ impl App {
             avatar_seq: 0,
             avatar_confirmed: None,
             me: None,
+            settings_return: false,
             drafts: HashMap::new(),
             sending: false,
             send_note: HashMap::new(),
@@ -864,6 +874,7 @@ impl App {
 
     /// Open a chat: select it, drop its badge, tell the host it is read.
     fn open_chat(&mut self, group: String) -> Task<Message> {
+        self.settings_return = false;
         if self.selected.as_deref() != Some(group.as_str()) {
             // A new subscription starts for this chat; poll fast until it is up.
             self.stream_up = false;
@@ -2060,10 +2071,24 @@ impl App {
             Action::OpenChat { group } => self.open_chat(group),
             Action::BackToList => {
                 self.narrow_open = false;
+                self.settings_return = false;
                 self.close_menus();
                 if matches!(
                     self.page,
-                    Page::GroupProfile | Page::FindInChat | Page::Members | Page::Settings
+                    Page::GroupProfile
+                        | Page::FindInChat
+                        | Page::Members
+                        | Page::Settings
+                        | Page::SettingsLanguage
+                        | Page::SettingsAppearance
+                        | Page::SettingsConnection
+                        | Page::Model
+                        | Page::Search
+                        | Page::Mcp
+                        | Page::Skills
+                        | Page::Memories
+                        | Page::Routines
+                        | Page::ReviewRules
                 ) {
                     self.page = Page::Group;
                 }
@@ -2346,12 +2371,50 @@ impl App {
             }
             Action::OpenSettings => {
                 self.self_menu = false;
+                self.settings_return = false;
                 self.page = Page::Settings;
                 self.narrow_open = true;
                 Task::none()
             }
+            Action::SettingsBack => {
+                self.page = Page::Settings;
+                self.narrow_open = true;
+                Task::none()
+            }
+            Action::SettingsGo { dest } => {
+                use robroz_ui::settings::Dest;
+                self.settings_return =
+                    !matches!(dest, Dest::Language | Dest::Appearance | Dest::Connection);
+                let page = match dest {
+                    Dest::Language => Page::SettingsLanguage,
+                    Dest::Appearance => Page::SettingsAppearance,
+                    Dest::Connection => Page::SettingsConnection,
+                    Dest::Model => return Task::done(Message::OpenModel),
+                    Dest::Search => return Task::done(Message::OpenSearch),
+                    Dest::Mcp => return Task::done(Message::OpenMcp),
+                    Dest::Skills => return Task::done(Message::OpenSkills),
+                    Dest::Memories => return Task::done(Message::OpenMemories),
+                    Dest::Routines => return Task::done(Message::OpenRoutines),
+                    Dest::ReviewRules => return Task::done(Message::OpenReviewRules),
+                };
+                self.page = page;
+                self.narrow_open = true;
+                Task::none()
+            }
+            Action::SettingsChoose { index } => match self.page {
+                Page::SettingsLanguage => match Locale::ALL.get(index) {
+                    Some(l) => Task::done(Message::SetLocale(*l)),
+                    None => Task::none(),
+                },
+                Page::SettingsAppearance => match ThemePref::ALL.get(index) {
+                    Some(p) => Task::done(Message::SetTheme(*p)),
+                    None => Task::none(),
+                },
+                _ => Task::none(),
+            },
             Action::OpenRoutines => {
                 self.group_menu = false;
+                self.settings_return = false;
                 self.page = Page::Routines;
                 self.narrow_open = true;
                 self.load_routines()
@@ -2657,7 +2720,10 @@ impl App {
                 Ok(list) => self.mcp.apply_group_mcp(&group, &list),
                 Err(_) => self.mcp.group_mcp_failed(&group),
             },
-            Message::Back => self.narrow_open = false,
+            Message::Back => {
+                self.narrow_open = false;
+                self.settings_return = false;
+            }
             Message::UnreadTick => return self.load_unread(),
             Message::UnreadLoaded(result) => match result {
                 Ok(list) => {
@@ -3363,6 +3429,17 @@ impl App {
                     | Page::FindInChat
                     | Page::Members
                     | Page::BroAvatar
+                    | Page::Settings
+                    | Page::SettingsLanguage
+                    | Page::SettingsAppearance
+                    | Page::SettingsConnection
+                    | Page::Model
+                    | Page::Search
+                    | Page::Mcp
+                    | Page::Skills
+                    | Page::Memories
+                    | Page::Routines
+                    | Page::ReviewRules
             );
             if !self.host_state().shows_sidebar() || (self.narrow_open && own_back) {
                 self.page_view(&t)
@@ -3448,6 +3525,102 @@ impl App {
             return false;
         };
         self.feeds.get(id).is_some_and(|f| f.any_live_timer())
+    }
+
+    /// Back from a Settings sub-page: to Settings when we opened it from
+    /// there, otherwise back to the chat.
+    fn settings_sub_back(&self) -> Action {
+        if self.settings_return {
+            Action::SettingsBack
+        } else {
+            Action::BackToList
+        }
+    }
+
+    /// Settings pages (PR5), or `None` when another page is open.
+    fn settings_view(&self, t: &Skin) -> Option<Element<'_, Message>> {
+        use robroz_ui::settings::{self as st, Dest};
+        let el = match self.page {
+            Page::Settings => {
+                let label = |d: Dest| -> String {
+                    match d {
+                        Dest::Language => Text::SettingsLanguage.into(),
+                        Dest::Appearance => Text::SettingsAppearance.into(),
+                        Dest::Model => model_page::TITLE.into(),
+                        Dest::Search => search_page::TITLE.into(),
+                        Dest::Mcp => robroz_ui::cards::mcp::TITLE.into(),
+                        Dest::Skills => robroz_ui::cards::skills::TITLE.into(),
+                        Dest::Memories => robroz_ui::cards::memories::TITLE.into(),
+                        Dest::Routines => robroz_ui::cards::routines::TITLE.into(),
+                        Dest::ReviewRules => review_rules::TITLE.into(),
+                        Dest::Connection => Text::ConnHostLabel.into(),
+                    }
+                };
+                let groups = st::landing(
+                    i18n::locale().native_name().to_string(),
+                    theme_label(self.theme_pref).to_string(),
+                    st::host_value(&self.origin),
+                )
+                .into_iter()
+                .map(|g| view::SettingsGroupView {
+                    title: g.title.into(),
+                    rows: g
+                        .rows
+                        .into_iter()
+                        .map(|r| view::SettingsRowView {
+                            label: label(r.dest),
+                            value: r.value,
+                            on: Action::SettingsGo { dest: r.dest },
+                        })
+                        .collect(),
+                })
+                .collect();
+                view::settings_page(
+                    t,
+                    view::SettingsPage {
+                        title: Text::SettingsTitle.into(),
+                        back: self.narrow().then_some(Action::BackToList),
+                        groups,
+                        sign_out: Some((Text::SignOutOnThisDevice.into(), Action::SignOut)),
+                        version: Some(cli::version_string()),
+                        scale: self.scale,
+                    },
+                )
+                .map(Message::Ui)
+            }
+            Page::SettingsLanguage => {
+                let active = i18n::locale();
+                view::settings_choice_page(
+                    t,
+                    Text::SettingsLanguage.into(),
+                    Locale::ALL
+                        .iter()
+                        .map(|l| (l.native_name().to_string(), *l == active))
+                        .collect(),
+                    self.scale,
+                )
+                .map(Message::Ui)
+            }
+            Page::SettingsAppearance => view::settings_choice_page(
+                t,
+                Text::SettingsAppearance.into(),
+                ThemePref::ALL
+                    .iter()
+                    .map(|p| (theme_label(*p).to_string(), *p == self.theme_pref))
+                    .collect(),
+                self.scale,
+            )
+            .map(Message::Ui),
+            Page::SettingsConnection => view::settings_sub_page(
+                t,
+                Text::ConnSectionTitle.into(),
+                Action::SettingsBack,
+                self.connection_form(t, false),
+                Message::Ui,
+            ),
+            _ => return None,
+        };
+        Some(el)
     }
 
     /// The Language row and, directly under it, the Appearance row.
@@ -3822,111 +3995,78 @@ impl App {
             )
             .map(Message::Ui);
         }
-        if self.page == Page::Settings {
-            return view::settings_landing(
-                t,
-                [
-                    (
-                        robroz_ui::cards::routines::TITLE.as_str(),
-                        Message::OpenRoutines,
-                    ),
-                    (
-                        robroz_ui::cards::memories::TITLE.as_str(),
-                        Message::OpenMemories,
-                    ),
-                    (
-                        robroz_ui::cards::skills::TITLE.as_str(),
-                        Message::OpenSkills,
-                    ),
-                    (model_page::TITLE.as_str(), Message::OpenModel),
-                    (search_page::TITLE.as_str(), Message::OpenSearch),
-                    (robroz_ui::cards::mcp::TITLE, Message::OpenMcp),
-                    (review_rules::TITLE.as_str(), Message::OpenReviewRules),
-                ],
-            );
+        if let Some(el) = self.settings_view(t) {
+            return el;
         }
         if self.page == Page::Memories {
-            return scrollable(
-                container(view::memories_panel(t, &self.memories, now_unix()).map(Message::Ui))
-                    .padding(t.metrics.stream_padding)
-                    .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                robroz_ui::cards::memories::TITLE.into(),
+                self.settings_sub_back(),
+                view::memories_panel(t, &self.memories, now_unix(), false).map(Message::Ui),
+                Message::Ui,
+            );
         }
         if self.page == Page::Skills {
-            return scrollable(
-                container(
-                    view::skills_panel(t, &self.skills, now_unix(), self.content_width(t))
-                        .map(Message::Ui),
-                )
-                .padding(t.metrics.stream_padding)
-                .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                robroz_ui::cards::skills::TITLE.into(),
+                self.settings_sub_back(),
+                view::skills_panel(t, &self.skills, now_unix(), self.content_width(t), false)
+                    .map(Message::Ui),
+                Message::Ui,
+            );
         }
         if self.page == Page::Mcp {
-            return scrollable(
-                container(
-                    view::mcp_panel(t, &self.mcp, now_unix(), self.content_width(t))
-                        .map(Message::Ui),
-                )
-                .padding(t.metrics.stream_padding)
-                .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                robroz_ui::cards::mcp::TITLE.into(),
+                self.settings_sub_back(),
+                view::mcp_panel(t, &self.mcp, now_unix(), self.content_width(t), false)
+                    .map(Message::Ui),
+                Message::Ui,
+            );
         }
         if self.page == Page::Model {
-            return scrollable(
-                container(
-                    column![
-                        view::model_panel(t, &self.model_settings).map(Message::Ui),
-                        self.language_row(t),
-                        self.connection_form(t, true),
-                    ]
-                    .spacing(t.metrics.row_pad_h),
-                )
-                .padding(t.metrics.stream_padding)
-                .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                model_page::TITLE.into(),
+                self.settings_sub_back(),
+                view::model_panel(t, &self.model_settings, false).map(Message::Ui),
+                Message::Ui,
+            );
         }
         if self.page == Page::Search {
-            return scrollable(
-                container(view::search_panel(t, &self.search).map(Message::Ui))
-                    .padding(t.metrics.stream_padding)
-                    .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                search_page::TITLE.into(),
+                self.settings_sub_back(),
+                view::search_panel(t, &self.search, false).map(Message::Ui),
+                Message::Ui,
+            );
         }
         if self.page == Page::ReviewRules {
-            return scrollable(
-                container(view::review_rules_panel(t, &self.review_rules).map(Message::Ui))
-                    .padding(t.metrics.stream_padding)
-                    .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                review_rules::TITLE.into(),
+                self.settings_sub_back(),
+                view::review_rules_panel(
+                    t,
+                    &self.review_rules,
+                    review_rules::may_decide(self.me.as_ref().map(|m| m.role)),
+                )
+                .map(Message::Ui),
+                Message::Ui,
+            );
         }
         if self.page == Page::Routines {
-            return scrollable(
-                container(view::routines_panel(t, &self.routines, now_unix()).map(Message::Ui))
-                    .padding(t.metrics.stream_padding)
-                    .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                robroz_ui::cards::routines::TITLE.into(),
+                self.settings_sub_back(),
+                view::routines_panel(t, &self.routines, now_unix(), false).map(Message::Ui),
+                Message::Ui,
+            );
         }
         let Some(id) = &self.selected else {
             return container(text(Text::ClientPickChat).color(color(t.palette.text2)))
@@ -4252,9 +4392,9 @@ impl App {
             section("草稿卡 draft", &g.draft),
             title("例行任务列表 routines"),
             caption("routines · list"),
-            view::routines_panel(t, &g.routines, g.now).map(Message::Ui),
+            view::routines_panel(t, &g.routines, g.now, true).map(Message::Ui),
             caption("routines · empty"),
-            view::routines_panel(t, &g.empty, g.now).map(Message::Ui),
+            view::routines_panel(t, &g.empty, g.now, true).map(Message::Ui),
         ]
         .spacing(6)
         .width(Fill);
@@ -4479,6 +4619,15 @@ fn fail_detail_line<'a>(t: &Skin, detail: &str) -> Element<'a, Message> {
             selection: color(t.chat.accent).scale_alpha(0.3),
         })
         .into()
+}
+
+/// An appearance choice as shown on Settings.
+fn theme_label(pref: ThemePref) -> &'static str {
+    match pref {
+        ThemePref::System => Text::SettingsThemeSystem.as_str(),
+        ThemePref::Light => Text::ClientThemeLight.as_str(),
+        ThemePref::Dark => Text::ClientThemeDark.as_str(),
+    }
 }
 
 /// The status dot: accent for a running card, green done, amber stuck

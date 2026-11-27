@@ -137,6 +137,16 @@ pub enum Action {
     SelfMenuOpen,
     SelfMenuClose,
     OpenSettings,
+    /// A Settings row (PR5).
+    SettingsGo {
+        dest: crate::settings::Dest,
+    },
+    /// Round ‹ on a Settings choice or connection page: back to Settings.
+    SettingsBack,
+    /// Option `index` picked on a Settings choice page.
+    SettingsChoose {
+        index: usize,
+    },
     OpenRoutines,
     SignOut,
     HomeSearchEdit {
@@ -407,6 +417,15 @@ pub const fn regular() -> Font {
 pub fn bold() -> Font {
     Font {
         weight: font::Weight::Bold,
+        ..regular()
+    }
+}
+
+/// Weight 600, same family as [`regular`]. Primary buttons use this so
+/// the face stays the UI font (Bold can pick a heavier, different face).
+pub fn semibold() -> Font {
+    Font {
+        weight: font::Weight::Semibold,
         ..regular()
     }
 }
@@ -1066,7 +1085,7 @@ fn btn_padded<'a>(
         content = content.push(
             text(label.clone())
                 .size(t.type_.button)
-                .font(if strong { bold() } else { regular() })
+                .font(if strong { semibold() } else { regular() })
                 .color(fg_color),
         );
         let c = t.palette;
@@ -1433,10 +1452,7 @@ pub fn approval<'a>(
 ) -> Element<'a, Action> {
     let inner = width - 2.0 * (t.controls.card_pad_h + t.stroke.card);
     // v0.2 host: a group card belongs to the bro's owner, who alone decides.
-    if in_group
-        && !card.is_rule()
-        && group_approval::viewer(card, me) != group_approval::Viewer::Legacy
-    {
+    if group_approval::owner_layout(in_group, card.is_rule(), group_approval::viewer(card, me)) {
         return group_approval_card(t, card, ui, inner, hide_bot, me);
     }
     let (label, d) = status::approval_status(&card.state);
@@ -1823,28 +1839,36 @@ fn divider<'a, M: 'a>(t: &Skin, inset: f32) -> Element<'a, M> {
 
 /// The routines panel (SPEC §7). `now` is Unix seconds; times show in the
 /// computer's local zone.
-pub fn routines_panel<'a>(t: &Skin, routines: &'a Routines, now: i64) -> Element<'a, Action> {
+pub fn routines_panel<'a>(
+    t: &Skin,
+    routines: &'a Routines,
+    now: i64,
+    titled: bool,
+) -> Element<'a, Action> {
     let m = t.metrics;
-    let mut head = row![text(routines::TITLE)
-        .size(t.type_.list_title)
-        .font(bold())
-        .color(color(t.palette.text))]
-    .spacing(t.controls.button_gap)
-    .align_y(Alignment::Center);
-    if !routines.rows.is_empty() {
-        head = head.push(
-            text(routines.rows.len().to_string())
-                .size(t.type_.list_count)
-                .color(color(t.palette.text3)),
-        );
+    let mut col = column![];
+    if titled {
+        let mut head = row![text(routines::TITLE)
+            .size(t.type_.list_title)
+            .font(bold())
+            .color(color(t.palette.text))]
+        .spacing(t.controls.button_gap)
+        .align_y(Alignment::Center);
+        if !routines.rows.is_empty() {
+            head = head.push(
+                text(routines.rows.len().to_string())
+                    .size(t.type_.list_count)
+                    .color(color(t.palette.text3)),
+            );
+        }
+        col = column![
+            container(head)
+                .height(Length::Fixed(m.panel_head_height))
+                .padding(Padding::from([0.0, m.row_pad_h]))
+                .align_y(Alignment::Center),
+            divider(t, 0.0),
+        ];
     }
-    let mut col = column![
-        container(head)
-            .height(Length::Fixed(m.panel_head_height))
-            .padding(Padding::from([0.0, m.row_pad_h]))
-            .align_y(Alignment::Center),
-        divider(t, 0.0),
-    ];
 
     if routines.rows.is_empty() {
         let rings = Rings {
@@ -1961,17 +1985,23 @@ fn inline_note<'a, M: 'a>(t: &Skin, note: &str) -> Element<'a, M> {
 
 /// The 记忆 page: one panel like the routines list. Groups by who may use a
 /// memory (「所有 bro」 first, then each bro); pending apart from kept.
-pub fn memories_panel<'a>(t: &Skin, book: &'a Book, now: i64) -> Element<'a, Action> {
+pub fn memories_panel<'a>(t: &Skin, book: &'a Book, now: i64, titled: bool) -> Element<'a, Action> {
     use robroz_contract::MemoryKind;
     let m = t.metrics;
     let busy = book.busy;
-    let mut head = row![text(memories::TITLE)
-        .size(t.type_.list_title)
-        .font(bold())
-        .color(color(t.palette.text))]
-    .spacing(t.controls.button_gap)
-    .align_y(Alignment::Center);
-    if !book.memories.is_empty() {
+    let mut head = if titled {
+        row![text(memories::TITLE)
+            .size(t.type_.list_title)
+            .font(bold())
+            .color(color(t.palette.text))]
+        .spacing(t.controls.button_gap)
+        .align_y(Alignment::Center)
+    } else {
+        row![]
+            .spacing(t.controls.button_gap)
+            .align_y(Alignment::Center)
+    };
+    if titled && !book.memories.is_empty() {
         head = head.push(
             text(book.memories.len().to_string())
                 .size(t.type_.list_count)
@@ -1988,13 +2018,17 @@ pub fn memories_panel<'a>(t: &Skin, book: &'a Book, now: i64) -> Element<'a, Act
             (!busy).then_some(Action::MemoryAddOpen),
         ));
     }
-    let mut col = column![
-        container(head)
-            .height(Length::Fixed(m.panel_head_height))
-            .padding(Padding::from([0.0, m.row_pad_h]))
-            .align_y(Alignment::Center),
-        divider(t, 0.0),
-    ];
+    let mut col = if titled || book.adding.is_none() {
+        column![
+            container(head)
+                .height(Length::Fixed(m.panel_head_height))
+                .padding(Padding::from([0.0, m.row_pad_h]))
+                .align_y(Alignment::Center),
+            divider(t, 0.0),
+        ]
+    } else {
+        column![]
+    };
     let pad = Padding::from([m.row_pad_h * 0.75, m.row_pad_h]);
 
     if let Some(note) = &book.note {
@@ -2338,16 +2372,23 @@ pub fn skills_panel<'a>(
     book: &'a SkillBook,
     now: i64,
     width: f32,
+    titled: bool,
 ) -> Element<'a, Action> {
     let m = t.metrics;
     let busy = book.busy;
-    let mut head = row![text(skills::TITLE)
-        .size(t.type_.list_title)
-        .font(bold())
-        .color(color(t.palette.text))]
-    .spacing(t.controls.button_gap)
-    .align_y(Alignment::Center);
-    if !book.skills.is_empty() {
+    let mut head = if titled {
+        row![text(skills::TITLE)
+            .size(t.type_.list_title)
+            .font(bold())
+            .color(color(t.palette.text))]
+        .spacing(t.controls.button_gap)
+        .align_y(Alignment::Center)
+    } else {
+        row![]
+            .spacing(t.controls.button_gap)
+            .align_y(Alignment::Center)
+    };
+    if titled && !book.skills.is_empty() {
         head = head.push(
             text(book.skills.len().to_string())
                 .size(t.type_.list_count)
@@ -2364,13 +2405,17 @@ pub fn skills_panel<'a>(
             (!busy).then_some(Action::SkillAddOpen),
         ));
     }
-    let mut col = column![
-        container(head)
-            .height(Length::Fixed(m.panel_head_height))
-            .padding(Padding::from([0.0, m.row_pad_h]))
-            .align_y(Alignment::Center),
-        divider(t, 0.0),
-    ];
+    let mut col = if titled || book.adding.is_none() {
+        column![
+            container(head)
+                .height(Length::Fixed(m.panel_head_height))
+                .padding(Padding::from([0.0, m.row_pad_h]))
+                .align_y(Alignment::Center),
+            divider(t, 0.0),
+        ]
+    } else {
+        column![]
+    };
     let pad = Padding::from([m.row_pad_h * 0.75, m.row_pad_h]);
 
     if let Some(note) = &book.note {
@@ -2802,16 +2847,28 @@ pub fn skills_panel<'a>(
 
 /// The MCP page: a list of servers, each with an enable switch and tool
 /// count, plus a form to add or edit one, a tool list, and per-group toggles.
-pub fn mcp_panel<'a>(t: &Skin, book: &'a McpBook, _now: i64, _width: f32) -> Element<'a, Action> {
+pub fn mcp_panel<'a>(
+    t: &Skin,
+    book: &'a McpBook,
+    _now: i64,
+    _width: f32,
+    titled: bool,
+) -> Element<'a, Action> {
     let m = t.metrics;
     let busy = book.busy;
-    let mut head = row![text(mcp::TITLE)
-        .size(t.type_.list_title)
-        .font(bold())
-        .color(color(t.palette.text))]
-    .spacing(t.controls.button_gap)
-    .align_y(Alignment::Center);
-    if !book.servers.is_empty() {
+    let mut head = if titled {
+        row![text(mcp::TITLE)
+            .size(t.type_.list_title)
+            .font(bold())
+            .color(color(t.palette.text))]
+        .spacing(t.controls.button_gap)
+        .align_y(Alignment::Center)
+    } else {
+        row![]
+            .spacing(t.controls.button_gap)
+            .align_y(Alignment::Center)
+    };
+    if titled && !book.servers.is_empty() {
         head = head.push(
             text(book.servers.len().to_string())
                 .size(t.type_.list_count)
@@ -2828,13 +2885,17 @@ pub fn mcp_panel<'a>(t: &Skin, book: &'a McpBook, _now: i64, _width: f32) -> Ele
             (!busy).then_some(Action::McpAddOpen),
         ));
     }
-    let mut col = column![
-        container(head)
-            .height(Length::Fixed(m.panel_head_height))
-            .padding(Padding::from([0.0, m.row_pad_h]))
-            .align_y(Alignment::Center),
-        divider(t, 0.0),
-    ];
+    let mut col = if titled || book.form.is_none() {
+        column![
+            container(head)
+                .height(Length::Fixed(m.panel_head_height))
+                .padding(Padding::from([0.0, m.row_pad_h]))
+                .align_y(Alignment::Center),
+            divider(t, 0.0),
+        ]
+    } else {
+        column![]
+    };
     let pad = Padding::from([m.row_pad_h * 0.75, m.row_pad_h]);
 
     if let Some(note) = &book.note {
@@ -4531,34 +4592,46 @@ fn composer_send_style(
 // ---------- 联网搜索 page ----------
 
 /// The 联网搜索 page: provider, key or address, one test after each save.
-pub fn search_panel<'a>(t: &Skin, page: &'a search::Page) -> Element<'a, Action> {
+pub fn search_panel<'a>(t: &Skin, page: &'a search::Page, titled: bool) -> Element<'a, Action> {
     use search::Provider;
     let m = t.metrics;
     let busy = page.busy;
-    let mut head = row![text(search::TITLE)
-        .size(t.type_.list_title)
-        .font(bold())
-        .color(color(t.palette.text))]
-    .spacing(t.controls.button_gap)
-    .align_y(Alignment::Center);
-    if page.from_env() {
-        head = head.push(
+    let mut col = column![];
+    if titled {
+        let mut head = row![text(search::TITLE)
+            .size(t.type_.list_title)
+            .font(bold())
+            .color(color(t.palette.text))]
+        .spacing(t.controls.button_gap)
+        .align_y(Alignment::Center);
+        if page.from_env() {
+            head = head.push(
+                container(
+                    text(search::FROM_ENV)
+                        .size(t.type_.tag)
+                        .color(color(t.palette.text2)),
+                )
+                .padding(Padding::from([2.0, m.tag_pad_h]))
+                .style(card_style(*t)),
+            );
+        }
+        col = column![
+            container(head)
+                .height(Length::Fixed(m.panel_head_height))
+                .padding(Padding::from([0.0, m.row_pad_h]))
+                .align_y(Alignment::Center),
+            divider(t, 0.0),
+        ];
+    } else if page.from_env() {
+        col = col.push(
             container(
                 text(search::FROM_ENV)
                     .size(t.type_.tag)
                     .color(color(t.palette.text2)),
             )
-            .padding(Padding::from([2.0, m.tag_pad_h]))
-            .style(card_style(*t)),
+            .padding(Padding::from([2.0, m.tag_pad_h])),
         );
     }
-    let mut col = column![
-        container(head)
-            .height(Length::Fixed(m.panel_head_height))
-            .padding(Padding::from([0.0, m.row_pad_h]))
-            .align_y(Alignment::Center),
-        divider(t, 0.0),
-    ];
     let pad = Padding::from([m.row_pad_h * 0.75, m.row_pad_h]);
     let mut body = column![].spacing(10);
     if page.current.as_ref().is_some_and(|c| c.provider.is_none()) && page.provider.is_none() {
@@ -4724,33 +4797,45 @@ fn review_rule_input_style(
 }
 
 /// The 模型 page: preset, address, model name, masked key, one test after each save.
-pub fn model_panel<'a>(t: &Skin, page: &'a model::Page) -> Element<'a, Action> {
+pub fn model_panel<'a>(t: &Skin, page: &'a model::Page, titled: bool) -> Element<'a, Action> {
     let m = t.metrics;
     let busy = page.busy;
-    let mut head = row![text(model::TITLE)
-        .size(t.type_.list_title)
-        .font(bold())
-        .color(color(t.palette.text))]
-    .spacing(t.controls.button_gap)
-    .align_y(Alignment::Center);
-    if page.from_env() {
-        head = head.push(
+    let mut col = column![];
+    if titled {
+        let mut head = row![text(model::TITLE)
+            .size(t.type_.list_title)
+            .font(bold())
+            .color(color(t.palette.text))]
+        .spacing(t.controls.button_gap)
+        .align_y(Alignment::Center);
+        if page.from_env() {
+            head = head.push(
+                container(
+                    text(model::FROM_ENV)
+                        .size(t.type_.tag)
+                        .color(color(t.palette.text2)),
+                )
+                .padding(Padding::from([2.0, m.tag_pad_h]))
+                .style(card_style(*t)),
+            );
+        }
+        col = column![
+            container(head)
+                .height(Length::Fixed(m.panel_head_height))
+                .padding(Padding::from([0.0, m.row_pad_h]))
+                .align_y(Alignment::Center),
+            divider(t, 0.0),
+        ];
+    } else if page.from_env() {
+        col = col.push(
             container(
                 text(model::FROM_ENV)
                     .size(t.type_.tag)
                     .color(color(t.palette.text2)),
             )
-            .padding(Padding::from([2.0, m.tag_pad_h]))
-            .style(card_style(*t)),
+            .padding(Padding::from([2.0, m.tag_pad_h])),
         );
     }
-    let mut col = column![
-        container(head)
-            .height(Length::Fixed(m.panel_head_height))
-            .padding(Padding::from([0.0, m.row_pad_h]))
-            .align_y(Alignment::Center),
-        divider(t, 0.0),
-    ];
     let pad = Padding::from([m.row_pad_h * 0.75, m.row_pad_h]);
     let mut body = column![].spacing(10);
     if page.not_set() {
@@ -4868,11 +4953,6 @@ fn rule_confirm_fields<'a>(
     note: Option<String>,
     mut col: iced::widget::Column<'a, Action>,
 ) -> iced::widget::Column<'a, Action> {
-    let hint = if kind == crate::cards::ActionKind::RuleDelete {
-        review_rules::DELETE_HINT
-    } else {
-        review_rules::ADD_HINT
-    };
     if matches!(state, crate::cards::ApprovalState::Expired { .. }) {
         col = col.push(
             text(review_rules::EXPIRED)
@@ -4881,10 +4961,16 @@ fn rule_confirm_fields<'a>(
         );
         col = col.push(gap(t.metrics.head_gap));
     }
-    col = col
-        .push(body(t, summary))
-        .push(gap(t.metrics.head_gap))
-        .push(text(hint).size(t.type_.foot).color(color(t.palette.text2)));
+    col = col.push(body(t, summary));
+    // Members cannot confirm, so they do not see this line — only the
+    // waiting status and the rule text.
+    if let Some(hint) =
+        review_rules::confirm_hint(kind == crate::cards::ActionKind::RuleDelete, show_buttons)
+    {
+        col = col
+            .push(gap(t.metrics.head_gap))
+            .push(text(hint).size(t.type_.foot).color(color(t.palette.text2)));
+    }
     if show_buttons {
         let (ok, look) = if kind == crate::cards::ActionKind::RuleDelete {
             (review_rules::DELETE_ACTION, Look::Danger)
@@ -4936,13 +5022,26 @@ fn rule_confirm_on_page<'a>(
     t: &Skin,
     pending: &'a review_rules::Pending,
     enabled: bool,
+    can_decide: bool,
 ) -> Element<'a, Action> {
     let kind = if pending.is_add() {
         crate::cards::ActionKind::RuleAdd
     } else {
         crate::cards::ActionKind::RuleDelete
     };
-    let show_buttons = pending.is_open();
+    // Only an admin may answer; everyone else gets the status line and
+    // no buttons at all (not greyed out).
+    let show_buttons = pending.is_open() && can_decide;
+    let mut head = column![];
+    if pending.is_open() && !can_decide {
+        head = head
+            .push(
+                text(review_rules::WAITING_FOR_ADMIN)
+                    .size(t.type_.foot)
+                    .color(color(t.palette.text2)),
+            )
+            .push(gap(t.metrics.head_gap));
+    }
     let col = rule_confirm_fields(
         t,
         kind,
@@ -4952,7 +5051,7 @@ fn rule_confirm_on_page<'a>(
         show_buttons,
         enabled,
         None,
-        column![],
+        head,
     );
     container(col)
         .padding(card_padding(t))
@@ -4990,26 +5089,18 @@ fn rule_approval<'a>(
 }
 
 /// The 放行规则 page: add an input, list confirmed rules, confirm in place.
-pub fn review_rules_panel<'a>(t: &Skin, page: &'a review_rules::Page) -> Element<'a, Action> {
-    let m = t.metrics;
+/// `can_decide`: [`review_rules::may_decide`] for the signed-in user.
+pub fn review_rules_panel<'a>(
+    t: &Skin,
+    page: &'a review_rules::Page,
+    can_decide: bool,
+) -> Element<'a, Action> {
     let locked = page.locked();
-    let head = row![text(review_rules::TITLE)
-        .size(t.type_.list_title)
-        .font(bold())
-        .color(color(t.palette.text))]
-    .align_y(Alignment::Center);
-    let mut col = column![
-        container(head)
-            .height(Length::Fixed(m.panel_head_height))
-            .padding(Padding::from([0.0, m.row_pad_h]))
-            .align_y(Alignment::Center),
-        divider(t, 0.0),
-    ];
-    let pad = Padding::from([m.row_pad_h * 0.75, m.row_pad_h]);
-    let mut body_col = column![].spacing(12);
+    let mut body_col = column![].spacing(12).width(Fill);
     let mut input = text_input(review_rules::PLACEHOLDER.as_str(), &page.draft)
         .size(t.type_.body)
-        .padding(Padding::from([8.0, 10.0]))
+        .padding(field_padding())
+        .width(Fill)
         .style(review_rule_input_style(*t));
     if !locked {
         input = input
@@ -5043,7 +5134,7 @@ pub fn review_rules_panel<'a>(t: &Skin, page: &'a review_rules::Page) -> Element
     }
     let add_pending = page.pending.as_ref().filter(|p| p.is_add());
     if let Some(pending) = add_pending {
-        body_col = body_col.push(rule_confirm_on_page(t, pending, !page.busy));
+        body_col = body_col.push(rule_confirm_on_page(t, pending, !page.busy, can_decide));
     }
     match &page.rules {
         None => {
@@ -5063,7 +5154,8 @@ pub fn review_rules_panel<'a>(t: &Skin, page: &'a review_rules::Page) -> Element
         Some(rules) => {
             for r in rules {
                 if let Some(pending) = page.pending.as_ref().filter(|p| p.is_delete_of(&r.id)) {
-                    body_col = body_col.push(rule_confirm_on_page(t, pending, !page.busy));
+                    body_col =
+                        body_col.push(rule_confirm_on_page(t, pending, !page.busy, can_decide));
                     continue;
                 }
                 let date = r.added_on(&Local);
@@ -5093,8 +5185,7 @@ pub fn review_rules_panel<'a>(t: &Skin, page: &'a review_rules::Page) -> Element
             }
         }
     }
-    col = col.push(container(body_col).padding(pad));
-    container(col).width(Fill).style(card_style(*t)).into()
+    body_col.into()
 }
 
 /// Data for the group profile page.
@@ -5605,73 +5696,244 @@ where
     scrollable(col).height(Fill).width(Fill).into()
 }
 
-/// A thin Settings landing: the existing destinations, reached from the
-/// self-row. Visual redesign is PR5.
-pub fn settings_landing<'a, F, I>(t: &Skin, rows: I) -> Element<'a, F>
-where
-    F: Clone + 'a,
-    I: IntoIterator<Item = (&'static str, F)>,
-{
-    use robroz_tokens::home as h;
-    let t = *t;
-    let title = container(
-        text(Key::SettingsTitle)
-            .size(22.0)
-            .font(bold())
-            .color(color(t.palette.text)),
-    )
-    .padding(Padding::from([16.0, 16.0]));
-    let mut card = column![];
-    for (i, (label, msg)) in rows.into_iter().enumerate() {
+/// One Settings row as drawn: label, optional `text2` value, then `›`.
+pub struct SettingsRowView {
+    pub label: String,
+    pub value: Option<String>,
+    pub on: Action,
+}
+
+/// A titled group of rows on one card.
+pub struct SettingsGroupView {
+    pub title: String,
+    pub rows: Vec<SettingsRowView>,
+}
+
+/// Inputs for [`settings_page`].
+pub struct SettingsPage {
+    pub title: String,
+    /// Round ‹ in the top-left; `None` on the desktop landing.
+    pub back: Option<Action>,
+    pub groups: Vec<SettingsGroupView>,
+    /// Red row on its own card under the groups.
+    pub sign_out: Option<(String, Action)>,
+    /// 12px `text3` line, centred at the bottom.
+    pub version: Option<String>,
+    pub scale: f32,
+}
+
+fn settings_card<'a>(t: Skin, rows: Vec<Element<'a, Action>>) -> Element<'a, Action> {
+    use robroz_tokens::settings as st;
+    let mut col = column![];
+    for (i, r) in rows.into_iter().enumerate() {
         if i > 0 {
-            card = card.push(
-                container(Space::new().height(Length::Fixed(1.0)))
+            col = col.push(
+                container(Space::new().height(Length::Fixed(st::DIVIDER)))
                     .width(Fill)
                     .style(move |_| container::Style {
-                        background: Some(color(t.palette.divider).into()),
+                        background: Some(color(t.palette.border).into()),
                         ..container::Style::default()
                     }),
             );
         }
-        card = card.push(
-            button(
-                container(
-                    row![
-                        text(label)
-                            .size(t.type_.body)
-                            .color(color(t.palette.text))
-                            .width(Fill),
-                        text("›").size(18.0).color(color(t.palette.text3)),
-                    ]
-                    .align_y(Alignment::Center),
-                )
-                .height(Fill)
-                .align_y(Alignment::Center),
-            )
-            .width(Fill)
-            .height(Length::Fixed(h::CARD_ROW))
-            .padding(Padding::from([0.0, 16.0]))
-            .style(conversation_row_style(t, false))
-            .on_press(msg),
-        );
+        col = col.push(r);
     }
-    let card = container(card)
+    container(col)
         .width(Fill)
+        .clip(true)
         .style(move |_| container::Style {
             background: Some(color(t.palette.surface).into()),
             border: Border {
                 color: color(t.palette.border2),
                 width: 1.0,
-                radius: h::CARD_R.into(),
+                radius: st::CARD_R.into(),
             },
             ..container::Style::default()
-        });
+        })
+        .into()
+}
+
+fn settings_row<'a>(
+    t: Skin,
+    label: String,
+    label_rgb: crate::theme::Rgb,
+    trailing: Option<Element<'a, Action>>,
+    on: Action,
+) -> Element<'a, Action> {
+    use robroz_tokens::settings as st;
+    let mut r = row![text(label)
+        .size(t.type_.body)
+        .color(color(label_rgb))
+        .wrapping(Wrapping::None)
+        .width(Fill)]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    if let Some(tr) = trailing {
+        r = r.push(tr);
+    }
+    button(container(r).height(Fill).align_y(Alignment::Center))
+        .width(Fill)
+        .height(Length::Fixed(st::ROW))
+        .padding(Padding::from([0.0, st::SIDE_PAD]))
+        .style(conversation_row_style(t, false))
+        .on_press(on)
+        .into()
+}
+
+fn settings_trailing<'a>(t: Skin, value: Option<String>) -> Element<'a, Action> {
+    let mut r = row![].spacing(8).align_y(Alignment::Center);
+    if let Some(v) = value {
+        r = r.push(
+            text(v)
+                .size(t.type_.body)
+                .color(color(t.palette.text2))
+                .wrapping(Wrapping::None),
+        );
+    }
+    r = r.push(text("›").size(18.0).color(color(t.palette.text3)));
+    r.into()
+}
+
+/// Shared frame of the Settings pages: top bar (round ‹ when given and the
+/// title), then a column at most 720px wide, 16px from the sides. `ui`
+/// lifts the ‹ [`Action`] into the page's message type.
+fn settings_frame<'a, M: 'a>(
+    t: Skin,
+    title: String,
+    back: Option<Action>,
+    body: Element<'a, M>,
+    ui: fn(Action) -> M,
+) -> Element<'a, M> {
+    use robroz_tokens::settings as st;
+    let mut bar = row![].spacing(12).align_y(Alignment::Center);
+    if let Some(b) = back {
+        bar = bar.push(crate::avatar_view::round_button(&t, crate::icons::Glyph::Back, b).map(ui));
+    }
+    bar = bar.push(
+        text(title)
+            .size(st::TITLE)
+            .font(bold())
+            .color(color(t.palette.text)),
+    );
+    let inner = column![
+        container(bar)
+            .height(Length::Fixed(robroz_tokens::home::FLOAT_BTN + 16.0))
+            .align_y(Alignment::Center),
+        body,
+    ]
+    .spacing(8)
+    .width(Fill)
+    .max_width(st::MAX_W);
     scrollable(
-        column![title, container(card).padding(Padding::from([0.0, 16.0]))]
-            .spacing(8)
-            .width(Fill),
+        container(inner)
+            .width(Fill)
+            .padding(Padding {
+                top: 0.0,
+                right: st::SIDE_PAD,
+                bottom: st::BOTTOM_PAD,
+                left: st::SIDE_PAD,
+            })
+            .align_x(Alignment::Center),
     )
     .height(Fill)
     .width(Fill)
     .into()
+}
+
+/// Settings (PR5): grouped cards (r16, `surface`), 24px between groups,
+/// each with a 12px `text3` title 8px above; 44px rows split by 1px
+/// `border` lines, 16px side padding; value in `text2` then `›`; Sign
+/// out on its own red card (44px, text centred); the version 12px
+/// `text3`, centred, with 24px below it.
+pub fn settings_page<'a>(t: &Skin, p: SettingsPage) -> Element<'a, Action> {
+    use robroz_tokens::settings as st;
+    let t = *t;
+    let mut col = column![].spacing(st::GROUP_GAP).width(Fill);
+    for g in p.groups {
+        let rows = g
+            .rows
+            .into_iter()
+            .map(|r| {
+                let trailing = settings_trailing(t, r.value);
+                settings_row(t, r.label, t.palette.text, Some(trailing), r.on)
+            })
+            .collect();
+        col = col.push(
+            column![
+                container(
+                    text(g.title)
+                        .size(st::GROUP_TITLE)
+                        .color(color(t.palette.text3)),
+                )
+                .padding(Padding::from([0.0, st::SIDE_PAD])),
+                settings_card(t, rows),
+            ]
+            .spacing(st::GROUP_TITLE_GAP),
+        );
+    }
+    if let Some((label, on)) = p.sign_out {
+        col = col.push(settings_card(
+            t,
+            vec![settings_row(t, label, crate::theme::DANGER, None, on)],
+        ));
+    }
+    if let Some(v) = p.version {
+        col = col.push(
+            text(v)
+                .size(st::VERSION)
+                .color(color(t.palette.text3))
+                .width(Fill)
+                .align_x(Alignment::Center),
+        );
+    }
+    settings_frame(t, p.title, p.back, col.into(), std::convert::identity)
+}
+
+/// A Settings choice page (Language, Appearance): one card, the active
+/// option ticked in the accent colour. Picking emits
+/// [`Action::SettingsChoose`].
+pub fn settings_choice_page<'a>(
+    t: &Skin,
+    title: String,
+    options: Vec<(String, bool)>,
+    scale: f32,
+) -> Element<'a, Action> {
+    let t = *t;
+    let rows = options
+        .into_iter()
+        .enumerate()
+        .map(|(index, (label, on))| {
+            let tick: Element<'a, Action> = if on {
+                crate::icons::icon(crate::icons::Glyph::Check, t.palette.accent, 16.0, scale).into()
+            } else {
+                Space::new().width(Length::Fixed(16.0)).into()
+            };
+            settings_row(
+                t,
+                label,
+                t.palette.text,
+                Some(tick),
+                Action::SettingsChoose { index },
+            )
+        })
+        .collect();
+    settings_frame(
+        t,
+        title,
+        Some(Action::SettingsBack),
+        settings_card(t, rows),
+        std::convert::identity,
+    )
+}
+
+/// A Settings sub-page that hosts another view under the same top bar
+/// (round ‹ and a 20px title) and 720px width cap.
+pub fn settings_sub_page<'a, M: 'a>(
+    t: &Skin,
+    title: String,
+    back: Action,
+    body: Element<'a, M>,
+    ui: fn(Action) -> M,
+) -> Element<'a, M> {
+    settings_frame(*t, title, Some(back), body, ui)
 }
