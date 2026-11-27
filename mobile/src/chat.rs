@@ -366,6 +366,7 @@ mod tests {
             status_code: None,
             failure_code: None,
             failure_detail: None,
+            started_at: None,
         }
     }
 

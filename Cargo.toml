@@ -20,9 +20,11 @@ license = "AGPL-3.0-only"
 
 # The contract and the host live in https://github.com/PandaQuQ/robroz. The
 # client builds against a tagged contract release; the host is only a
-# dev-dependency for the `against_host` tests. Bump both tags together.
+# dev-dependency for the `against_host` tests.
+# Host stays on `contract-v0.3.0` so against_host does not pick up the
+# unrelated host 0.2.0 / only_bro routing that landed on the same tag.
 [workspace.dependencies]
-robroz-contract = { git = "https://github.com/PandaQuQ/robroz", tag = "contract-v0.3.0" }
+robroz-contract = { git = "https://github.com/PandaQuQ/robroz", tag = "contract-v0.3.1" }
 robroz-host = { git = "https://github.com/PandaQuQ/robroz", tag = "contract-v0.3.0" }
 
 [profile.release]

@@ -554,7 +554,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::McpBadSecretName => "密钥名称里不能有空白",
         Key::McpNeedSecretKey => "新增密钥时请填写值",
         Key::McpCommandUnapproved => "命令未批准",
-        Key::McpToolsNeedApproval => "批准命令后才能读取工具",
+        Key::McpToolsNeedApproval => "批准命令后才能加载工具",
         Key::McpCommandRunsLocal => "这条命令会在你的电脑上运行",
         Key::McpApproveRun => "批准运行",
         Key::McpApproveFailed => "批准失败：{0}",
@@ -589,5 +589,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::WorkingRowTwo => "{0} 和 {1} 在处理…",
         Key::WorkingRowMany => "{0} 和另外 {1} 个",
         Key::Reconnecting => "正在重新连接",
+        Key::Syncing => "同步中…",
+        Key::TooManyStreams => "连接太多了，稍后自动重试",
     }
 }

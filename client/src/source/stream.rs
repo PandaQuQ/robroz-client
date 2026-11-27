@@ -6,6 +6,12 @@
 //! timestamp) and is sent back verbatim as `Last-Event-ID`. Only the last
 //! frame of a batch carries an id; earlier frames leave the cursor still.
 //!
+//! A `event: resync` frame (contract-v0.3.1, no `id:`) means the cursor
+//! could not be replayed. The client keeps showing existing cards,
+//! buffers the snapshot that follows, and swaps once the last snapshot
+//! frame (the one with an `id:`) arrives. An empty group has no such
+//! frame; the UI completes after 300ms of silence.
+//!
 //! After 45s with no bytes the client reconnects (the host keepalives
 //! every 15s). A clean close (the host ends the stream at 3600s) reconnects
 //! immediately and does not count as a failure. 503 responses wait
@@ -40,6 +46,13 @@ pub enum StreamItem {
         event: Event,
         extras: Option<ApprovalExtras>,
     },
+    /// `event: resync` (contract-v0.3.1). Start collecting a snapshot;
+    /// keep showing the current cards until [`Self::BatchEnd`] or the
+    /// UI's empty-snapshot timeout.
+    Resync,
+    /// The frame carried an `id:`: end of a host batch, and of a
+    /// resync snapshot when one is in progress.
+    BatchEnd,
     /// Keep-alive comment; lets the reader notice nobody is listening.
     Ping,
     /// The connection ended or could not be made; it will retry.
@@ -69,13 +82,21 @@ impl StreamDown {
         matches!(self, Self::Unavailable { .. } | Self::Error(_))
     }
 
+    /// 503 body is `{"code":"too_many_streams"}`.
+    pub fn is_too_many_streams(&self) -> bool {
+        match self {
+            Self::Unavailable { body, .. } => too_many_streams_body(body),
+            _ => false,
+        }
+    }
+
     /// How long to wait before the next attempt.
     pub fn retry_wait(&self, backoff: &mut Backoff) -> Duration {
         match self {
             Self::Idle | Self::CleanClose => Duration::ZERO,
-            Self::Unavailable { retry_after, .. } => {
-                retry_after.unwrap_or_else(|| backoff.next_delay())
-            }
+            Self::Unavailable { retry_after, .. } => retry_after.unwrap_or(Duration::from_secs(
+                robroz_ui::process::TOO_MANY_STREAMS_RETRY_SECS,
+            )),
             Self::Error(_) => backoff.next_delay(),
         }
     }
@@ -222,6 +243,54 @@ pub fn parse_retry_after(headers: &ureq::http::HeaderMap) -> Option<Duration> {
     })
 }
 
+pub fn too_many_streams_body(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("code")?.as_str().map(str::to_owned))
+        .is_some_and(|c| c == robroz_contract::error_codes::TOO_MANY_STREAMS)
+}
+
+fn is_resync_frame(frame: &Frame) -> bool {
+    if frame.event.as_deref() == Some(robroz_contract::STREAM_RESYNC) {
+        return true;
+    }
+    serde_json::from_str::<serde_json::Value>(&frame.data)
+        .ok()
+        .and_then(|v| v.get("type")?.as_str().map(str::to_owned))
+        .is_some_and(|t| t == robroz_contract::STREAM_RESYNC)
+}
+
+/// Turn one SSE frame into stream items and advance `last_id` when the
+/// frame carries an `id:`.
+pub fn dispatch_frame(frame: Frame, last_id: &mut Option<String>) -> Vec<StreamItem> {
+    let has_id = frame.id.is_some();
+    if let Some(id) = frame.id.clone() {
+        *last_id = Some(id);
+    }
+    if is_resync_frame(&frame) {
+        return vec![StreamItem::Resync];
+    }
+    match event_decode::parse_event_str(&frame.data) {
+        Ok((event, extras)) => {
+            let mut out = vec![StreamItem::Event { event, extras }];
+            if has_id {
+                out.push(StreamItem::BatchEnd);
+            }
+            out
+        }
+        Err(err) => {
+            if cfg!(debug_assertions) {
+                eprintln!("skip stream event: {err}");
+            }
+            if has_id {
+                vec![StreamItem::BatchEnd]
+            } else {
+                vec![]
+            }
+        }
+    }
+}
+
 /// One connection. Returns `Ok(true)` when the sink asked to stop,
 /// `Ok(false)` on a clean end of stream, `Err` on a failed connect or read.
 /// `last_id` is sent as `Last-Event-ID` verbatim and advanced only when a
@@ -275,30 +344,15 @@ pub fn read_once(
                 return Err(StreamDown::Error(msg));
             }
         };
-        let item = match parser.line(&line) {
-            Line::Frame(frame) => {
-                if let Some(id) = frame.id {
-                    *last_id = Some(id);
-                }
-                match event_decode::parse_event_str(&frame.data) {
-                    Ok((event, extras)) => StreamItem::Event { event, extras },
-                    // A newer host may send a kind this client does not
-                    // know yet (including a future `resync` frame): skip
-                    // it rather than drop the stream. The frame's `id`
-                    // above still moves `Last-Event-ID`.
-                    Err(err) => {
-                        if cfg!(debug_assertions) {
-                            eprintln!("skip stream event: {err}");
-                        }
-                        continue;
-                    }
-                }
-            }
-            Line::Comment => StreamItem::Ping,
+        let items = match parser.line(&line) {
+            Line::Frame(frame) => dispatch_frame(frame, last_id),
+            Line::Comment => vec![StreamItem::Ping],
             Line::Nothing => continue,
         };
-        if !sink(item) {
-            return Ok(true);
+        for item in items {
+            if !sink(item) {
+                return Ok(true);
+            }
         }
     }
     Ok(false)
@@ -509,7 +563,10 @@ mod tests {
             "g1",
             Backoff::new(Duration::from_millis(10), Duration::from_millis(20)),
             |item| {
-                if item == StreamItem::Ping {
+                if matches!(
+                    item,
+                    StreamItem::Ping | StreamItem::BatchEnd | StreamItem::Resync
+                ) {
                     return true;
                 }
                 if matches!(item, StreamItem::Event { .. }) {
@@ -526,6 +583,8 @@ mod tests {
                 StreamItem::Event { .. } => "event",
                 StreamItem::Down(_) => "down",
                 StreamItem::Ping => "ping",
+                StreamItem::Resync => "resync",
+                StreamItem::BatchEnd => "batch",
             })
             .collect();
         assert_eq!(kinds, ["up", "event", "down", "up", "event"]);
@@ -648,7 +707,10 @@ mod tests {
                     event: e @ Event::Approval { .. },
                     ..
                 } => return e,
-                StreamItem::Ping | StreamItem::Event { .. } => continue,
+                StreamItem::Ping
+                | StreamItem::BatchEnd
+                | StreamItem::Resync
+                | StreamItem::Event { .. } => continue,
                 other => panic!("unexpected {other:?}"),
             }
         };
@@ -745,7 +807,7 @@ mod tests {
                     assert_eq!(body, "实时");
                     break;
                 }
-                StreamItem::Ping => continue,
+                StreamItem::Ping | StreamItem::BatchEnd | StreamItem::Resync => continue,
                 other => panic!("unexpected {other:?}"),
             }
         }
@@ -871,6 +933,84 @@ mod tests {
             }
             other => panic!("expected unavailable, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn unavailable_without_retry_after_defaults_to_five_seconds() {
+        let mut b = Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
+        assert_eq!(
+            StreamDown::Unavailable {
+                retry_after: None,
+                body: r#"{"code":"too_many_streams"}"#.into(),
+            }
+            .retry_wait(&mut b),
+            Duration::from_secs(5)
+        );
+        assert!(too_many_streams_body(r#"{"code":"too_many_streams"}"#));
+        assert!(!too_many_streams_body(r#"{"code":"other"}"#));
+        assert!(!too_many_streams_body("no json"));
+        assert!(StreamDown::Unavailable {
+            retry_after: None,
+            body: r#"{"code":"too_many_streams","error":"log only"}"#.into(),
+        }
+        .is_too_many_streams());
+    }
+
+    #[test]
+    fn resync_then_snapshot_emits_resync_events_and_batch_end() {
+        let mut last = None;
+        let items = dispatch_frame(
+            Frame {
+                event: Some("resync".into()),
+                id: None,
+                data: r#"{"type":"resync"}"#.into(),
+            },
+            &mut last,
+        );
+        assert_eq!(items, vec![StreamItem::Resync]);
+        assert_eq!(last, None, "resync has no id");
+
+        let d1 = message_json("m1", "一");
+        let first = dispatch_frame(
+            Frame {
+                event: Some("message".into()),
+                id: None,
+                data: d1,
+            },
+            &mut last,
+        );
+        assert!(matches!(first.as_slice(), [StreamItem::Event { .. }]));
+        assert_eq!(last, None);
+
+        let d2 = message_json("m2", "二");
+        let last_frame = dispatch_frame(
+            Frame {
+                event: Some("message".into()),
+                id: Some("42".into()),
+                data: d2,
+            },
+            &mut last,
+        );
+        assert!(matches!(
+            last_frame.as_slice(),
+            [StreamItem::Event { .. }, StreamItem::BatchEnd]
+        ));
+        assert_eq!(last.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn empty_resync_has_no_batch_end() {
+        let mut last = Some("old".into());
+        let items = dispatch_frame(
+            Frame {
+                event: Some(robroz_contract::STREAM_RESYNC.into()),
+                id: None,
+                data: r#"{"type":"resync"}"#.into(),
+            },
+            &mut last,
+        );
+        assert_eq!(items, vec![StreamItem::Resync]);
+        assert_eq!(last.as_deref(), Some("old"));
     }
 
     #[test]

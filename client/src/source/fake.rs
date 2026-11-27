@@ -90,10 +90,13 @@ impl FakeSource {
                 WaitingFor::Takeover,
             )],
             vec![
-                with_times(
-                    status(SITE, "t-hero", "bot-ada", "Ada", TaskState::Done, false),
+                with_started_at(
+                    with_times(
+                        status(SITE, "t-hero", "bot-ada", "Ada", TaskState::Done, false),
+                        START_HERO,
+                        DONE_HERO,
+                    ),
                     START_HERO,
-                    DONE_HERO,
                 ),
                 attributed_delivery(
                     SITE,
@@ -243,10 +246,13 @@ impl FakeSource {
                 ),
             ],
             vec![
-                with_times(
-                    status(PROC, "t-done", "bot-ada", "Ada", TaskState::Done, false),
+                maybe_started_at(
+                    with_times(
+                        status(PROC, "t-done", "bot-ada", "Ada", TaskState::Done, false),
+                        START_HERO,
+                        DONE_HERO,
+                    ),
                     START_HERO,
-                    DONE_HERO,
                 ),
                 with_waiting(
                     status(PROC, "t-block", "bot-bea", "Bea", TaskState::Blocked, false),
@@ -408,6 +414,21 @@ fn with_times(mut ev: GroupEvent, created: &str, updated: &str) -> GroupEvent {
         *updated_at = updated.into();
     }
     ev
+}
+
+fn with_started_at(mut ev: GroupEvent, started: &str) -> GroupEvent {
+    if let Event::Status { started_at, .. } = &mut ev.event {
+        *started_at = Some(started.into());
+    }
+    ev
+}
+
+fn maybe_started_at(ev: GroupEvent, started: &str) -> GroupEvent {
+    if std::env::var("ROBROZ_FAKE_STARTED_AT").as_deref() == Ok("1") {
+        with_started_at(ev, started)
+    } else {
+        ev
+    }
 }
 
 fn with_progress(mut ev: GroupEvent, progress: &str) -> GroupEvent {
@@ -586,6 +607,7 @@ fn status(
             status_code: None,
             failure_code: None,
             failure_detail: None,
+            started_at: None,
         },
         approval_extras: None,
     }

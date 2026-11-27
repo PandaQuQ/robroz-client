@@ -205,6 +205,7 @@ export struct McpLine {
     letter: string,
     sub: string,
     connected: bool,
+    needs-approval: bool,
 }
 
 // One shape cell or colour swatch of the avatar picker.
@@ -700,7 +701,8 @@ export component MainWindow inherits Window {
     in property <string> working-row;
     in property <image> working-avatars;
     in property <float> working-avatars-width;
-    // Reconnecting banner, empty when the stream is fine or the outage is brief.
+    // Top-bar status capsule (Reconnecting / Syncing… / too many
+    // connections). Empty when none apply. Floated over the feed.
     in property <string> reconnect-banner;
     in property <int> unread-other;
     in property <bool> group-menu: false;
@@ -1105,40 +1107,6 @@ export component MainWindow inherits Window {
                 }
             }
             if root.chat-note != "": Text { text: root.chat-note; color: Brand.muted; wrap: word-wrap; }
-            if root.reconnect-banner != "": HorizontalLayout {
-                width: 100%;
-                alignment: center;
-                padding-top: 4px;
-                padding-bottom: 8px;
-                Rectangle {
-                    border-radius: 12px;
-                    background: Brand.surface;
-                    border-width: 1px;
-                    border-color: Brand.border;
-                    HorizontalLayout {
-                        padding-top: 4px;
-                        padding-bottom: 4px;
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        spacing: 6px;
-                        alignment: start;
-                        Rectangle {
-                            width: 8px;
-                            height: 8px;
-                            y: (parent.height - self.height) / 2;
-                            border-radius: 4px;
-                            // Same token as the 「卡住」 (stuck) dot, not brand orange.
-                            background: Brand.stuck;
-                        }
-                        Text {
-                            text: root.reconnect-banner;
-                            color: Brand.ink;
-                            font-size: 12px;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-            }
             ScrollView {
                 vertical-stretch: 1;
                 width: 100%;
@@ -1869,7 +1837,20 @@ export component MainWindow inherits Window {
                             spacing: 2px;
                             horizontal-stretch: 1;
                             Text { text: r.name; color: Brand.ink; font-size: McpMetrics.row-name; font-weight: 600; overflow: elide; }
-                            Text { text: r.sub; color: Brand.text3; font-size: McpMetrics.row-sub; overflow: elide; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                vertical-stretch: 0;
+                                if r.needs-approval: Rectangle {
+                                    width: McpMetrics.connected-dot;
+                                    height: McpMetrics.connected-dot;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: self.height / 2;
+                                    background: Brand.stuck;
+                                    vertical-stretch: 0;
+                                    horizontal-stretch: 0;
+                                }
+                                Text { text: r.sub; color: Brand.text3; font-size: McpMetrics.row-sub; overflow: elide; horizontal-stretch: 1; }
+                            }
                         }
                         // Vertically centred in the 64px row, same as the icon.
                         // Inside the group, the dot stays centred on the label
@@ -1973,6 +1954,41 @@ export component MainWindow inherits Window {
                         TouchArea { clicked => { if !root.mcp-busy { root.mcp-approve(); } } }
                     }
                 }
+            }
+        }
+    }
+
+    // Status capsule (Reconnecting / Syncing… / too many connections):
+    // floats 4px under the title bar and does not take layout space, so
+    // appearing or disappearing does not shift the feed. Only the pill
+    // is hit-tested, not a full-width strip.
+    if root.screen == 2 && root.reconnect-banner != "": Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 20px + root.safe-area-insets.top + root.extra-safe-top + AvatarMetrics.title-height + 4px;
+        border-radius: 12px;
+        background: Brand.surface;
+        border-width: 1px;
+        border-color: Brand.border;
+        HorizontalLayout {
+            padding-top: 4px;
+            padding-bottom: 4px;
+            padding-left: 10px;
+            padding-right: 10px;
+            spacing: 6px;
+            alignment: start;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                // Same token as the 「卡住」 (stuck) dot, not brand orange.
+                background: Brand.stuck;
+            }
+            Text {
+                text: root.reconnect-banner;
+                color: Brand.ink;
+                font-size: 12px;
+                vertical-alignment: center;
             }
         }
     }

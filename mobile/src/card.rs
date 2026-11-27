@@ -42,6 +42,7 @@ pub struct StatusCard {
     pub created_at: String,
     pub updated_at: String,
     pub local_started: Option<i64>,
+    pub started_at: Option<String>,
     pub steps: Vec<ProgressLine>,
     pub expanded: bool,
 }
@@ -76,6 +77,10 @@ impl StatusCard {
             live: self.is_live(),
             failed: self.failure.is_some(),
             local_started: self.local_started,
+            started_at: self
+                .started_at
+                .as_deref()
+                .and_then(robroz_ui::process::parse_unix),
             created_at: robroz_ui::process::parse_unix(&self.created_at),
             updated_at: robroz_ui::process::parse_unix(&self.updated_at),
             now,
@@ -148,6 +153,7 @@ impl StatusCard {
             waiting_for,
             failure_code,
             failure_detail,
+            started_at,
             ..
         } = event
         else {
@@ -204,6 +210,7 @@ impl StatusCard {
             created_at: created_at.clone(),
             updated_at: updated_at.clone(),
             local_started: None,
+            started_at: started_at.clone(),
             steps: Vec::new(),
             expanded: false,
         };
@@ -252,6 +259,7 @@ mod tests {
             status_code: None,
             failure_code: None,
             failure_detail: None,
+            started_at: None,
         }
     }
 

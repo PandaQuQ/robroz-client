@@ -323,8 +323,13 @@ pub struct Skin {
     pub chat: Chat,
     /// Not a skin value: set by [`Skin::for_input`] when the window is no
     /// wider than [`NARROW_MAX_WIDTH`]. Turns on the narrow-screen rules
-    /// (middle-ellipsis paths, 8-character bot names).
+    /// (middle-ellipsis paths, 8-character bot names). Does not control
+    /// whether settings can be edited.
     pub narrow: bool,
+    /// Not a skin value and not derived from window width. True only on
+    /// the phone (Slint) target. A desktop window under 480px stays
+    /// editable: [`Self::narrow`] only changes layout.
+    pub phone: bool,
 }
 
 /// robroz-ui's floor for interactive size on touch or narrow windows.
@@ -638,16 +643,25 @@ impl Skin {
                 note_visible_ms: tokens::motion::NOTE_VISIBLE,
             },
             narrow: false,
+            phone: false,
         }
     }
 
     /// The skin adjusted for how it is used right now: on touch input or a
     /// window no wider than [`NARROW_MAX_WIDTH`], `controls.touch_target`
     /// becomes `max(touch_target, TOUCH_FLOOR)`; otherwise it stands.
+    /// Never sets [`Self::phone`]: editability is a platform flag, not a
+    /// window-width one.
     pub fn for_input(mut self, touch: bool, window_width: f32) -> Self {
         self.narrow = window_width <= NARROW_MAX_WIDTH;
         self.controls.touch_target = self.controls.hit(touch || self.narrow);
         self
+    }
+
+    /// Whether add / edit / disconnect / delete controls may be shown.
+    /// False only on the phone target. Independent of [`Self::narrow`].
+    pub fn can_edit(&self) -> bool {
+        !self.phone
     }
 
     /// Colour for a status dot.
@@ -775,6 +789,12 @@ mod tests {
             "touch alone is not narrow"
         );
         assert!(t.for_input(false, 480.0).narrow);
+        let narrow_desktop = t.for_input(false, 390.0);
+        assert!(narrow_desktop.narrow && !narrow_desktop.phone && narrow_desktop.can_edit());
+        let mut phone = Skin::light();
+        phone.phone = true;
+        assert!(!phone.for_input(false, 1040.0).can_edit());
+        assert!(!phone.for_input(false, 1040.0).narrow);
         // A skin above the floor (material 48) keeps its own value.
         let mut material = Skin::light();
         material.controls.touch_target = 48.0;

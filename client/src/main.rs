@@ -30,7 +30,7 @@ mod source;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use iced::widget::{button, column, container, mouse_area, row, scrollable, space, text};
 use iced::{
@@ -527,6 +527,19 @@ fn avatar_for(bros: &[Bro], id: &str) -> BroAvatar {
     avatar::resolve(bros.iter().find(|b| b.id == id).and_then(|b| b.avatar), id)
 }
 
+/// In-flight `resync` snapshot for one group. Old cards stay on screen
+/// until [`App::finish_resync`] swaps them all at once.
+struct ResyncCollect {
+    group_id: String,
+    started: Instant,
+    last_event: Instant,
+    buf: Vec<(
+        robroz_contract::Event,
+        Option<robroz_ui::cards::ApprovalExtras>,
+    )>,
+    seen_data: bool,
+}
+
 struct App {
     source: Shared,
     api: Arc<dyn CardApi>,
@@ -539,6 +552,12 @@ struct App {
     stream_up: bool,
     /// Start of a continuous failed-reconnect stretch, Unix seconds.
     stream_fail_since: Option<i64>,
+    /// 503 `too_many_streams`: header status until the stream is up again.
+    too_many_streams: bool,
+    /// `--fake` gallery: force the Syncing header status.
+    force_syncing: bool,
+    /// Collecting a resync snapshot for a group.
+    resync: Option<ResyncCollect>,
     /// Narrow screens: a chat (or routines) is open over the list.
     narrow_open: bool,
     /// Known bros (DM owners, the rename box) and their avatars.
@@ -751,6 +770,10 @@ impl App {
             } else {
                 None
             },
+            too_many_streams: fake
+                && std::env::var("ROBROZ_FAKE_TOO_MANY_STREAMS").as_deref() == Ok("1"),
+            force_syncing: fake && std::env::var("ROBROZ_FAKE_SYNCING").as_deref() == Ok("1"),
+            resync: None,
             narrow_open: false,
             bros: Vec::new(),
             new_bro: NewBroDraft::default(),
@@ -975,6 +998,8 @@ impl App {
         self.conn = None;
         self.stream_up = false;
         self.stream_fail_since = None;
+        self.too_many_streams = false;
+        self.resync = None;
         self.me = None;
         self.groups.clear();
         self.convs = Conversations::default();
@@ -3040,19 +3065,50 @@ impl App {
                     if self.selected.as_deref() == Some(group.as_str()) {
                         self.stream_up = true;
                         self.stream_fail_since = None;
+                        self.too_many_streams = false;
                     }
                 }
+                StreamItem::Resync => {
+                    let now = Instant::now();
+                    self.resync = Some(ResyncCollect {
+                        group_id: group,
+                        started: now,
+                        last_event: now,
+                        buf: Vec::new(),
+                        seen_data: false,
+                    });
+                }
                 StreamItem::Event { event, extras } => {
-                    self.apply_event_with(group, &event, extras.as_ref())
+                    if let Some(r) = self.resync.as_mut().filter(|r| r.group_id == group) {
+                        r.buf.push((event, extras));
+                        r.seen_data = true;
+                        r.last_event = Instant::now();
+                    } else {
+                        self.apply_event_with(group, &event, extras.as_ref());
+                    }
+                }
+                StreamItem::BatchEnd => {
+                    if self.resync.as_ref().is_some_and(|r| r.group_id == group) {
+                        self.finish_resync();
+                    }
                 }
                 StreamItem::Ping => {}
                 // Silent reconnect until >30s of continuous failed attempts.
+                // `too_many_streams` shows its own header status immediately
+                // and retries after Retry-After (default 5s).
                 StreamItem::Down(down) => {
                     self.stream_up = false;
+                    if down.is_too_many_streams() {
+                        self.too_many_streams = true;
+                    }
                     if down.counts_as_failure() {
                         if self.stream_fail_since.is_none() {
                             self.stream_fail_since = Some(robroz_ui::process::now_unix());
                         }
+                    }
+                    // Drop a partial snapshot; keep the cards already on screen.
+                    if self.resync.as_ref().is_some_and(|r| r.group_id == group) {
+                        self.resync = None;
                     }
                 }
             },
@@ -3061,6 +3117,7 @@ impl App {
                 if self.copied_until.is_some_and(|u| now_unix() >= u) {
                     self.copied_until = None;
                 }
+                self.resync_tick();
             }
             Message::ToggleProcess(task_id) => {
                 if let Some(id) = self.selected.clone() {
@@ -3398,7 +3455,10 @@ impl App {
             let every = stream::poll_interval(self.stream_up, self.interval);
             subs.push(iced::time::every(every).map(|_| Message::Tick));
         }
-        if self.needs_clock() {
+        if self.resync.is_some() {
+            // 50ms so the 300ms empty-snapshot / Syncing rule can fire on time.
+            subs.push(iced::time::every(Duration::from_millis(50)).map(|_| Message::Clock));
+        } else if self.needs_clock() {
             subs.push(iced::time::every(Duration::from_secs(1)).map(|_| Message::Clock));
         }
         if self.host_state().retries() && self.gallery.is_none() {
@@ -3541,7 +3601,49 @@ impl App {
         )
     }
 
+    /// Top-bar status copy in the same capsule as Reconnecting, or `None`.
+    fn header_notice(&self) -> Option<String> {
+        if self.too_many_streams {
+            return Some(robroz_ui::process::too_many_streams_banner());
+        }
+        if self.force_syncing
+            || self.resync.as_ref().is_some_and(|r| {
+                robroz_ui::process::resync_show_status(false, r.started.elapsed().as_millis())
+            })
+        {
+            return Some(robroz_ui::process::syncing_banner());
+        }
+        if self.show_reconnect_banner() {
+            return Some(robroz_ui::process::reconnect_banner());
+        }
+        None
+    }
+
+    fn resync_tick(&mut self) {
+        let Some(r) = &self.resync else {
+            return;
+        };
+        let elapsed = r.started.elapsed().as_millis();
+        let silence = r.last_event.elapsed().as_millis();
+        if robroz_ui::process::resync_should_complete(false, r.seen_data, elapsed, silence) {
+            self.finish_resync();
+        }
+    }
+
+    fn finish_resync(&mut self) {
+        let Some(r) = self.resync.take() else {
+            return;
+        };
+        self.feeds
+            .entry(r.group_id)
+            .or_default()
+            .replace_from_snapshot(&r.buf);
+    }
+
     fn needs_clock(&self) -> bool {
+        if self.resync.is_some() {
+            return true;
+        }
         if self.copied_until.is_some() {
             return true;
         }
@@ -4226,25 +4328,22 @@ impl App {
         // The title bar is stacked on top with a solid `window` fill, and
         // the feed is padded by the bar's height so the first card starts
         // below it. Scrolling then tucks messages under the bar, not
-        // through it.
+        // through it. The status capsule (Reconnecting, Syncing…,
+        // too_many_streams) is also stacked, 4px under the bar, and
+        // does not reserve feed space — appearing or disappearing
+        // must not shift the content.
         let header_h = view::chat_header_height(t)
             + if rename.is_some_and(|r| r.note.is_some()) {
                 t.type_.foot + 6.0
             } else {
                 0.0
             };
-        // Capsule sits 4px under the title bar (12px type, 4px pad
-        // top/bottom) and leaves 8px before the first feed item.
-        let banner_h = if self.show_reconnect_banner() {
-            4.0 + 4.0 + t.type_.foot + 4.0 + 8.0
-        } else {
-            0.0
-        };
+        let notice = self.header_notice();
         let feed_body = container(container(feed_col).width(Length::Fixed(column_w)))
             .width(Fill)
             .center_x(Fill)
             .padding(Padding {
-                top: header_h + banner_h,
+                top: header_h,
                 ..Padding::ZERO
             });
         let feed = scrollable(feed_body)
@@ -4266,16 +4365,15 @@ impl App {
             },
         )
         .map(Message::Ui);
-        let mut chrome: Element<'_, Message> = if self.show_reconnect_banner() {
+        let mut chrome: Element<'_, Message> = if let Some(notice) = notice {
             // Small surface capsule, 12px text, stuck/warning yellow
             // dot on the left (same token as 「卡住」). Brand orange is
             // the "working" dot and must not be reused here.
+            // Shared slot: Reconnecting, Syncing…, too_many_streams.
             let pill = container(
                 row![
                     view::rgb_dot(t, t.status.blocked),
-                    text(robroz_ui::process::reconnect_banner())
-                        .size(t.type_.foot)
-                        .color(color(t.palette.text)),
+                    text(notice).size(t.type_.foot).color(color(t.palette.text)),
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),
@@ -5015,6 +5113,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             local_started: None,
+            started_at: None,
             steps: Vec::new(),
             expanded: false,
         }

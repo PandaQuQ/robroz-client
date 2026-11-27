@@ -48,6 +48,8 @@ pub struct StatusCard {
     pub updated_at: String,
     /// First transition into `running` seen this session.
     pub local_started: Option<i64>,
+    /// Host `startedAt` for this round, RFC 3339 when present.
+    pub started_at: Option<String>,
     /// Progress lines recorded this session, in order.
     pub steps: Vec<ProgressLine>,
     /// The process line is expanded to show [`steps`].
@@ -66,6 +68,10 @@ impl StatusCard {
             live: self.is_live(),
             failed: self.failure.is_some() || self.failure_code.is_some(),
             local_started: self.local_started,
+            started_at: self
+                .started_at
+                .as_deref()
+                .and_then(robroz_ui::process::parse_unix),
             created_at: robroz_ui::process::parse_unix(&self.created_at),
             updated_at: robroz_ui::process::parse_unix(&self.updated_at),
             now,
@@ -560,6 +566,25 @@ impl Feed {
         self.apply_with(event, None);
     }
 
+    /// Swap this feed for a resync snapshot in one go. Cards that
+    /// disappeared on the host are dropped; matching status cards keep
+    /// this session's local timer, recorded steps and expanded state.
+    pub fn replace_from_snapshot(&mut self, events: &[(Event, Option<ApprovalExtras>)]) {
+        let old = std::mem::take(self);
+        for (event, extras) in events {
+            if crate::event_decode::is_settings_approval(event) {
+                continue;
+            }
+            let (key, row) = to_row(event, extras.as_ref());
+            let row = match row {
+                Row::Status(card) => Row::Status(old.merge_status(card)),
+                other => other,
+            };
+            let meta = meta_of(event);
+            self.upsert(key, row, Some(meta));
+        }
+    }
+
     /// Apply an event, optionally with leftover approval extras (always
     /// empty now that `rule_*` is on the contract). Settings-page rule
     /// cards are ignored: they do not belong in a chat feed.
@@ -838,6 +863,7 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
             failure_detail,
             created_at,
             updated_at,
+            started_at,
             ..
         } => {
             // A failed task is grey with no action, like a dead run, never
@@ -890,6 +916,7 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
                 created_at: created_at.clone(),
                 updated_at: updated_at.clone(),
                 local_started: None,
+                started_at: started_at.clone(),
                 steps: Vec::new(),
                 expanded: false,
             };
@@ -1101,6 +1128,7 @@ mod tests {
             status_code: None,
             failure_code: None,
             failure_detail: None,
+            started_at: None,
         }
     }
 
@@ -1911,6 +1939,55 @@ mod tests {
             feed.apply(e);
         }
         assert_eq!(feed.rows().cloned().collect::<Vec<_>>(), before);
+    }
+
+    #[test]
+    fn replace_from_snapshot_swaps_atomically_and_keeps_local_timer() {
+        let mut feed = Feed::default();
+        feed.apply(&status("old", "Ada", TaskState::Done, false));
+        feed.apply(&text("m1", "hello"));
+        let mut live = status("keep", "Ada", TaskState::Queued, false);
+        feed.apply(&live);
+        if let Event::Status {
+            state,
+            container_up,
+            ..
+        } = &mut live
+        {
+            *state = TaskState::Running;
+            *container_up = true;
+        }
+        feed.apply(&live);
+        let before = status_cards(&feed)
+            .iter()
+            .find(|c| c.task_id == "keep")
+            .unwrap()
+            .local_started;
+        assert!(before.is_some());
+
+        let mut ev = status("keep", "Ada", TaskState::Running, true);
+        if let Event::Status { started_at, .. } = &mut ev {
+            *started_at = Some("2026-10-07T19:00:02.000Z".into());
+        }
+        let gone_is_dropped = text("m2", "new");
+        feed.replace_from_snapshot(&[(ev, None), (gone_is_dropped, None)]);
+        let ids: Vec<_> = feed
+            .rows()
+            .map(|r| match r {
+                Row::Status(c) => format!("s:{}", c.task_id),
+                Row::Text { body } => format!("t:{body}"),
+                _ => "other".into(),
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["s:keep".to_string(), "t:new".to_string()],
+            "{ids:?}"
+        );
+        let card = status_cards(&feed)[0];
+        assert_eq!(card.task_id, "keep");
+        assert_eq!(card.local_started, before, "session timer kept");
+        assert_eq!(card.started_at.as_deref(), Some("2026-10-07T19:00:02.000Z"));
     }
 
     #[test]
