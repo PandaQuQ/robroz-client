@@ -86,14 +86,13 @@ pub fn icon_letter(name: &str) -> String {
 }
 
 /// Which servers the list shows. The contract has no category field, so
-/// the category capsules split by transport (stdio / HTTP); the
-/// "N connected" capsule is the other filter.
+/// the category capsules split by transport (stdio / HTTP). The
+/// "N connected" line is a count, not a filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Filter {
     #[default]
     All,
     Transport(Transport),
-    Connected,
 }
 
 /// What Connect has to do first.
@@ -413,7 +412,7 @@ pub struct Book {
     /// Set when 「批准运行」 fails; shown in red under that button.
     pub approve_note: Option<(String, String)>,
     pub form_note: Option<String>,
-    /// Selected category or the "N connected" capsule.
+    /// Selected category capsule (All / a transport).
     pub filter: Filter,
 }
 
@@ -444,7 +443,6 @@ impl Book {
     pub fn active_filter(&self) -> Filter {
         match self.filter {
             Filter::All => Filter::All,
-            Filter::Connected if self.connected_count() > 0 => Filter::Connected,
             Filter::Transport(t) if self.show_categories() && self.transports().contains(&t) => {
                 Filter::Transport(t)
             }
@@ -465,7 +463,6 @@ impl Book {
         let f = self.active_filter();
         self.servers.iter().filter(move |s| match f {
             Filter::All => true,
-            Filter::Connected => is_connected(s),
             Filter::Transport(t) => Transport::parse(&s.transport) == Some(t),
         })
     }
@@ -1268,15 +1265,14 @@ mod tests {
     }
 
     #[test]
-    fn connected_filter_and_fallback() {
+    fn connected_count_is_not_a_filter() {
         let mut b = book();
-        b.set_filter(Filter::Connected);
-        let ids: Vec<&str> = b.visible().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, vec!["s1"]);
+        assert_eq!(b.connected_count(), 1);
+        assert_eq!(b.visible().count(), 2);
         b.set_enabled("s1", false);
         assert_eq!(b.connected_count(), 0);
-        assert_eq!(b.active_filter(), Filter::All);
         assert_eq!(b.visible().count(), 2);
+        assert_eq!(b.active_filter(), Filter::All);
     }
 
     #[test]

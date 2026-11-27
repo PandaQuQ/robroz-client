@@ -166,6 +166,7 @@ fn apply_theme(ui: &MainWindow, mode: Mode) {
     brand.set_text3(color(p.text3));
     brand.set_danger(color(robroz_ui::theme::DANGER));
     brand.set_stuck(color(Skin::for_mode(mode).status.blocked));
+    brand.set_done(color(Skin::for_mode(mode).status.done));
     // Own bubbles and the send button use accentStrong + white in both
     // modes. Bro bubbles use surface + border.
     brand.set_own_bg(color(p.accent_strong));
@@ -272,7 +273,8 @@ fn apply_metrics(ui: &MainWindow) {
     mm.set_row_name(k::ROW_NAME);
     mm.set_row_sub(k::ROW_SUB);
     mm.set_connect_h(k::CONNECT_H);
-    mm.set_connected_opacity(k::CONNECTED_OPACITY);
+    mm.set_count_text(k::COUNT_TEXT);
+    mm.set_connected_dot(k::CONNECTED_DOT);
 }
 
 /// Push the MCP book into screen 9 (and its command sheet).

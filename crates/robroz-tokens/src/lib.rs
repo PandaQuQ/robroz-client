@@ -258,7 +258,7 @@ pub mod home {
     pub const DIALOG_W: f32 = 400.0;
 }
 
-/// MCP page (v0.2 PR6): category capsules, the "N connected" capsule and
+/// MCP page (v0.2 PR6): category capsules, the "N connected" count and
 /// 64px server rows with a 44px r12 icon tile.
 pub mod mcp {
     pub const CAPSULE: f32 = 36.0;
@@ -266,6 +266,8 @@ pub mod mcp {
     pub const CAPSULE_PAD: f32 = 14.0;
     pub const CAPSULE_GAP: f32 = 8.0;
     pub const CAPSULE_TEXT: f32 = 14.0;
+    /// The "N connected" count in the page head (muted, not a capsule).
+    pub const COUNT_TEXT: f32 = 13.0;
     pub const ROW: f32 = 64.0;
     pub const ICON: f32 = 44.0;
     pub const ICON_R: f32 = 12.0;
@@ -276,8 +278,8 @@ pub mod mcp {
     pub const ROW_SUB: f32 = 12.0;
     /// The Connect capsule on a row.
     pub const CONNECT_H: f32 = 32.0;
-    /// "Connected" is shown at this opacity and does nothing on click.
-    pub const CONNECTED_OPACITY: f32 = 0.4;
+    /// Green `status.done` dot in front of the Connected label.
+    pub const CONNECTED_DOT: f32 = 6.0;
 }
 
 /// Font sizes and line heights, logical px. Weights are 400 and 700 only.
@@ -492,12 +494,10 @@ fn scalar_vars() -> Vec<(String, String)> {
             ("row-name", crate::mcp::ROW_NAME),
             ("row-sub", crate::mcp::ROW_SUB),
             ("connect-h", crate::mcp::CONNECT_H),
+            ("count-text", crate::mcp::COUNT_TEXT),
+            ("connected-dot", crate::mcp::CONNECTED_DOT),
         ],
     );
-    v.push((
-        "--robroz-spec-mcp-connected-opacity".into(),
-        format!("{}", crate::mcp::CONNECTED_OPACITY),
-    ));
     v.push((
         "--robroz-spec-font-weight-regular".into(),
         f::WEIGHT_REGULAR.to_string(),
@@ -586,7 +586,8 @@ mod tests {
         assert_eq!(m::ROW, 64.0);
         assert_eq!(m::ICON, 44.0);
         assert_eq!(m::ICON_R, 12.0);
-        assert_eq!(m::CONNECTED_OPACITY, 0.4);
+        assert_eq!(m::COUNT_TEXT, 13.0);
+        assert_eq!(m::CONNECTED_DOT, 6.0);
         assert!(m::ICON < m::ROW && m::CONNECT_H < m::ROW);
     }
 

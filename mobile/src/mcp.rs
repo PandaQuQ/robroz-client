@@ -5,13 +5,13 @@
 
 use robroz_ui::cards::mcp::{self, Book, Filter, Transport};
 
-/// Slint's `mcp-filter`: 0 all, 1 stdio, 2 HTTP, 3 connected.
+/// Slint's `mcp-filter`: 0 all, 1 stdio, 2 HTTP. The connected count is
+/// not a filter.
 pub fn filter_index(f: Filter) -> i32 {
     match f {
         Filter::All => 0,
         Filter::Transport(Transport::Stdio) => 1,
         Filter::Transport(Transport::Http) => 2,
-        Filter::Connected => 3,
     }
 }
 
@@ -19,7 +19,6 @@ pub fn filter_from_index(i: i32) -> Filter {
     match i {
         1 => Filter::Transport(Transport::Stdio),
         2 => Filter::Transport(Transport::Http),
-        3 => Filter::Connected,
         _ => Filter::All,
     }
 }
@@ -46,7 +45,7 @@ pub fn lines(book: &Book) -> Vec<Line> {
         .collect()
 }
 
-/// The "N connected" capsule text, empty (hidden) when nothing is connected.
+/// The "N connected" count text, empty (hidden) when nothing is connected.
 pub fn connected_text(book: &Book) -> String {
     match book.connected_count() {
         0 => String::new(),
@@ -85,9 +84,10 @@ mod tests {
 
     #[test]
     fn filter_index_round_trips() {
-        for i in 0..4 {
+        for i in 0..3 {
             assert_eq!(filter_index(filter_from_index(i)), i);
         }
+        assert_eq!(filter_from_index(3), Filter::All);
         assert_eq!(filter_from_index(9), Filter::All);
     }
 
@@ -106,8 +106,10 @@ mod tests {
             .any(|x| x.id == "a" && x.connected && x.letter == "S"));
         assert!(l.iter().any(|x| x.id == "bb" && !x.connected));
         assert!(!connected_text(&b).is_empty());
-        b.set_filter(filter_from_index(3));
+        b.set_filter(filter_from_index(2));
         assert_eq!(lines(&b).len(), 1);
+        assert_eq!(lines(&b)[0].id, "bb");
+        b.set_filter(filter_from_index(0));
         b.set_enabled("a", false);
         assert_eq!(connected_text(&b), "");
         assert_eq!(filter_index(b.active_filter()), 0);

@@ -280,7 +280,8 @@
   --robroz-spec-mcp-row-name: 15px;
   --robroz-spec-mcp-row-sub: 12px;
   --robroz-spec-mcp-connect-h: 32px;
-  --robroz-spec-mcp-connected-opacity: 0.4;
+  --robroz-spec-mcp-count-text: 13px;
+  --robroz-spec-mcp-connected-dot: 6px;
   --robroz-spec-font-weight-regular: 400;
   --robroz-spec-font-weight-bold: 700;
   --robroz-spec-font-family-sans: system-ui, -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", sans-serif;

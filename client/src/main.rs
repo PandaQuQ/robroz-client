@@ -3390,6 +3390,7 @@ impl App {
                     | Page::FindInChat
                     | Page::Members
                     | Page::BroAvatar
+                    | Page::Mcp
             );
             if !self.host_state().shows_sidebar() || (self.narrow_open && own_back) {
                 self.page_view(&t)

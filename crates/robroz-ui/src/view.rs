@@ -2809,27 +2809,37 @@ pub fn skills_panel<'a>(
 
 // ---------- MCP page ----------
 
-/// The MCP page: a list of servers, each with an enable switch and tool
-/// count, plus a form to add or edit one, a tool list, and per-group toggles.
+/// The MCP page: a list of servers, each with Connect or a Connected
+/// status, plus a form to add or edit one, a tool list, and per-group toggles.
 pub fn mcp_panel<'a>(t: &Skin, book: &'a McpBook, _now: i64, _width: f32) -> Element<'a, Action> {
     let m = t.metrics;
     let busy = book.busy;
-    let mut head = row![text(mcp::TITLE)
-        .size(t.type_.list_title)
-        .font(bold())
-        .color(color(t.palette.text))]
-    .spacing(t.controls.button_gap)
-    .align_y(Alignment::Center);
+    let mut head = row![]
+        .spacing(t.controls.button_gap)
+        .align_y(Alignment::Center);
+    // Phone-width: a round ‹, same as Slint, instead of the "‹ Chats" bar.
+    if t.narrow {
+        head = head.push(crate::avatar_view::round_button(
+            t,
+            crate::icons::Glyph::Back,
+            Action::OpenSettings,
+        ));
+    }
+    head = head.push(
+        text(mcp::TITLE)
+            .size(t.type_.list_title)
+            .font(bold())
+            .color(color(t.palette.text)),
+    );
     head = head.push(space::horizontal());
     let connected = book.connected_count();
     let filter = book.active_filter();
     if connected > 0 {
-        head = head.push(mcp_capsule(
-            t,
-            mcp::connected_count_text(connected),
-            filter == mcp::Filter::Connected,
-            mcp::Filter::Connected,
-        ));
+        head = head.push(
+            text(mcp::connected_count_text(connected))
+                .size(robroz_tokens::mcp::COUNT_TEXT)
+                .color(color(t.palette.text2)),
+        );
     }
     if book.form.is_none() {
         head = head.push(btn(
@@ -3281,6 +3291,19 @@ fn mcp_connect_button<'a>(t: &Skin, on_press: Option<Action>) -> Element<'a, Act
     b.into()
 }
 
+/// 6px `status.done` dot used in front of the Connected label.
+fn mcp_connected_dot<'a>(t: &Skin) -> Element<'a, Action> {
+    let size = robroz_tokens::mcp::CONNECTED_DOT;
+    let c = color(t.status.done);
+    container(Space::new().width(size).height(size))
+        .style(move |_| container::Style {
+            background: Some(c.into()),
+            border: Border::default().rounded(size / 2.0),
+            ..container::Style::default()
+        })
+        .into()
+}
+
 /// 44px r12 icon tile. The contract has no icon field, so the tile carries
 /// the name's first letter on the sunken fill.
 fn mcp_icon_tile<'a>(t: &Skin, name: &str) -> Element<'a, Action> {
@@ -3343,12 +3366,17 @@ fn mcp_row<'a>(
     .width(Fill)
     .clip(true);
     let right: Element<'a, Action> = if mcp::is_connected(server) {
-        // Inert: a status, not a button.
-        text(mcp::CONNECTED)
-            .size(robroz_tokens::mcp::CAPSULE_TEXT)
-            .wrapping(text::Wrapping::None)
-            .color(faded(t.palette.text, robroz_tokens::mcp::CONNECTED_OPACITY))
-            .into()
+        // Inert: muted status text with a 6px done dot, not a button.
+        row![
+            mcp_connected_dot(t),
+            text(mcp::CONNECTED)
+                .size(robroz_tokens::mcp::CAPSULE_TEXT)
+                .wrapping(text::Wrapping::None)
+                .color(color(t.palette.text2)),
+        ]
+        .spacing(6.0)
+        .align_y(Alignment::Center)
+        .into()
     } else {
         mcp_connect_button(t, (!busy).then(|| Action::McpConnect { id: id.clone() }))
     };
@@ -3409,36 +3437,30 @@ fn mcp_row<'a>(
                 .spacing(m.dot_gap),
             );
         } else {
-            col = col.push(
-                row![
-                    btn(
-                        t,
-                        mcp::EDIT.into(),
-                        Look::Secondary,
-                        Leading::None,
-                        (!busy).then_some(Action::McpEdit { id: id.clone() }),
-                    ),
-                    btn(
-                        t,
-                        mcp::DELETE.into(),
-                        Look::Secondary,
-                        Leading::None,
-                        (!busy).then_some(Action::McpDeleteAsk { id: id.clone() }),
-                    ),
-                ]
-                .push(if mcp::is_connected(server) {
-                    btn(
-                        t,
-                        mcp::DISCONNECT.into(),
-                        Look::Secondary,
-                        Leading::None,
-                        (!busy).then(|| Action::McpToggleEnabled { id: id.clone() }),
-                    )
-                } else {
-                    Space::new().into()
-                })
-                .spacing(t.controls.button_gap),
-            );
+            let mut actions = row![btn(
+                t,
+                mcp::EDIT.into(),
+                Look::Secondary,
+                Leading::None,
+                (!busy).then_some(Action::McpEdit { id: id.clone() }),
+            )];
+            if mcp::is_connected(server) {
+                actions = actions.push(btn(
+                    t,
+                    mcp::DISCONNECT.into(),
+                    Look::Secondary,
+                    Leading::None,
+                    (!busy).then(|| Action::McpToggleEnabled { id: id.clone() }),
+                ));
+            }
+            actions = actions.push(btn(
+                t,
+                mcp::DELETE.into(),
+                Look::Danger,
+                Leading::None,
+                (!busy).then_some(Action::McpDeleteAsk { id: id.clone() }),
+            ));
+            col = col.push(actions.spacing(t.controls.button_gap));
         }
     }
     if let Some(note) = book.note_for(&server.id) {
@@ -3548,11 +3570,10 @@ fn mcp_group_toggles<'a>(
     busy: bool,
 ) -> Element<'a, Action> {
     let m = t.metrics;
-    let mut toggles = row![text(mcp::GROUP_ENABLE)
+    let mut list = column![text(mcp::GROUP_ENABLE)
         .size(t.type_.foot)
         .color(color(t.palette.text3))]
-    .spacing(t.controls.button_gap)
-    .align_y(Alignment::Center);
+    .spacing(m.dot_gap);
     for (group, name) in &book.chats {
         let load = book.group_load_state(group);
         let known = (load == mcp::GroupLoad::Ready)
@@ -3586,20 +3607,20 @@ fn mcp_group_toggles<'a>(
                 })
             }),
         );
-        let mut cell = row![
-            text(name.as_str())
-                .size(t.type_.foot)
-                .color(color(t.palette.text2)),
-            toggle,
-        ]
-        .spacing(m.dot_gap)
-        .align_y(Alignment::Center);
+        let mut label = column![text(name.as_str())
+            .size(t.type_.body)
+            .color(color(t.palette.text))]
+        .spacing(2.0);
         if let Some(hint) = hint {
-            cell = cell.push(text(hint).size(t.type_.foot).color(color(t.palette.text3)));
+            label = label.push(text(hint).size(t.type_.foot).color(color(t.palette.text3)));
         }
-        toggles = toggles.push(cell);
+        list = list.push(
+            row![container(label).width(Fill), toggle]
+                .spacing(t.controls.button_gap)
+                .align_y(Alignment::Center),
+        );
     }
-    toggles.wrap().into()
+    list.into()
 }
 
 // ---------- Conversation list ----------
