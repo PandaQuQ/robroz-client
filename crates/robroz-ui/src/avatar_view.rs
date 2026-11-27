@@ -73,22 +73,43 @@ pub fn avatar_stack<'a, M: 'a>(
     more: usize,
     bg: Rgb,
 ) -> Element<'a, M> {
+    avatar_stack_at(t, avatars, more, bg, tok::TITLE_SIZE, tok::TITLE_OVERLAP)
+}
+
+/// Stacked avatars at a given `size` and overlap. Used for the 16px
+/// working-row stack as well as the 24px title capsule.
+pub fn avatar_stack_at<'a, M: 'a>(
+    t: &Skin,
+    avatars: &[BroAvatar],
+    more: usize,
+    bg: Rgb,
+    size: f32,
+    overlap: f32,
+) -> Element<'a, M> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    type Key = (Vec<BroAvatar>, bool, Rgb);
+    type Key = (Vec<BroAvatar>, bool, Rgb, u32, u32);
     static CACHE: OnceLock<Mutex<HashMap<Key, image::Handle>>> = OnceLock::new();
-    let size = tok::TITLE_SIZE;
-    let width = avatar::stack_width(avatars.len(), size, tok::TITLE_OVERLAP);
-    let key: Key = (avatars.to_vec(), dark(t), bg);
+    let width = avatar::stack_width(avatars.len(), size, overlap);
+    let key: Key = (
+        avatars.to_vec(),
+        dark(t),
+        bg,
+        size.to_bits(),
+        overlap.to_bits(),
+    );
     let cache = CACHE.get_or_init(Default::default);
     let cached = cache.lock().expect("stack cache").get(&key).cloned();
     let handle = cached.unwrap_or_else(|| {
         let px = (size * RASTER_SCALE).round() as u32;
-        let step = ((size - tok::TITLE_OVERLAP) * RASTER_SCALE).round() as u32;
+        let step = ((size - overlap) * RASTER_SCALE).round() as u32;
         let (w, rgba) = avatar::rasterize_stack(
             avatars,
             dark(t),
-            (bg, tok::TITLE_RING * RASTER_SCALE),
+            (
+                bg,
+                tok::TITLE_RING * RASTER_SCALE * (size / tok::TITLE_SIZE),
+            ),
             px,
             step,
         );

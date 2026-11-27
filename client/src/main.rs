@@ -32,7 +32,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use iced::widget::{button, column, container, row, scrollable, space, text};
+use iced::widget::{button, column, container, mouse_area, row, scrollable, space, text};
 use iced::{
     window, Alignment, Border, Element, Fill, Font, Length, Padding, Size, Subscription, Task,
 };
@@ -394,6 +394,9 @@ enum Message {
     Loaded(Result<Vec<GroupTab>, SourceError>),
     Polled(Result<Polled, SourceError>),
     TakeOver(String),
+    ToggleProcess(String),
+    /// 1s tick for process timers and the reconnect banner.
+    Clock,
     /// Open or close the host `failureDetail` on a failed card.
     /// The read-only failure detail line was typed into; ignored.
     DetailLineEdited,
@@ -503,6 +506,8 @@ struct App {
     convs: Conversations,
     /// The open chat's stream is connected (polling slows down).
     stream_up: bool,
+    /// Start of a continuous failed-reconnect stretch, Unix seconds.
+    stream_fail_since: Option<i64>,
     /// Narrow screens: a chat (or routines) is open over the list.
     narrow_open: bool,
     /// Known bros (DM owners, the rename box) and their avatars.
@@ -632,6 +637,14 @@ impl App {
     fn boot() -> (Self, Task<Message>) {
         let gallery = has_flag("--gallery").then(Gallery::new);
         let fake = wants_fake() || gallery.is_some();
+        if fake {
+            // Stable process timers and working-row screenshots.
+            if let Some(unix) = robroz_ui::process::parse_unix(crate::source::FAKE_NOW) {
+                robroz_ui::process::freeze_clock(unix);
+            } else {
+                robroz_ui::process::freeze_clock(chrono::Utc::now().timestamp());
+            }
+        }
         // Before anything builds text: fake and gallery runs ignore the
         // saved choice so their screenshots are reproducible.
         i18n::set_locale(prefs::initial_locale(!fake));
@@ -675,6 +688,16 @@ impl App {
             conn,
             convs: Conversations::default(),
             stream_up: false,
+            stream_fail_since: if fake
+                && std::env::var("ROBROZ_FAKE_RECONNECTING").as_deref() == Ok("1")
+            {
+                Some(
+                    robroz_ui::process::now_unix()
+                        - (robroz_ui::process::SSE_BANNER_SECS as i64 + 1),
+                )
+            } else {
+                None
+            },
             narrow_open: false,
             bros: Vec::new(),
             new_bro: NewBroDraft::default(),
@@ -2502,16 +2525,32 @@ impl App {
                 StreamItem::Connected => {
                     if self.selected.as_deref() == Some(group.as_str()) {
                         self.stream_up = true;
+                        self.stream_fail_since = None;
                     }
                 }
                 StreamItem::Event { event, extras } => {
                     self.apply_event_with(group, &event, extras.as_ref())
                 }
                 StreamItem::Ping => {}
-                // Polling takes over at full speed until it reconnects.
-                StreamItem::Down(_) => self.stream_up = false,
+                // Silent reconnect until >30s of continuous failed attempts.
+                StreamItem::Down(down) => {
+                    self.stream_up = false;
+                    if down.counts_as_failure() {
+                        if self.stream_fail_since.is_none() {
+                            self.stream_fail_since = Some(robroz_ui::process::now_unix());
+                        }
+                    }
+                }
             },
             Message::Tick => return self.poll(),
+            Message::Clock => {}
+            Message::ToggleProcess(task_id) => {
+                if let Some(id) = self.selected.clone() {
+                    if let Some(feed) = self.feeds.get_mut(&id) {
+                        feed.toggle_process(&task_id);
+                    }
+                }
+            }
             Message::Loaded(result) => {
                 self.in_flight = false;
                 // `--fake` + `ROBROZ_PAGE=nohost`: treat the demo load as failed and
@@ -2841,6 +2880,9 @@ impl App {
             let every = stream::poll_interval(self.stream_up, self.interval);
             subs.push(iced::time::every(every).map(|_| Message::Tick));
         }
+        if self.needs_clock() {
+            subs.push(iced::time::every(Duration::from_secs(1)).map(|_| Message::Clock));
+        }
         if self.host_state().retries() && self.gallery.is_none() {
             subs.push(iced::time::every(self.interval).map(|_| Message::RetryLoad));
         }
@@ -2915,10 +2957,13 @@ impl App {
             .height(Fill)
             .into()
         };
-        let live = match (&self.conn, self.stream_up) {
-            (None, _) => "",
-            (Some(_), true) => Text::ClientLive.as_str(),
-            (Some(_), false) => Text::ClientPolling.as_str(),
+        let live = match (&self.conn, self.stream_up, self.show_reconnect_banner()) {
+            (None, _, _) => "",
+            (Some(_), true, _) => Text::ClientLive.as_str(),
+            // Silent reconnect: no "· polling". The banner is the notice
+            // after more than 30s of failed attempts.
+            (Some(_), false, true) => "",
+            (Some(_), false, false) => "",
         };
         // While the host has never answered, the main pane already shows
         // why, so the footer drops the raw "Can't reach the host … io: …
@@ -2940,6 +2985,23 @@ impl App {
         ])
         .style(view::page_style(t))
         .into()
+    }
+
+    fn show_reconnect_banner(&self) -> bool {
+        robroz_ui::process::show_reconnect_banner(
+            self.stream_fail_since,
+            robroz_ui::process::now_unix(),
+        )
+    }
+
+    fn needs_clock(&self) -> bool {
+        if self.stream_fail_since.is_some() {
+            return true;
+        }
+        let Some(id) = self.selected.as_deref() else {
+            return false;
+        };
+        self.feeds.get(id).is_some_and(|f| f.any_live_timer())
     }
 
     /// The Language row and, directly under it, the Appearance row.
@@ -3537,11 +3599,18 @@ impl App {
             } else {
                 0.0
             };
+        // Capsule sits 4px under the title bar (12px type, 4px pad
+        // top/bottom) and leaves 8px before the first feed item.
+        let banner_h = if self.show_reconnect_banner() {
+            4.0 + 4.0 + t.type_.foot + 4.0 + 8.0
+        } else {
+            0.0
+        };
         let feed_body = container(container(feed_col).width(Length::Fixed(column_w)))
             .width(Fill)
             .center_x(Fill)
             .padding(Padding {
-                top: header_h,
+                top: header_h + banner_h,
                 ..Padding::ZERO
             });
         let feed = scrollable(feed_body)
@@ -3562,8 +3631,75 @@ impl App {
             },
         )
         .map(Message::Ui);
-        column![
-            iced::widget::stack![feed, header].width(Fill).height(Fill),
+        let chrome: Element<'_, Message> = if self.show_reconnect_banner() {
+            // Small surface capsule, 12px text, stuck/warning yellow
+            // dot on the left (same token as 「卡住」). Brand orange is
+            // the "working" dot and must not be reused here.
+            let pill = container(
+                row![
+                    view::rgb_dot(t, t.status.blocked),
+                    text(robroz_ui::process::reconnect_banner())
+                        .size(t.type_.foot)
+                        .color(color(t.palette.text)),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .padding(Padding::from([4.0, 10.0]))
+            .style(reconnect_capsule_style(*t));
+            let banner = container(pill).width(Fill).center_x(Fill).padding(Padding {
+                top: header_h + 4.0,
+                ..Padding::ZERO
+            });
+            iced::widget::stack![feed, header, banner]
+                .width(Fill)
+                .height(Fill)
+                .into()
+        } else {
+            iced::widget::stack![feed, header]
+                .width(Fill)
+                .height(Fill)
+                .into()
+        };
+        let mut south = column![];
+        if let Some(feed) = self.feeds.get(id) {
+            let working = feed.working_bros();
+            let names: Vec<&str> = working.iter().map(|(_, n)| n.as_str()).collect();
+            if let Some(line) = robroz_ui::process::working_row(&names) {
+                let avatars: Vec<BroAvatar> =
+                    working.iter().map(|(bid, _)| self.avatar_of(bid)).collect();
+                let n = avatars.len().min(3);
+                let shown = avatars[..n].to_vec();
+                let more = avatars.len().saturating_sub(n);
+                let row_el = row![
+                    robroz_ui::avatar_view::avatar_stack_at(
+                        t,
+                        &shown,
+                        more,
+                        t.palette.window,
+                        16.0,
+                        16.0 * 8.0 / 24.0
+                    ),
+                    text(line).size(t.type_.foot).color(color(t.palette.text3)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::End);
+                south = south.push(
+                    container(container(row_el).width(Length::Fixed(column_w)))
+                        .width(Fill)
+                        .center_x(Fill)
+                        .padding(Padding {
+                            top: 8.0,
+                            right: side,
+                            // Text bottom to composer top is 8px (avatars
+                            // bottom-align with the 12px line).
+                            bottom: 8.0,
+                            left: side,
+                        }),
+                );
+            }
+        }
+        south = south.push(
             container(view::composer(t, draft, &hint, self.sending, note).map(Message::Ui))
                 .width(Fill)
                 .center_x(Fill)
@@ -3573,10 +3709,8 @@ impl App {
                     bottom: 0.0,
                     left: side,
                 }),
-        ]
-        .height(Fill)
-        .width(Fill)
-        .into()
+        );
+        column![chrome, south].height(Fill).width(Fill).into()
     }
 
     fn gallery_view<'a>(&'a self, t: &Skin, g: &'a Gallery) -> Element<'a, Message> {
@@ -3829,7 +3963,18 @@ fn item_view<'a>(
             .align_y(Alignment::Center)
             .into(),
         ),
-        Row::Status(c) => card(status_view(t, c, card_w)),
+        Row::Status(c) => {
+            let inner = status_view(t, c, card_w);
+            // Status-line-only cards shrink to their content, up to the
+            // column width. Cards with a button or expanded steps stay
+            // full width. Wrap in a row so a stretch column cannot
+            // widen a Shrink child.
+            if status_is_line_only(c) {
+                row![container(inner).max_width(card_w)].into()
+            } else {
+                card(inner)
+            }
+        }
         Row::Delivery(c) => card(delivery_view(t, c, card_w)),
         Row::Reminder(r) => view::reminder_row(t, r).map(Message::Ui),
         Row::Card(c) => {
@@ -3879,10 +4024,119 @@ fn status_dot_view<'a>(t: &Skin, card: &StatusCard) -> Element<'a, Message> {
     }
 }
 
-/// Status card: a plain bro card with a status dot and the status word.
-/// The bro name lives in the group header, not inside the card. No fill.
-/// Layout: [dot 8px status (and "Step n of m" if shown)] [flex] [Take over].
+/// A process card that is only a status line (no action button, not
+/// expanded) shrinks to its content. Failed cards, takeover cards and
+/// expanded step lists stay full column width.
+fn status_is_line_only(card: &StatusCard) -> bool {
+    let failed =
+        card.detail_line().is_some() || card.failure.is_some() || card.failure_code.is_some();
+    !failed && card.action.is_none() && !card.expanded
+}
+
+/// Process / status line typography: 14px throughout. Digit runs use
+/// a monospace (tabular) figure font; words and the spaces around
+/// units such as 「38 秒」 stay in the UI font so they are not widened.
+fn process_line_texts<'a>(t: &Skin, line: &str) -> Element<'a, Message> {
+    use iced::widget::text::Wrapping;
+    const SIZE: f32 = 14.0;
+    let mut texts = row![].align_y(Alignment::Center);
+    for (run, mono) in robroz_ui::process::line_spans(line) {
+        let mut word = text(run)
+            .size(SIZE)
+            .color(color(t.palette.text))
+            .wrapping(Wrapping::None);
+        if mono {
+            word = word.font(Font::MONOSPACE);
+        }
+        texts = texts.push(word);
+    }
+    texts.into()
+}
+
+/// Surface capsule for the reconnecting banner.
+fn reconnect_capsule_style(t: Skin) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(color(t.palette.surface).into()),
+        text_color: Some(color(t.palette.text)),
+        border: Border::default()
+            .width(t.stroke.card)
+            .color(color(t.palette.border))
+            .rounded(12.0),
+        ..container::Style::default()
+    }
+}
+
+/// Status card: a failed card keeps the status word and detail line. A
+/// live, blocked or finished run is one collapsed process line (timer
+/// when not blocked), expandable to this session's recorded steps.
 fn status_view<'a>(t: &Skin, card: &'a StatusCard, width: f32) -> Element<'a, Message> {
+    use iced::widget::text::Wrapping;
+    let failed =
+        card.detail_line().is_some() || card.failure.is_some() || card.failure_code.is_some();
+    if failed {
+        return failed_status_view(t, card, width);
+    }
+    let now = robroz_ui::process::now_unix();
+    let line_text = card.process_line(now).unwrap_or_else(|| card.shown_line());
+    let mut texts = row![status_dot_view(t, card), process_line_texts(t, &line_text),]
+        .spacing(view::STATUS_DOT_TEXT_GAP)
+        .align_y(Alignment::Center);
+    if card.expandable() {
+        let chevron = if card.expanded { "‹" } else { "›" };
+        texts = texts.push(
+            text(chevron)
+                .size(t.type_.foot)
+                .color(color(t.palette.text3)),
+        );
+    }
+    let shrink = status_is_line_only(card);
+    let mut line = if shrink {
+        row![texts]
+    } else {
+        row![texts, space::horizontal()]
+    }
+    .spacing(12)
+    .align_y(Alignment::Center);
+    if let Some(action) = card.action {
+        let [pad_v, pad_h] = view::TAKE_OVER_PAD;
+        line = line.push(
+            button(text(model::display(action).into_owned()).size(t.type_.button))
+                .padding(Padding::from([pad_v, pad_h]))
+                .style(view::takeover_button_style(*t))
+                .on_press(Message::TakeOver(card.task_id.clone())),
+        );
+    }
+    let header: Element<'a, Message> = if card.expandable() {
+        mouse_area(line)
+            .on_press(Message::ToggleProcess(card.task_id.clone()))
+            .into()
+    } else {
+        line.into()
+    };
+    let mut body = column![header];
+    if card.expanded {
+        for step in &card.steps {
+            body = body.push(
+                text(step.text())
+                    .size(t.type_.foot)
+                    .color(color(t.palette.text3))
+                    .wrapping(Wrapping::Word),
+            );
+        }
+    }
+    let card_el = container(body.spacing(t.metrics.dot_gap))
+        .padding(view::status_card_padding(t))
+        .style(view::card_style(*t));
+    if shrink {
+        card_el.width(Length::Shrink).max_width(width).into()
+    } else {
+        card_el.width(Fill).into()
+    }
+}
+
+/// Failure cards keep the status word, optional router-step, and the
+/// raw detail line.
+fn failed_status_view<'a>(t: &Skin, card: &'a StatusCard, width: f32) -> Element<'a, Message> {
     use iced::widget::text::Wrapping;
     let status_word = text(card.shown_line()).wrapping(Wrapping::None);
     let texts: Element<'a, Message> = if let Some(step) = visible_step_progress(t, card, width) {
@@ -3915,9 +4169,6 @@ fn status_view<'a>(t: &Skin, card: &'a StatusCard, width: f32) -> Element<'a, Me
         );
     }
     let mut body = column![line];
-    if card.progress.is_some() {
-        body = body.push(progress_cell(t, card, width));
-    }
     if let Some(detail) = card.detail_line() {
         body = body.push(fail_detail_line(t, &detail));
     }
@@ -3953,34 +4204,6 @@ fn visible_step_progress(t: &Skin, card: &StatusCard, width: f32) -> Option<Stri
             text_w(&model::display(action), t.type_.button) + 2.0 * view::TAKE_OVER_PAD[1] + 12.0;
     }
     (needed <= inner).then_some(raw)
-}
-
-/// Optional progress line under the status row. One line, cut with "…",
-/// at a fixed line height. Not reserved when there is no progress. The
-/// bro name is not drawn here.
-fn progress_cell<'a>(t: &Skin, card: &'a StatusCard, width: f32) -> Element<'a, Message> {
-    use iced::widget::text::{LineHeight, Wrapping};
-    let Some(progress) = &card.progress else {
-        return space::horizontal().into();
-    };
-    let size = t.type_.status;
-    let room = width - 2.0 * (t.metrics.status_pad_h + t.stroke.card);
-    let cols = (room / (size * t.type_.unit_width)).max(8.0) as usize;
-    let fitted = robroz_ui::cards::status::clamp_lines(&progress.text(), cols, 1);
-    let rgb = robroz_ui::cards::status::progress_rgb(t.chat.bro_bg, t.palette.text);
-    let line = text(fitted)
-        .size(size)
-        .line_height(LineHeight::Absolute(progress_line_height(size).into()))
-        .wrapping(Wrapping::None)
-        .color(color(rgb));
-    container(container(line).clip(true).width(Fill))
-        .width(Fill)
-        .into()
-}
-
-/// Fixed height of the progress line: the card never jumps as the text changes.
-fn progress_line_height(size: f32) -> f32 {
-    (size * 1.5).round()
 }
 
 fn delivery_setup(card: &DeliveryCard) -> Vec<(Message, Text, Text)> {
@@ -4132,6 +4355,15 @@ mod tests {
             failure_code: None,
             failure_detail: None,
             failure: None,
+            bot_id: String::new(),
+            state: TaskState::Running,
+            container_up: true,
+            waiting_for: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+            local_started: None,
+            steps: Vec::new(),
+            expanded: false,
         }
     }
 

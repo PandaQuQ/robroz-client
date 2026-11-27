@@ -241,20 +241,21 @@ impl Conn {
         let events = serde_json::from_value::<Events>(raw.clone())
             .map_err(|e| ApiError(Key::ClientDecodeFailed.fill(&[&e])))?
             .events;
-        let from: Vec<Option<String>> = Some(raw)
-            .and_then(|v| {
-                v.get("events")?.as_array().map(|a| {
-                    a.iter()
-                        .map(|e| e.get("from").and_then(|f| f.as_str()).map(str::to_string))
-                        .collect()
-                })
+        let sides: Vec<Option<String>> = raw
+            .get("events")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .map(|e| e.get("from").and_then(|f| f.as_str()).map(str::to_string))
+                    .collect()
             })
             .unwrap_or_default();
         Ok(events
             .into_iter()
             .enumerate()
             .map(|(i, e)| {
-                let own = from.get(i).and_then(|f| f.as_deref()) != Some("bro");
+                let from = sides.get(i).cloned().flatten();
+                let own = from.as_deref() != Some("bro");
                 (e, own)
             })
             .collect())

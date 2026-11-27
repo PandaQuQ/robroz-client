@@ -1,13 +1,20 @@
 //! Live events for one chat over the host's SSE stream (robroz#25):
 //! `GET /api/groups/{id}/stream`.
 //!
-//! Each SSE message is one contract `Event` as JSON in `data:`, with the
-//! card's change time as `id:`. On a drop the reader waits (1s, 2s, 4s … up
-//! to 30s) and reconnects with `Last-Event-ID`, so the host only sends what
-//! changed while it was away. While the stream is down the app polls
-//! `…/events?since=` every tick ([`poll_interval`]); while it is up, polling
-//! slows to a safety net. Only the open chat is streamed; other chats
-//! update through that poll and `GET /api/unread`.
+//! Each SSE message is one contract `Event` as JSON in `data:`. `id:` is
+//! an opaque string (a decimal seq after host C1, or a legacy RFC3339
+//! timestamp) and is sent back verbatim as `Last-Event-ID`. Only the last
+//! frame of a batch carries an id; earlier frames leave the cursor still.
+//!
+//! After 45s with no bytes the client reconnects (the host keepalives
+//! every 15s). A clean close (the host ends the stream at 3600s) reconnects
+//! immediately and does not count as a failure. 503 responses wait
+//! `Retry-After`. Failed reconnects use 1s, 2s, 4s … up to 30s backoff.
+//! The UI stays silent until more than 30s of continuous failed reconnects.
+//! While the stream is down the app polls `…/events?since=` every tick
+//! ([`poll_interval`]); while it is up, polling slows to a safety net.
+//! Only the open chat is streamed; other chats update through that poll
+//! and `GET /api/unread`.
 
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader};
@@ -36,7 +43,42 @@ pub enum StreamItem {
     /// Keep-alive comment; lets the reader notice nobody is listening.
     Ping,
     /// The connection ended or could not be made; it will retry.
-    Down(String),
+    Down(StreamDown),
+}
+
+/// Why a stream dropped, and whether the next reconnect is silent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamDown {
+    /// 45s with no bytes. Reconnect immediately; not a failure.
+    Idle,
+    /// Clean end of stream (host max-age). Reconnect immediately; not a
+    /// failure, so it does not start the 30s banner timer.
+    CleanClose,
+    /// HTTP 503 (e.g. `too_many_streams`). Wait `retry_after` when set.
+    Unavailable {
+        retry_after: Option<Duration>,
+        body: String,
+    },
+    /// Connect or read failure.
+    Error(String),
+}
+
+impl StreamDown {
+    /// Only real failures count toward the 30s reconnecting banner.
+    pub fn counts_as_failure(&self) -> bool {
+        matches!(self, Self::Unavailable { .. } | Self::Error(_))
+    }
+
+    /// How long to wait before the next attempt.
+    pub fn retry_wait(&self, backoff: &mut Backoff) -> Duration {
+        match self {
+            Self::Idle | Self::CleanClose => Duration::ZERO,
+            Self::Unavailable { retry_after, .. } => {
+                retry_after.unwrap_or_else(|| backoff.next_delay())
+            }
+            Self::Error(_) => backoff.next_delay(),
+        }
+    }
 }
 
 /// How often the app polls: fast while the stream is down, slow while up.
@@ -145,29 +187,71 @@ impl Default for Backoff {
     }
 }
 
+fn is_idle_timeout(err: &ureq::Error) -> bool {
+    match err {
+        ureq::Error::Timeout(_) => true,
+        ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::TimedOut => true,
+        other => {
+            let s = other.to_string().to_lowercase();
+            s.contains("timed out") || s.contains("timeout")
+        }
+    }
+}
+
+fn map_connect_err(conn: &Conn, err: ureq::Error) -> StreamDown {
+    if is_idle_timeout(&err) {
+        // A timeout before the body starts is a failed connect, not an
+        // idle drop of a live stream.
+        StreamDown::Error(Text::ClientConnectFailed.fill(&[&conn.base(), &err]))
+    } else {
+        StreamDown::Error(Text::ClientConnectFailed.fill(&[&conn.base(), &err]))
+    }
+}
+
+/// `Retry-After` as a delay: a number of seconds, or an HTTP-date.
+pub fn parse_retry_after(headers: &ureq::http::HeaderMap) -> Option<Duration> {
+    let raw = headers.get("retry-after")?.to_str().ok()?.trim();
+    if let Ok(secs) = raw.parse::<u64>() {
+        return Some(Duration::from_secs(secs));
+    }
+    chrono::DateTime::parse_from_rfc2822(raw).ok().map(|t| {
+        let secs = (t.with_timezone(&chrono::Utc) - chrono::Utc::now())
+            .num_seconds()
+            .max(0) as u64;
+        Duration::from_secs(secs)
+    })
+}
+
 /// One connection. Returns `Ok(true)` when the sink asked to stop,
 /// `Ok(false)` on a clean end of stream, `Err` on a failed connect or read.
-/// `last_id` is sent as `Last-Event-ID` and advanced per frame.
+/// `last_id` is sent as `Last-Event-ID` verbatim and advanced only when a
+/// frame carries an `id:` (the last frame of a host batch).
 pub fn read_once(
     conn: &Conn,
     group_id: &str,
     last_id: &mut Option<String>,
     sink: &mut dyn FnMut(StreamItem) -> bool,
-) -> Result<bool, String> {
+) -> Result<bool, StreamDown> {
     let mut req = conn
         .get(&path(group_id))
         .header("Accept", "text/event-stream");
     if let Some(id) = last_id.as_deref() {
+        // Opaque: decimal seq or a legacy RFC3339 timestamp.
         req = req.header("Last-Event-ID", id);
     }
-    let response = req
-        .call()
-        .map_err(|e| Text::ClientConnectFailed.fill(&[&conn.base(), &e]))?;
+    let response = req.call().map_err(|e| map_connect_err(conn, e))?;
     let status = response.status().as_u16();
+    if status == 503 {
+        let retry_after = parse_retry_after(response.headers());
+        let body = response.into_body().read_to_string().unwrap_or_default();
+        return Err(StreamDown::Unavailable { retry_after, body });
+    }
     if status != 200 {
         let url = conn.url(&path(group_id));
         let body = response.into_body().read_to_string().unwrap_or_default();
-        return Err(crate::conn::error_text("GET", &url, status, &body));
+        return Err(StreamDown::Error(crate::conn::error_text(
+            "GET", &url, status, &body,
+        )));
     }
     if !sink(StreamItem::Connected) {
         return Ok(true);
@@ -175,7 +259,22 @@ pub fn read_once(
     let reader = BufReader::new(response.into_body().into_reader());
     let mut parser = Parser::default();
     for line in reader.lines() {
-        let line = line.map_err(|e| Text::ClientStreamDroppedBecause.fill(&[&e]))?;
+        let line = match line {
+            Ok(line) => line,
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                return Err(StreamDown::Idle);
+            }
+            Err(e) => {
+                let msg = Text::ClientStreamDroppedBecause.fill(&[&e]);
+                // ureq may surface its timeout as a non-TimedOut io error.
+                if msg.to_lowercase().contains("timed out")
+                    || msg.to_lowercase().contains("timeout")
+                {
+                    return Err(StreamDown::Idle);
+                }
+                return Err(StreamDown::Error(msg));
+            }
+        };
         let item = match parser.line(&line) {
             Line::Frame(frame) => {
                 if let Some(id) = frame.id {
@@ -184,8 +283,9 @@ pub fn read_once(
                 match event_decode::parse_event_str(&frame.data) {
                     Ok((event, extras)) => StreamItem::Event { event, extras },
                     // A newer host may send a kind this client does not
-                    // know yet: skip it rather than drop the stream. The
-                    // frame's `id` above still moves `Last-Event-ID`.
+                    // know yet (including a future `resync` frame): skip
+                    // it rather than drop the stream. The frame's `id`
+                    // above still moves `Last-Event-ID`.
                     Err(err) => {
                         if cfg!(debug_assertions) {
                             eprintln!("skip stream event: {err}");
@@ -220,18 +320,21 @@ pub fn run(
             }
             sink(item)
         });
-        let reason = match result {
+        let down = match result {
             Ok(true) => return,
-            Ok(false) => Text::ClientStreamDropped.to_string(),
+            Ok(false) => StreamDown::CleanClose,
             Err(e) => e,
         };
         if connected {
             backoff.reset();
         }
-        if !sink(StreamItem::Down(reason)) {
+        let wait = down.retry_wait(&mut backoff);
+        if !sink(StreamItem::Down(down)) {
             return;
         }
-        std::thread::sleep(backoff.next_delay());
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
+        }
     }
 }
 
@@ -646,5 +749,169 @@ mod tests {
                 other => panic!("unexpected {other:?}"),
             }
         }
+    }
+
+    fn status_server(status: u16, extra_headers: &str, body: &str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let headers = extra_headers.to_string();
+        let body = body.to_string();
+        std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut head = Vec::new();
+            let mut buf = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") {
+                if sock.read(&mut buf).unwrap() == 0 {
+                    break;
+                }
+                head.push(buf[0]);
+            }
+            let resp = format!(
+                "HTTP/1.1 {status} Error\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n{headers}\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes());
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn parse_retry_after_accepts_seconds() {
+        let mut headers = ureq::http::HeaderMap::new();
+        headers.insert("retry-after", "5".parse().unwrap());
+        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(5)));
+        headers.insert("retry-after", "0".parse().unwrap());
+        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(0)));
+    }
+
+    #[test]
+    fn last_event_id_is_sent_verbatim_and_skips_frames_without_id() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut sock, _) = listener.accept().unwrap();
+                let mut head = Vec::new();
+                let mut buf = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    if sock.read(&mut buf).unwrap() == 0 {
+                        break;
+                    }
+                    head.push(buf[0]);
+                }
+                tx.send(String::from_utf8_lossy(&head).to_lowercase())
+                    .unwrap();
+                let d1 = message_json("m1", "一");
+                let d2 = message_json("m2", "二");
+                let body = format!(
+                    ": hi\n\nevent: message\ndata: {d1}\n\nevent: message\nid: 42\ndata: {d2}\n\n"
+                );
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+        let conn = Conn::new(format!("http://{addr}"));
+        let mut events = 0;
+        run(
+            &conn,
+            "g1",
+            Backoff::new(Duration::from_millis(10), Duration::from_millis(20)),
+            |item| {
+                if matches!(item, StreamItem::Event { .. }) {
+                    events += 1;
+                }
+                events < 3
+            },
+        );
+        let first = rx.recv().unwrap();
+        assert!(!first.contains("last-event-id"), "fresh: {first}");
+        let second = rx.recv().unwrap();
+        assert!(
+            second.contains("last-event-id: 42"),
+            "decimal seq sent verbatim, not a missing id: {second}"
+        );
+    }
+
+    #[test]
+    fn a_clean_close_is_not_a_failure() {
+        assert!(!StreamDown::CleanClose.counts_as_failure());
+        assert!(!StreamDown::Idle.counts_as_failure());
+        assert!(StreamDown::Error("x".into()).counts_as_failure());
+        assert!(StreamDown::Unavailable {
+            retry_after: Some(Duration::from_secs(5)),
+            body: "too_many_streams".into(),
+        }
+        .counts_as_failure());
+        let mut b = Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
+        assert_eq!(StreamDown::CleanClose.retry_wait(&mut b), Duration::ZERO);
+        assert_eq!(StreamDown::Idle.retry_wait(&mut b), Duration::ZERO);
+        assert_eq!(
+            StreamDown::Unavailable {
+                retry_after: Some(Duration::from_secs(5)),
+                body: String::new(),
+            }
+            .retry_wait(&mut b),
+            Duration::from_secs(5)
+        );
+    }
+
+    #[test]
+    fn unavailable_503_waits_retry_after() {
+        let base = status_server(503, "retry-after: 0\r\n", r#"{"code":"too_many_streams"}"#);
+        let conn = Conn::new(base);
+        let err = read_once(&conn, "g1", &mut None, &mut |_| true).unwrap_err();
+        match err {
+            StreamDown::Unavailable { retry_after, body } => {
+                assert_eq!(retry_after, Some(Duration::from_secs(0)));
+                assert!(body.contains("too_many_streams"), "{body}");
+            }
+            other => panic!("expected unavailable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn idle_timeout_reconnects_when_no_bytes_arrive() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut head = Vec::new();
+            let mut buf = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") {
+                if sock.read(&mut buf).unwrap() == 0 {
+                    break;
+                }
+                head.push(buf[0]);
+            }
+            let body = ": hi\n\n";
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n{body}"
+            );
+            let _ = sock.write_all(resp.as_bytes());
+            std::thread::sleep(Duration::from_secs(3));
+        });
+        let conn =
+            Conn::new(format!("http://{addr}")).streaming_with_idle(Duration::from_millis(300));
+        let mut last = None;
+        let mut saw_up = false;
+        let start = std::time::Instant::now();
+        let err = read_once(&conn, "g1", &mut last, &mut |item| {
+            if item == StreamItem::Connected {
+                saw_up = true;
+            }
+            true
+        })
+        .unwrap_err();
+        assert!(saw_up);
+        assert_eq!(err, StreamDown::Idle);
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "idle should trip in well under 2s, took {:?}",
+            start.elapsed()
+        );
     }
 }

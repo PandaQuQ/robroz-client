@@ -21,8 +21,7 @@ pub fn parse_event(mut value: Value) -> Result<(Event, Option<ApprovalExtras>), 
 }
 
 pub fn parse_event_str(body: &str) -> Result<(Event, Option<ApprovalExtras>), serde_json::Error> {
-    let value = serde_json::from_str(body)?;
-    parse_event(value)
+    parse_event(serde_json::from_str(body)?)
 }
 
 /// Settings-page rule cards must not appear in any chat, stream or unread.
@@ -223,5 +222,27 @@ mod tests {
             reason_text_in(Locale::Zh, card.reason_code, card.reason.as_deref()).as_deref(),
             Some("没有放行规则允许这个操作")
         );
+    }
+
+    #[test]
+    fn a_started_at_field_on_status_json_is_not_read() {
+        // contract-v0.3.0 has no startedAt; a future host may send one.
+        // This PR does not parse it (that moves to the v0.3.1 follow-up).
+        let json = r#"{"type":"status","id":"t","taskId":"t","botId":"b","botName":"Ada",
+            "state":"running","label":"进行中","createdAt":"2026-11-20T08:00:00Z",
+            "updatedAt":"2026-11-20T08:00:12Z","containerUp":true,
+            "startedAt":"2026-11-20T08:00:01Z"}"#;
+        let value: serde_json::Value = serde_json::from_str(json).expect("json");
+        assert_eq!(
+            value.get("startedAt").and_then(|v| v.as_str()),
+            Some("2026-11-20T08:00:01Z")
+        );
+        let (event, extras) = ev(json);
+        assert!(matches!(event, Event::Status { .. }));
+        assert!(extras.is_none());
+        // The decode result is only the contract event; no startedAt is returned.
+        let (event, extras) = parse_event_str(json).expect("parse");
+        assert!(matches!(event, Event::Status { .. }));
+        assert!(extras.is_none());
     }
 }

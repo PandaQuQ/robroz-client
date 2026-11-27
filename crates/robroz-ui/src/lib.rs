@@ -17,6 +17,7 @@ pub mod avatar_view;
 pub mod cards;
 pub mod conversations;
 pub mod i18n;
+pub mod process;
 pub mod runs;
 pub mod theme;
 #[cfg(feature = "gui")]

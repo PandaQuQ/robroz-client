@@ -3036,7 +3036,12 @@ mod tests {
             let no_token = Conn::new(&base).streaming();
             let down =
                 crate::source::stream::read_once(&no_token, &dm, &mut last_id, &mut |_| true);
-            assert_eq!(down, Err(crate::conn::unauthorized_message()));
+            assert_eq!(
+                down,
+                Err(crate::source::stream::StreamDown::Error(
+                    crate::conn::unauthorized_message(),
+                )),
+            );
         }
     }
 }

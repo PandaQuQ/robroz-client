@@ -16,6 +16,7 @@ use robroz_ui::i18n::{host_text, Key as Text};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusCard {
     pub task_id: String,
+    pub bot_id: String,
     pub bot_name: String,
     /// From `robroz-card`, or 「没做成：…」 when the host sent a `failure`.
     pub status_line: String,
@@ -40,6 +41,52 @@ pub struct StatusCard {
     pub failure_detail: Option<String>,
     /// Raw host `failure`. Without a code it draws the unknown-code copy.
     pub failure: Option<String>,
+    pub state: TaskState,
+    pub container_up: bool,
+    pub waiting_for: Option<WaitingFor>,
+    pub created_at: String,
+    pub updated_at: String,
+    /// First transition into `running` seen this session.
+    pub local_started: Option<i64>,
+    /// Progress lines recorded this session, in order.
+    pub steps: Vec<ProgressLine>,
+    /// The process line is expanded to show [`steps`].
+    pub expanded: bool,
+}
+
+impl StatusCard {
+    /// Live run: `running` and the container is up, not a failure.
+    pub fn is_live(&self) -> bool {
+        self.failure.is_none() && self.state == TaskState::Running && self.container_up
+    }
+
+    pub fn timer(&self, now: i64) -> robroz_ui::process::TimerPhase {
+        robroz_ui::process::timer_phase(robroz_ui::process::TimerInput {
+            state: self.state,
+            live: self.is_live(),
+            failed: self.failure.is_some() || self.failure_code.is_some(),
+            local_started: self.local_started,
+            created_at: robroz_ui::process::parse_unix(&self.created_at),
+            updated_at: robroz_ui::process::parse_unix(&self.updated_at),
+            now,
+        })
+    }
+
+    /// Collapsed process line, if this card is a process (not a failure).
+    pub fn process_line(&self, now: i64) -> Option<String> {
+        if self.failure.is_some() || self.failure_code.is_some() {
+            return None;
+        }
+        if let Some(line) = self.timer(now).line() {
+            return Some(line);
+        }
+        // Blocked / queued: status word, no timer.
+        Some(self.shown_line())
+    }
+
+    pub fn expandable(&self) -> bool {
+        robroz_ui::process::expandable(&self.steps)
+    }
 }
 
 impl StatusCard {
@@ -518,8 +565,59 @@ impl Feed {
             return;
         }
         let (key, row) = to_row(event, extras);
+        let row = match row {
+            Row::Status(card) => Row::Status(self.merge_status(card)),
+            other => other,
+        };
         let meta = meta_of(event);
         self.upsert(key, row, Some(meta));
+    }
+
+    fn merge_status(&self, mut card: StatusCard) -> StatusCard {
+        let key = Key::Task(card.task_id.clone());
+        if let Some((_, Row::Status(old), _)) = self.rows.iter().find(|(k, _, _)| *k == key) {
+            card.steps = old.steps.clone();
+            card.local_started = old.local_started;
+            card.expanded = old.expanded;
+            // Only start the local timer when we see the transition into a
+            // live run this session, not when a snapshot was already running.
+            if card.is_live() && !old.is_live() && card.local_started.is_none() {
+                card.local_started = Some(robroz_ui::process::now_unix());
+            }
+        }
+        if let Some(line) = card.progress.clone().or(card.step_progress.clone()) {
+            robroz_ui::process::push_step(&mut card.steps, line);
+        }
+        card
+    }
+
+    /// Live-running bros in this feed, first-seen order, unique by bot id.
+    pub fn working_bros(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (_, row, _) in &self.rows {
+            if let Row::Status(card) = row {
+                if card.is_live() && !out.iter().any(|(id, _)| id == &card.bot_id) {
+                    out.push((card.bot_id.clone(), card.bot_name.clone()));
+                }
+            }
+        }
+        out
+    }
+
+    /// Toggle the process line for this task. No-op when it has no steps.
+    pub fn toggle_process(&mut self, task_id: &str) {
+        let key = Key::Task(task_id.to_string());
+        if let Some((_, Row::Status(card), _)) = self.rows.iter_mut().find(|(k, _, _)| *k == key) {
+            if card.expandable() {
+                card.expanded = !card.expanded;
+            }
+        }
+    }
+
+    pub fn any_live_timer(&self) -> bool {
+        self.rows.iter().any(|(_, row, _)| {
+            matches!(row, Row::Status(c) if c.timer(robroz_ui::process::now_unix()).is_running())
+        })
     }
 
     /// Insert or replace a new-kind card by its id. Used for card kinds the
@@ -723,6 +821,7 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
         }
         Event::Status {
             task_id,
+            bot_id,
             bot_name,
             state,
             container_up,
@@ -734,6 +833,8 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
             status_code,
             failure_code,
             failure_detail,
+            created_at,
+            updated_at,
             ..
         } => {
             // A failed task is grey with no action, like a dead run, never
@@ -768,6 +869,7 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
             let (progress, step_progress) = split_progress(*state, *container_up, shown);
             let card = StatusCard {
                 task_id: task_id.clone(),
+                bot_id: bot_id.clone(),
                 bot_name: bot_name.clone(),
                 status_line,
                 tone: look.tone,
@@ -779,6 +881,14 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
                 failure_code: *failure_code,
                 failure_detail: failure_detail.clone(),
                 failure: failure.clone(),
+                state: *state,
+                container_up: *container_up,
+                waiting_for: *waiting_for,
+                created_at: created_at.clone(),
+                updated_at: updated_at.clone(),
+                local_started: None,
+                steps: Vec::new(),
+                expanded: false,
             };
             (Key::Task(task_id.clone()), Row::Status(card))
         }

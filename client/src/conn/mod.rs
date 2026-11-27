@@ -15,6 +15,8 @@
 use std::fmt;
 use std::time::Duration;
 
+use ureq::unversioned::transport::Connector;
+
 mod config;
 pub(crate) mod form;
 
@@ -51,6 +53,98 @@ fn agent(timeout: Option<Duration>) -> ureq::Agent {
         .into()
 }
 
+/// Streaming agent: no overall timeout, but each socket read waits at
+/// most `idle` (45s in production). A quiet stream then errors so the
+/// reader can reconnect. Keepalives every 15s reset the wait.
+fn streaming_agent(idle: Duration) -> ureq::Agent {
+    let config = ureq::config::Config::builder()
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .http_status_as_error(false)
+        .build();
+    let connector =
+        ureq::unversioned::transport::DefaultConnector::default().chain(IdleLimit(idle));
+    ureq::Agent::with_parts(
+        config,
+        connector,
+        ureq::unversioned::resolver::DefaultResolver::default(),
+    )
+}
+
+/// Caps each transport read at `0`, so a half-open SSE stream is dropped
+/// after that idle period instead of hanging forever.
+#[derive(Debug, Clone, Copy)]
+struct IdleLimit(Duration);
+
+impl<In: ureq::unversioned::transport::Transport> ureq::unversioned::transport::Connector<In>
+    for IdleLimit
+{
+    type Out = IdleTransport<In>;
+
+    fn connect(
+        &self,
+        _: &ureq::unversioned::transport::ConnectionDetails,
+        chained: Option<In>,
+    ) -> Result<Option<Self::Out>, ureq::Error> {
+        Ok(chained.map(|inner| IdleTransport {
+            inner,
+            idle: self.0,
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct IdleTransport<T> {
+    inner: T,
+    idle: Duration,
+}
+
+fn cap_idle(
+    timeout: ureq::unversioned::transport::NextTimeout,
+    idle: Duration,
+) -> ureq::unversioned::transport::NextTimeout {
+    use ureq::unversioned::transport::time::Duration as UDuration;
+    let cap: UDuration = idle.into();
+    if timeout.after.is_not_happening() || timeout.after > cap {
+        ureq::unversioned::transport::NextTimeout {
+            after: cap,
+            reason: timeout.reason,
+        }
+    } else {
+        timeout
+    }
+}
+
+impl<T: ureq::unversioned::transport::Transport> ureq::unversioned::transport::Transport
+    for IdleTransport<T>
+{
+    fn buffers(&mut self) -> &mut dyn ureq::unversioned::transport::Buffers {
+        self.inner.buffers()
+    }
+
+    fn transmit_output(
+        &mut self,
+        amount: usize,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<(), ureq::Error> {
+        self.inner.transmit_output(amount, timeout)
+    }
+
+    fn await_input(
+        &mut self,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<bool, ureq::Error> {
+        self.inner.await_input(cap_idle(timeout, self.idle))
+    }
+
+    fn is_open(&mut self) -> bool {
+        self.inner.is_open()
+    }
+
+    fn is_tls(&self) -> bool {
+        self.inner.is_tls()
+    }
+}
+
 impl Conn {
     pub fn new(base: impl Into<String>) -> Self {
         Self {
@@ -68,9 +162,16 @@ impl Conn {
     }
 
     /// Same host and token, no overall timeout: for the long-lived stream.
+    /// Each read waits at most 45s with no bytes, then the stream errors
+    /// so the client can reconnect.
     pub fn streaming(&self) -> Self {
+        self.streaming_with_idle(Duration::from_secs(robroz_ui::process::SSE_IDLE_SECS))
+    }
+
+    /// [`streaming`] with a custom idle timeout (tests).
+    pub fn streaming_with_idle(&self, idle: Duration) -> Self {
         Self {
-            agent: agent(None),
+            agent: streaming_agent(idle),
             ..self.clone()
         }
     }

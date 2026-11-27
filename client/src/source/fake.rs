@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use robroz_contract::{
-    Bro, ChoiceOption, Event, MessageKind, Schedule, ScheduleEntry, TaskState, Unread,
+    Bro, ChoiceOption, Event, MessageKind, Schedule, ScheduleEntry, TaskState, Unread, WaitingFor,
 };
 use robroz_ui::cards::{
     ActionKind, ApprovalCard, ApprovalState, Card, DraftCard, DraftChannel, DraftState,
@@ -24,6 +24,10 @@ const SITE: &str = "g-site";
 const OPS: &str = "g-ops";
 /// Two bros delivering at the same time, plus one unattributed delivery.
 const TWO: &str = "g-two";
+/// Two live runs, for the working row and a 12s timer.
+const WORK: &str = "g-work";
+/// A finished 38s run and a blocked card, last in the feed for shots.
+const PROC: &str = "g-proc";
 /// A bro's private chat: a group whose only member is that bro.
 const DM: &str = "dm-ada";
 
@@ -33,6 +37,8 @@ impl FakeSource {
             group(SITE, "公司官网建设"),
             group(OPS, "运营日报"),
             group(TWO, "同时交付"),
+            group(WORK, "一起处理"),
+            group(PROC, "进度"),
             group(DM, "Ada"),
         ];
         let steps = vec![
@@ -59,13 +65,13 @@ impl FakeSource {
                     "你好 Ada，以后有事我直接在这里找你。",
                 ),
             ],
-            vec![status(
-                SITE,
-                "t-hero",
-                "bot-ada",
-                "Ada",
-                TaskState::Running,
-                true,
+            vec![with_progress(
+                with_times(
+                    status(SITE, "t-hero", "bot-ada", "Ada", TaskState::Running, true),
+                    START_HERO,
+                    START_HERO,
+                ),
+                "Writing the hero logo",
             )],
             vec![
                 msg(SITE, "m4", MessageKind::File, "brand-guide.pdf"),
@@ -79,16 +85,16 @@ impl FakeSource {
                 TaskState::Running,
                 true,
             )],
-            vec![status(
-                SITE,
-                "t-copy",
-                "bot-bea",
-                "Bea",
-                TaskState::Blocked,
-                false,
+            vec![with_waiting(
+                status(SITE, "t-copy", "bot-bea", "Bea", TaskState::Blocked, false),
+                WaitingFor::Takeover,
             )],
             vec![
-                status(SITE, "t-hero", "bot-ada", "Ada", TaskState::Done, false),
+                with_times(
+                    status(SITE, "t-hero", "bot-ada", "Ada", TaskState::Done, false),
+                    START_HERO,
+                    DONE_HERO,
+                ),
                 attributed_delivery(
                     SITE,
                     "d1",
@@ -193,6 +199,58 @@ impl FakeSource {
                     MessageKind::Text,
                     "帮我把旧日志清一下。",
                     "19:00:40",
+                ),
+            ],
+            // Two live runs in one group: the working row plus a 12s timer.
+            vec![
+                with_progress(
+                    with_times(
+                        status(
+                            WORK,
+                            "t-run-ada",
+                            "bot-ada",
+                            "Ada",
+                            TaskState::Running,
+                            true,
+                        ),
+                        START_LIVE,
+                        START_LIVE,
+                    ),
+                    "Resizing the logo",
+                ),
+                with_progress(
+                    with_times(
+                        status(
+                            WORK,
+                            "t-run-bea",
+                            "bot-bea",
+                            "Bea",
+                            TaskState::Running,
+                            true,
+                        ),
+                        START_LIVE,
+                        START_LIVE,
+                    ),
+                    "Drafting the copy",
+                ),
+                with_progress(
+                    with_times(
+                        status(PROC, "t-done", "bot-ada", "Ada", TaskState::Running, true),
+                        START_HERO,
+                        START_HERO,
+                    ),
+                    "Writing the hero logo",
+                ),
+            ],
+            vec![
+                with_times(
+                    status(PROC, "t-done", "bot-ada", "Ada", TaskState::Done, false),
+                    START_HERO,
+                    DONE_HERO,
+                ),
+                with_waiting(
+                    status(PROC, "t-block", "bot-bea", "Bea", TaskState::Blocked, false),
+                    WaitingFor::Takeover,
                 ),
             ],
         ];
@@ -335,6 +393,40 @@ fn at(seq: &str) -> String {
     format!("2026-10-07T19:00:{seq}.000Z")
 }
 
+pub use robroz_ui::process::FAKE_NOW_ISO as FAKE_NOW;
+/// `t-hero` started; done 38s later.
+const START_HERO: &str = "2026-10-07T19:00:01.000Z";
+const DONE_HERO: &str = "2026-10-07T19:00:39.000Z";
+/// Live runs in `g-two`: 12s before [`FAKE_NOW`].
+const START_LIVE: &str = "2026-10-07T19:09:48.000Z";
+
+fn with_times(mut ev: GroupEvent, created: &str, updated: &str) -> GroupEvent {
+    if let Event::Status {
+        created_at,
+        updated_at,
+        ..
+    } = &mut ev.event
+    {
+        *created_at = created.into();
+        *updated_at = updated.into();
+    }
+    ev
+}
+
+fn with_progress(mut ev: GroupEvent, progress: &str) -> GroupEvent {
+    if let Event::Status { progress: slot, .. } = &mut ev.event {
+        *slot = Some(progress.into());
+    }
+    ev
+}
+
+fn with_waiting(mut ev: GroupEvent, waiting: WaitingFor) -> GroupEvent {
+    if let Event::Status { waiting_for, .. } = &mut ev.event {
+        *waiting_for = Some(waiting);
+    }
+    ev
+}
+
 pub const DRAFT_BODY: &str = "大家好，第一期的 7 个节点里已经合并了 5 个：任务队列、Docker 沙箱、三级权限、定时任务和客户端外壳。剩下的是联调和真机测试，预计下周开始。";
 
 fn option(id: &str, label: &str, primary: bool) -> ChoiceOption {
@@ -403,15 +495,26 @@ pub fn fake_chats() -> (Vec<Unread>, Vec<Bro>) {
             unread(DM, 1, "30"),
             unread(OPS, 0, "20"),
             unread(TWO, 0, "03"),
+            unread(WORK, 0, "50"),
+            unread(PROC, 0, "51"),
         ],
-        vec![Bro {
-            avatar: None,
-            id: "bot-ada".into(),
-            name: "Ada".into(),
-            dm_group_id: Some(DM.into()),
-            // The fake signed-in user owns Ada, so her avatar can be edited.
-            owner_user_id: Some(crate::api::FAKE_ME_ID.into()),
-        }],
+        vec![
+            Bro {
+                avatar: None,
+                id: "bot-ada".into(),
+                name: "Ada".into(),
+                dm_group_id: Some(DM.into()),
+                // The fake signed-in user owns Ada, so her avatar can be edited.
+                owner_user_id: Some(crate::api::FAKE_ME_ID.into()),
+            },
+            Bro {
+                avatar: None,
+                id: "bot-bea".into(),
+                name: "Bea".into(),
+                dm_group_id: None,
+                owner_user_id: None,
+            },
+        ],
     )
 }
 
@@ -550,7 +653,7 @@ mod tests {
     #[test]
     fn fake_script_covers_every_case() {
         let mut source = FakeSource::new();
-        assert_eq!(source.groups().unwrap().len(), 4);
+        assert_eq!(source.groups().unwrap().len(), 6);
         let feeds = drain();
         let site: Vec<_> = feeds[SITE].rows().cloned().collect();
         let ops: Vec<_> = feeds[OPS].rows().cloned().collect();

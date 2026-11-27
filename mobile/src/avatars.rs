@@ -24,23 +24,31 @@ pub fn glyph(a: BroAvatar, mode: Mode, size: f32, scale: f32) -> slint::Image {
 /// and its width in logical px; an empty image for no bros.
 pub fn stack(list: &[BroAvatar], mode: Mode, ring: [u8; 3], scale: f32) -> (slint::Image, f32) {
     use robroz_tokens::base::avatar as tok;
+    stack_at(list, mode, ring, scale, tok::TITLE_SIZE, tok::TITLE_OVERLAP)
+}
+
+/// Stacked avatars at a given logical size (16px for the working row).
+pub fn stack_at(
+    list: &[BroAvatar],
+    mode: Mode,
+    ring: [u8; 3],
+    scale: f32,
+    size: f32,
+    overlap: f32,
+) -> (slint::Image, f32) {
+    use robroz_tokens::base::avatar as tok;
     if list.is_empty() {
         return (slint::Image::default(), 0.0);
     }
     let scale = scale.max(1.0);
-    let px = (tok::TITLE_SIZE * scale).round() as u32;
-    let step = ((tok::TITLE_SIZE - tok::TITLE_OVERLAP) * scale).round() as u32;
-    let (w, rgba) = avatar::rasterize_stack(
-        list,
-        mode == Mode::Dark,
-        (ring, tok::TITLE_RING * scale),
-        px,
-        step,
-    );
+    let px = (size * scale).round() as u32;
+    let step = ((size - overlap) * scale).round() as u32;
+    let ring_w = tok::TITLE_RING * scale * (size / tok::TITLE_SIZE);
+    let (w, rgba) = avatar::rasterize_stack(list, mode == Mode::Dark, (ring, ring_w), px, step);
     let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&rgba, w, px);
     (
         slint::Image::from_rgba8(buf),
-        avatar::stack_width(list.len(), tok::TITLE_SIZE, tok::TITLE_OVERLAP),
+        avatar::stack_width(list.len(), size, overlap),
     )
 }
 

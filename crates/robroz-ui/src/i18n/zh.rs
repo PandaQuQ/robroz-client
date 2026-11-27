@@ -546,5 +546,15 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::SecretPendingClear => "保存后删除",
         Key::SecretUndo => "撤销",
         Key::SecretFilled => "已填",
+        Key::ProcessWorking => "处理中 {0}",
+        Key::ProcessWorkingAbout => "处理中约 {0}",
+        Key::ProcessWorked => "用了 {0}",
+        Key::ProcessWorkedAbout => "用了约 {0}",
+        Key::ProcessSecs => "{0} 秒",
+        Key::ProcessMins => "{0} 分 {1} 秒",
+        Key::WorkingRowOne => "{0} 在处理…",
+        Key::WorkingRowTwo => "{0} 和 {1} 在处理…",
+        Key::WorkingRowMany => "{0} 和另外 {1} 个",
+        Key::Reconnecting => "正在重新连接",
     }
 }
