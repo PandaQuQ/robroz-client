@@ -53,9 +53,10 @@ pub const DROP: Key = Key::ReviewRulesDrop;
 /// Prefix on a blocked-action DM card's reason line, wording from 最优雅UI姐.
 pub const BLOCKED_REASON_PREFIX: Key = Key::ReviewRulesBlockedReasonPrefix;
 
-/// Grey reason line for a blocked-action card. `reason` is the host value.
-pub fn blocked_reason_line(reason: &str) -> String {
-    format!("{BLOCKED_REASON_PREFIX}{}", crate::i18n::host_text(reason))
+/// Grey reason line for a blocked-action card. `shown` is already the
+/// client copy from [`super::codes::reason_text`].
+pub fn blocked_reason_line(shown: &str) -> String {
+    format!("{BLOCKED_REASON_PREFIX}{shown}")
 }
 
 /// Group-thread line under 「等你批准」, wording from the design.

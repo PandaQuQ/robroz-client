@@ -145,8 +145,8 @@ pub fn codes_source() -> FakeSource {
         failed(
             "f-model",
             FailureCode::ModelNoReply,
-            Some("模型服务返回 401"),
-            "调用失败：模型服务返回 401",
+            Some("401"),
+            "模型没回：模型服务返回 401",
             "18:41",
         ),
         failed(
@@ -167,7 +167,7 @@ pub fn codes_source() -> FakeSource {
         failed(
             "f-denied",
             FailureCode::Denied,
-            Some("发送周报"),
+            Some("mail.send"),
             "你拒绝了：发送周报",
             "18:45",
         ),
@@ -175,7 +175,7 @@ pub fn codes_source() -> FakeSource {
         delivery_fail(
             "d-tool",
             FailureCode::ToolCallFailed,
-            Some("模型服务返回 401"),
+            Some("connection refused"),
             "调用失败：模型服务返回 401",
             "18:47",
         ),
@@ -242,10 +242,13 @@ mod tests {
         };
         {
             let _g = scoped(Locale::Zh);
-            assert_eq!(preview(&ev), "Ada：模型没有回复。");
-            assert!(!preview(&ev).contains("调用失败"));
+            assert_eq!(preview(&ev), "Ada：没做成：模型没回（HTTP 401）");
+            assert!(!preview(&ev).contains("模型服务返回"));
         }
         let _g = scoped(Locale::En);
-        assert_eq!(preview(&ev), "Ada: The model didn't reply.");
+        assert_eq!(
+            preview(&ev),
+            "Ada: Couldn't finish: the model didn't reply (HTTP 401)"
+        );
     }
 }

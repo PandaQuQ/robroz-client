@@ -7,7 +7,7 @@ use robroz_card::{Palette, Tone};
 use robroz_contract::{
     CardStatusCode, DeliveryBadge, Event, FailureCode, MessageKind, TaskState, WaitingFor,
 };
-use robroz_ui::cards::codes::{self, FailureLine};
+use robroz_ui::cards::codes::{self, FailureLine, ProgressLine};
 use robroz_ui::cards::confirm::ConfirmCard;
 use robroz_ui::cards::reminder::Reminder;
 use robroz_ui::cards::{ApprovalCard, ApprovalExtras, Card, ChoiceCard};
@@ -25,21 +25,20 @@ pub struct StatusCard {
     /// What the bro is doing right now, one line under the bro name.
     /// Live run or a card blocked on approval; not used for Router step
     /// progress, which sits left of the status word.
-    pub progress: Option<String>,
-    /// Router `router_step_progress(n, m)` (`「{n}/{m} 步」`). Shown to the
-    /// left of the status word on a live run only. Raw host text;
-    /// [`display`] translates it when drawn.
-    pub step_progress: Option<String>,
+    pub progress: Option<ProgressLine>,
+    /// `progressCode: router_step`. Shown to the left of the status word
+    /// on a live run only. Rendered in the active locale when drawn.
+    pub step_progress: Option<ProgressLine>,
     /// v0.2: the code form of `label`. When set, the drawn word comes from
     /// i18n, not `status_line`.
     pub status_code: Option<CardStatusCode>,
-    /// v0.2: the code form of `failure`. When set, the drawn line comes
-    /// from i18n (and `failure_detail`), not `status_line`.
+    /// The code form of `failure`. The drawn line comes from i18n plus
+    /// `failure_detail`, never from `status_line` or `failure`.
     pub failure_code: Option<FailureCode>,
-    /// Raw `failureDetail`, with no prefix. May be in the other language.
+    /// Raw `failureDetail` (`500`, `3/2`, `POST`, `server.tool`, …): a
+    /// parameter of the code's copy or the raw detail line, never a sentence.
     pub failure_detail: Option<String>,
-    /// Raw host `failure` when there is no `failureCode`. Used to draw
-    /// the legacy path under the same rule as `other`.
+    /// Raw host `failure`. Without a code it draws the unknown-code copy.
     pub failure: Option<String>,
 }
 
@@ -55,16 +54,17 @@ impl StatusCard {
         display(&self.status_line).into_owned()
     }
 
-    /// Host detail to hide behind "Show details".
-    pub fn collapsed_detail(&self) -> Option<String> {
-        self.failure_display().and_then(|line| line.collapsed)
+    /// Raw detail line under the failure (monospace, muted, selectable).
+    pub fn detail_line(&self) -> Option<String> {
+        self.failure_display().and_then(|line| line.detail)
     }
 
     fn failure_display(&self) -> Option<FailureLine> {
-        if let Some(code) = self.failure_code {
-            return Some(FailureLine::from_code(code, self.failure_detail.as_deref()));
-        }
-        self.failure.as_deref().map(FailureLine::from_legacy)
+        FailureLine::from_wire(
+            self.failure_code,
+            self.failure_detail.as_deref(),
+            self.failure.as_deref(),
+        )
     }
 }
 
@@ -99,15 +99,17 @@ impl DeliveryCard {
         self.failure_line().map(|l| l.text)
     }
 
-    pub fn collapsed_detail(&self) -> Option<String> {
-        self.failure_line().and_then(|l| l.collapsed)
+    /// Raw detail line under the failure (monospace, muted, selectable).
+    pub fn detail_line(&self) -> Option<String> {
+        self.failure_line().and_then(|l| l.detail)
     }
 
     fn failure_line(&self) -> Option<FailureLine> {
-        if let Some(code) = self.failure_code {
-            return Some(FailureLine::from_code(code, self.failure_detail.as_deref()));
-        }
-        self.failure.as_deref().map(FailureLine::from_legacy)
+        FailureLine::from_wire(
+            self.failure_code,
+            self.failure_detail.as_deref(),
+            self.failure.as_deref(),
+        )
     }
 }
 
@@ -216,15 +218,11 @@ pub fn display(s: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// The failure line in the active locale: from the code when the host
-/// sent one, otherwise the legacy `failure` under the `other` rule.
+/// sent one, otherwise the unknown-code copy.
 fn failure_shown(code: Option<FailureCode>, detail: Option<&str>, legacy: Option<&str>) -> String {
-    if let Some(code) = code {
-        FailureLine::from_code(code, detail).text
-    } else if let Some(legacy) = legacy.filter(|s| !s.trim().is_empty()) {
-        FailureLine::from_legacy(legacy).text
-    } else {
-        display(&failure_line("")).into_owned()
-    }
+    FailureLine::from_wire(code, detail, Some(legacy.unwrap_or_default()))
+        .map(|l| l.text)
+        .unwrap_or_default()
 }
 
 fn status_shown(code: Option<CardStatusCode>, state: TaskState, container_up: bool) -> String {
@@ -645,6 +643,8 @@ pub fn preview(event: &Event) -> String {
             container_up,
             failure,
             progress,
+            progress_code,
+            progress_params,
             waiting_for,
             ..
         } if progress_line(
@@ -652,7 +652,11 @@ pub fn preview(event: &Event) -> String {
             *container_up,
             failure.as_deref(),
             *waiting_for,
-            progress,
+            (
+                *progress_code,
+                progress_params.as_ref(),
+                progress.as_deref(),
+            ),
         )
         .is_some() =>
         {
@@ -661,9 +665,13 @@ pub fn preview(event: &Event) -> String {
                 *container_up,
                 failure.as_deref(),
                 *waiting_for,
-                progress,
+                (
+                    *progress_code,
+                    progress_params.as_ref(),
+                    progress.as_deref(),
+                ),
             );
-            line(bot_name, &host_text(&progress.unwrap_or_default()))
+            line(bot_name, &progress.map(|p| p.text()).unwrap_or_default())
         }
         Event::Status {
             bot_name,
@@ -720,6 +728,8 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
             container_up,
             failure,
             progress,
+            progress_code,
+            progress_params,
             waiting_for,
             status_code,
             failure_code,
@@ -749,7 +759,11 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
                 *container_up,
                 failure.as_deref(),
                 *waiting_for,
-                progress,
+                (
+                    *progress_code,
+                    progress_params.as_ref(),
+                    progress.as_deref(),
+                ),
             );
             let (progress, step_progress) = split_progress(*state, *container_up, shown);
             let card = StatusCard {
@@ -825,26 +839,26 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
     }
 }
 
-/// The progress line a status card shows, if any. The host already sends it
-/// only on a live run, but the card also checks, so an old or odd event never
-/// puts a stale line next to 完成 or 没做成. Whitespace collapses to one line.
+/// The progress line a status card shows, if any, from `progressCode` +
+/// `progressParams` (`progress` text alone draws the unknown-code copy).
+/// The host already sends it only on a live run, but the card also checks,
+/// so an old or odd event never puts a stale line next to 完成 or 没做成.
 fn progress_line(
     state: TaskState,
     container_up: bool,
     failure: Option<&str>,
     waiting_for: Option<WaitingFor>,
-    progress: &Option<String>,
-) -> Option<String> {
+    (code, params, legacy): (
+        Option<robroz_contract::ProgressCode>,
+        Option<&robroz_contract::ProgressParams>,
+        Option<&str>,
+    ),
+) -> Option<ProgressLine> {
     let live = state == TaskState::Running && container_up;
     if failure.is_some() || !(live || awaits_approval(state, waiting_for)) {
         return None;
     }
-    let line = progress
-        .as_deref()?
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    (!line.is_empty()).then_some(line)
+    ProgressLine::from_wire(code, params, legacy)
 }
 
 /// A live-run Router step goes left of the status word; everything else
@@ -852,14 +866,10 @@ fn progress_line(
 fn split_progress(
     state: TaskState,
     container_up: bool,
-    shown: Option<String>,
-) -> (Option<String>, Option<String>) {
+    shown: Option<ProgressLine>,
+) -> (Option<ProgressLine>, Option<ProgressLine>) {
     match shown {
-        Some(line)
-            if state == TaskState::Running
-                && container_up
-                && robroz_contract::host_text::parse_router_step_progress(&line).is_some() =>
-        {
+        Some(line) if state == TaskState::Running && container_up && line.is_step() => {
             (None, Some(line))
         }
         other => (other, None),
@@ -1077,11 +1087,59 @@ mod tests {
         assert!(matches!(feed.rows().nth(3), Some(Row::Delivery(_))));
     }
 
+    /// A v0.3 host event: the legacy `progress` text plus the code and
+    /// params the host stores for it (a bro's own line is `custom`).
     fn with_progress(mut e: Event, text: Option<&str>) -> Event {
-        if let Event::Status { progress, .. } = &mut e {
+        use robroz_contract::{ProgressCode as P, ProgressParams};
+        if let Event::Status {
+            progress,
+            progress_code,
+            progress_params,
+            ..
+        } = &mut e
+        {
             *progress = text.map(Into::into);
+            let none = ProgressParams::default();
+            let coded = text.filter(|t| !t.trim().is_empty()).map(|t| {
+                if let Some((n, m)) = robroz_contract::host_text::parse_router_step_progress(t) {
+                    let p = ProgressParams {
+                        step: Some(n as u32),
+                        steps: Some(m as u32),
+                        ..none.clone()
+                    };
+                    return (P::RouterStep, p);
+                }
+                match t {
+                    "开始干活" => (P::Started, none.clone()),
+                    "在想怎么回" => (P::Thinking, none.clone()),
+                    "在沙箱里跑" => (P::InSandbox, none.clone()),
+                    _ => match t.strip_prefix("在用 ") {
+                        Some(tool) => (
+                            P::UsingTool,
+                            ProgressParams {
+                                tool: Some(tool.into()),
+                                ..none.clone()
+                            },
+                        ),
+                        None => (
+                            P::Custom,
+                            ProgressParams {
+                                text: Some(t.into()),
+                                ..none.clone()
+                            },
+                        ),
+                    },
+                }
+            });
+            *progress_code = coded.as_ref().map(|c| c.0);
+            *progress_params = coded.map(|c| c.1).filter(|p| !p.is_empty());
         }
         e
+    }
+
+    /// A progress line as drawn in Chinese.
+    fn zh(p: &Option<ProgressLine>) -> Option<String> {
+        p.as_ref().map(|p| p.text_in(robroz_ui::i18n::Locale::Zh))
     }
 
     #[test]
@@ -1089,12 +1147,15 @@ mod tests {
         let mut feed = Feed::default();
         let run = status("t1", "Ada", TaskState::Running, true);
         feed.apply(&with_progress(run.clone(), Some("开始干活")));
-        assert_eq!(status_cards(&feed)[0].progress.as_deref(), Some("开始干活"));
+        assert_eq!(
+            zh(&status_cards(&feed)[0].progress).as_deref(),
+            Some("开始干活")
+        );
 
         feed.apply(&with_progress(run.clone(), Some("在沙箱里跑")));
         assert_eq!(feed.len(), 1, "same card, new line");
         assert_eq!(
-            status_cards(&feed)[0].progress.as_deref(),
+            zh(&status_cards(&feed)[0].progress).as_deref(),
             Some("在沙箱里跑")
         );
 
@@ -1110,7 +1171,7 @@ mod tests {
     #[test]
     fn progress_is_one_line_and_never_on_a_finished_or_stuck_card() {
         let line = |e: Event| match to_row(&e, None).1 {
-            Row::Status(c) => c.progress,
+            Row::Status(c) => zh(&c.progress),
             _ => unreachable!(),
         };
         let p = Some("  在想\n怎么   回 ");
@@ -1166,7 +1227,18 @@ mod tests {
         if let Event::Status { failure, .. } = &mut failed {
             *failure = Some("模型没回：超时".into());
         }
-        assert_eq!(preview(&failed), "Ada：没做成：模型没回：超时");
+        // Legacy text with no code is the unknown-code copy, never host text.
+        assert_eq!(preview(&failed), "Ada：出错了");
+        if let Event::Status {
+            failure_code,
+            failure_detail,
+            ..
+        } = &mut failed
+        {
+            *failure_code = Some(FailureCode::ModelNoReply);
+            *failure_detail = Some("504".into());
+        }
+        assert_eq!(preview(&failed), "Ada：没做成：模型没回（HTTP 504）");
     }
 
     #[test]
@@ -1186,13 +1258,13 @@ mod tests {
             "type": "status", "id": "t1", "taskId": "t1", "botId": "bot-ada",
             "botName": "Ada", "state": "running", "label": "进行中",
             "createdAt": "2026-11-20T10:00:00.000Z", "updatedAt": "2026-11-20T10:00:01.000Z",
-            "containerUp": true, "progress": "在沙箱里跑"
+            "containerUp": true, "progress": "在沙箱里跑", "progressCode": "in_sandbox"
         });
         let event: Event = serde_json::from_value(json).unwrap();
         let mut feed = Feed::default();
         feed.apply(&event);
         assert_eq!(
-            status_cards(&feed)[0].progress.as_deref(),
+            zh(&status_cards(&feed)[0].progress).as_deref(),
             Some("在沙箱里跑")
         );
         assert_eq!(status_cards(&feed)[0].step_progress, None);
@@ -1200,7 +1272,7 @@ mod tests {
 
     fn card_progress(e: Event) -> (Option<String>, Option<String>) {
         match to_row(&e, None).1 {
-            Row::Status(c) => (c.progress, c.step_progress),
+            Row::Status(c) => (zh(&c.progress), zh(&c.step_progress)),
             _ => unreachable!(),
         }
     }
@@ -1210,7 +1282,10 @@ mod tests {
         let step = robroz_contract::host_text::router_step_progress(2, 3);
         assert_eq!(step, "2/3 步");
         let live = with_progress(status("t", "Ada", TaskState::Running, true), Some(&step));
-        assert_eq!(card_progress(live.clone()), (None, Some(step.clone())));
+        assert_eq!(
+            card_progress(live.clone()),
+            (None, Some("第 2/3 步".into()))
+        );
 
         // Ordinary progress and a finished or stuck card never take the slot.
         let ordinary = with_progress(
@@ -1252,7 +1327,7 @@ mod tests {
         let blocked_step = with_progress(blocked_waiting(Some(WaitingFor::Approval)), Some(&step));
         assert_eq!(
             card_progress(blocked_step),
-            (Some(step.clone()), None),
+            (Some("第 2/3 步".into()), None),
             "approval-blocked progress stays under the name"
         );
         let sent = with_progress(
@@ -1284,16 +1359,21 @@ mod tests {
         );
         {
             let _en = robroz_ui::i18n::scoped(robroz_ui::i18n::Locale::En);
-            let (progress, step) = card_progress(ev.clone());
-            assert_eq!(progress, None);
-            assert_eq!(step.as_deref().map(display).as_deref(), Some("Step 2 of 3"));
+            let Row::Status(c) = to_row(&ev, None).1 else {
+                unreachable!()
+            };
+            assert_eq!(c.progress, None);
+            assert_eq!(
+                c.step_progress.map(|p| p.text()).as_deref(),
+                Some("Step 2 of 3")
+            );
             assert_eq!(preview(&ev), "Ada: Step 2 of 3");
         }
         {
             let _zh = robroz_ui::i18n::scoped(robroz_ui::i18n::Locale::Zh);
             let (progress, step) = card_progress(ev.clone());
             assert_eq!(progress, None);
-            assert_eq!(step.as_deref().map(display).as_deref(), Some("第 2/3 步"));
+            assert_eq!(step.as_deref(), Some("第 2/3 步"));
             assert_eq!(preview(&ev), "Ada：第 2/3 步");
         }
     }
@@ -1328,7 +1408,8 @@ mod tests {
         assert_eq!(cards[0].palette, expected(TaskState::Running, false).2);
         assert_ne!(cards[0].palette, expected(TaskState::Done, false).2);
         assert_eq!(cards[0].action, None);
-        assert_eq!(preview(&ev), "Ada：没做成：模型没回：模型服务返回 500");
+        // No `failureCode`: the unknown-code copy, never the host text.
+        assert_eq!(preview(&ev), "Ada：出错了");
     }
 
     #[test]
@@ -1346,7 +1427,7 @@ mod tests {
         assert_eq!(cards[0].tone, Tone::Gray);
         assert_eq!(cards[0].palette, expected(TaskState::Running, false).2);
         assert_eq!(cards[0].action, None);
-        assert_eq!(preview(&ev), "Cy：没写出结果。");
+        assert_eq!(preview(&ev), "Cy：没写出结果");
     }
 
     #[test]
@@ -1362,7 +1443,17 @@ mod tests {
             feed.rows().next(),
             Some(Row::Delivery(DeliveryCard { failure: Some(f), .. })) if f == "你拒绝了：发送周报"
         ));
-        assert_eq!(preview(&ev), "没做成：你拒绝了：发送周报");
+        assert_eq!(preview(&ev), "出错了");
+        if let Event::Delivery {
+            failure_code,
+            failure_detail,
+            ..
+        } = &mut ev
+        {
+            *failure_code = Some(robroz_contract::FailureCode::Denied);
+            *failure_detail = Some("mail.send".into());
+        }
+        assert_eq!(preview(&ev), "没做成：你拒绝了 mail.send");
 
         let old: Event = serde_json::from_value(serde_json::json!({
             "type": "delivery", "id": "d1", "summary": "已写入结果",
@@ -1540,7 +1631,7 @@ mod tests {
         let card = status_cards(&feed)[0];
         assert_eq!(card.status_line, "等你批准");
         assert_eq!(card.action, None);
-        assert_eq!(card.progress.as_deref(), Some("在用 notes.write_note"));
+        assert_eq!(zh(&card.progress).as_deref(), Some("在用 notes.write_note"));
         // The list preview stays 等你批准; the progress line is on the card.
         assert_eq!(preview(&ev), "Ada：等你批准");
         // A stuck takeover still has no progress line.
@@ -1785,6 +1876,7 @@ mod tests {
                 mcp_server: None,
                 mcp_tool: None,
                 reason: None,
+                reason_code: None,
                 owner_id: None,
                 owner_name: None,
             })
@@ -2106,32 +2198,47 @@ mod tests {
             ..
         } = &mut ev
         {
-            *failure = Some("调用失败：模型服务返回 401".into());
+            *failure = Some("模型没回：模型服务返回 401".into());
             *failure_code = Some(FailureCode::ModelNoReply);
-            *failure_detail = Some("模型服务返回 401".into());
+            *failure_detail = Some("401".into());
             *status_code = Some(CardStatusCode::Done);
         }
         {
             let _g = scoped(Locale::Zh);
-            assert_eq!(preview(&ev), "Ada：模型没有回复。");
-            assert!(!preview(&ev).contains("调用失败"));
-            assert!(!preview(&ev).contains("没做成"));
+            assert_eq!(preview(&ev), "Ada：没做成：模型没回（HTTP 401）");
+            assert!(!preview(&ev).contains("模型服务返回"));
         }
         {
             let _g = scoped(Locale::En);
-            // Detail always sits in the disclosure; the preview is the sentence.
-            assert_eq!(preview(&ev), "Ada: The model didn't reply.");
+            assert_eq!(
+                preview(&ev),
+                "Ada: Couldn't finish: the model didn't reply (HTTP 401)"
+            );
         }
-        // No code: treated as `other`. A matching detail is prefixed;
-        // a mismatched one is collapsed, so the preview is the generic sentence.
+        // A non-numeric detail is not in the preview; it is the card's
+        // detail line.
+        if let Event::Status { failure_detail, .. } = &mut ev {
+            *failure_detail = Some("response_not_json".into());
+        }
+        {
+            let _g = scoped(Locale::Zh);
+            assert_eq!(preview(&ev), "Ada：没做成：模型没回");
+        }
+        let mut feed = Feed::default();
+        feed.apply(&ev);
+        assert_eq!(
+            status_cards(&feed)[0].detail_line().as_deref(),
+            Some("response_not_json")
+        );
+        // No code: the unknown-code copy, the host text is never shown.
         let mut old = status("t2", "Ada", TaskState::Done, false);
         if let Event::Status { failure, .. } = &mut old {
             *failure = Some("模型服务返回 401".into());
         }
         let _g = scoped(Locale::Zh);
-        assert_eq!(preview(&old), "Ada：没做成：模型服务返回 401");
+        assert_eq!(preview(&old), "Ada：出错了");
         let _g = scoped(Locale::En);
-        assert_eq!(preview(&old), "Ada: This didn't get done.");
+        assert_eq!(preview(&old), "Ada: Something went wrong");
     }
 
     #[test]

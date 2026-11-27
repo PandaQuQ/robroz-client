@@ -24,6 +24,8 @@ export global Brand {
 // Lengths from robroz-tokens `base.chat`. Rust pushes the values; this
 // file does not restate the numbers.
 export global Metrics {
+    // Platform monospace family for raw detail lines (set from Rust).
+    in property <string> mono-font: "monospace";
     in property <length> column-margin;
     in property <length> bubble-radius;
     in property <length> bubble-pad-v;
@@ -85,6 +87,8 @@ export struct ChatRow {
     status: string,
     step: string,
     progress: string,
+    // Raw failure detail: 12px monospace, muted, selectable, untranslated.
+    detail: string,
     fill: color,
     text-color: color,
     dot: color,
@@ -579,6 +583,15 @@ export component MainWindow inherits Window {
                                                 text: row.progress;
                                                 color: Brand.ink;
                                                 font-size: 13px;
+                                                wrap: word-wrap;
+                                                horizontal-alignment: left;
+                                            }
+                                            if row.detail != "": TextInput {
+                                                text: row.detail;
+                                                read-only: true;
+                                                color: Brand.text3;
+                                                font-size: 12px;
+                                                font-family: Metrics.mono-font;
                                                 wrap: word-wrap;
                                                 horizontal-alignment: left;
                                             }

@@ -179,6 +179,16 @@ fn apply_metrics(ui: &MainWindow) {
     m.set_bubble_pad_h(c::BUBBLE_PAD_H);
     m.set_gap_in(c::GAP_IN);
     m.set_gap_between(c::GAP_BETWEEN);
+    // The generic "monospace" alias is not resolved on every platform.
+    m.set_mono_font(if cfg!(target_os = "ios") || cfg!(target_os = "macos") {
+        "Menlo".into()
+    } else if cfg!(target_os = "android") {
+        "monospace".into()
+    } else if cfg!(target_os = "windows") {
+        "Consolas".into()
+    } else {
+        "DejaVu Sans Mono".into()
+    });
     m.set_avatar(c::AVATAR);
     m.set_avatar_gap(c::AVATAR_GAP);
     m.set_date_size(c::DATE_SIZE);
@@ -268,11 +278,8 @@ fn chat_rows(
 }
 
 fn feed_entry_row(entry: chat::FeedEntry, fallback: &str, mode: Mode) -> ChatRow {
-    let shown = |s: &Option<String>| -> SharedString {
-        s.as_deref()
-            .map(|s| card::display(s).into_owned())
-            .unwrap_or_default()
-            .into()
+    let shown = |p: &Option<robroz_ui::cards::codes::ProgressLine>| -> SharedString {
+        p.as_ref().map(|p| p.text()).unwrap_or_default().into()
     };
     match entry {
         chat::FeedEntry::Date { label, pad_top } => ChatRow {
@@ -324,7 +331,8 @@ fn feed_entry_row(entry: chat::FeedEntry, fallback: &str, mode: Mode) -> ChatRow
                     } else {
                         "".into()
                     },
-                    status: card::display(&c.status_line).into_owned().into(),
+                    status: c.shown_status().into(),
+                    detail: c.detail_line().unwrap_or_default().into(),
                     step: shown(&c.step_progress),
                     progress: shown(&c.progress),
                     dot: status_dot_color(mode, c.tone),

@@ -4,13 +4,15 @@
 //! colours, status words and actions come from `robroz-card`; a task with a
 //! `failure` is grey with the failure line, never the green "done"; a task
 //! waiting on an approval is grey too; a live Router step (`n/m 步`) goes
-//! left of the status word, other progress under the bro name. Lines are
-//! kept as the host sent them and translated when drawn, so a language
-//! switch redraws a card already on screen.
+//! left of the status word, other progress under the bro name. Failure and
+//! progress lines come from `failureCode` + `failureDetail` and
+//! `progressCode` + `progressParams` (never the host text); they are kept as
+//! codes and rendered when drawn, so a language switch redraws a card
+//! already on screen.
 
 use robroz_card::{Palette, Tone};
-use robroz_contract::host_text::parse_router_step_progress;
-use robroz_contract::{Event, TaskState, WaitingFor};
+use robroz_contract::{Event, FailureCode, TaskState, WaitingFor};
+use robroz_ui::cards::codes::{FailureLine, ProgressLine};
 use robroz_ui::i18n::{host_text, Key};
 
 /// The status line while a task waits on an approval card. Same constant as
@@ -23,14 +25,37 @@ pub struct StatusCard {
     pub bot_name: String,
     /// `createdAt`, Unix seconds, when the host sent one.
     pub at: Option<i64>,
-    /// Raw `robroz-card` copy, or 「没做成：…」 for a failure.
+    /// Raw `robroz-card` copy. A failed card draws [`Self::failure`] instead.
     pub status_line: String,
     pub tone: Tone,
     pub palette: Palette,
     /// What the bro is doing now, under the bro name.
-    pub progress: Option<String>,
-    /// Router `n/m 步`, left of the status word, live runs only.
-    pub step_progress: Option<String>,
+    pub progress: Option<ProgressLine>,
+    /// `progressCode: router_step`, left of the status word, live runs only.
+    pub step_progress: Option<ProgressLine>,
+    /// `(failureCode, failureDetail, failure)` when the task did not get done.
+    pub failure: Option<(Option<FailureCode>, Option<String>, String)>,
+}
+
+impl StatusCard {
+    fn failure_line(&self) -> Option<FailureLine> {
+        let (code, detail, legacy) = self.failure.as_ref()?;
+        FailureLine::from_wire(*code, detail.as_deref(), Some(legacy))
+    }
+
+    /// The status (or failure) line in the active language.
+    pub fn shown_status(&self) -> String {
+        match self.failure_line() {
+            Some(line) => line.text,
+            None => display(&self.status_line).into_owned(),
+        }
+    }
+
+    /// The raw failure detail line under the status (monospace, muted,
+    /// selectable, never translated).
+    pub fn detail_line(&self) -> Option<String> {
+        self.failure_line().and_then(|l| l.detail)
+    }
 }
 
 /// A status-card line in the active language; unknown text passes through.
@@ -47,24 +72,23 @@ fn awaits_approval(state: TaskState, waiting_for: Option<WaitingFor>) -> bool {
 }
 
 /// Progress is shown only on a live run or while waiting on an approval,
-/// never next to a finished or failed card. Whitespace collapses.
+/// never next to a finished or failed card.
 fn progress_line(
     state: TaskState,
     container_up: bool,
     failure: Option<&str>,
     waiting_for: Option<WaitingFor>,
-    progress: &Option<String>,
-) -> Option<String> {
+    (code, params, legacy): (
+        Option<robroz_contract::ProgressCode>,
+        Option<&robroz_contract::ProgressParams>,
+        Option<&str>,
+    ),
+) -> Option<ProgressLine> {
     let live = state == TaskState::Running && container_up;
     if failure.is_some() || !(live || awaits_approval(state, waiting_for)) {
         return None;
     }
-    let line = progress
-        .as_deref()?
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    (!line.is_empty()).then_some(line)
+    ProgressLine::from_wire(code, params, legacy)
 }
 
 impl StatusCard {
@@ -78,7 +102,11 @@ impl StatusCard {
             container_up,
             failure,
             progress,
+            progress_code,
+            progress_params,
             waiting_for,
+            failure_code,
+            failure_detail,
             ..
         } = event
         else {
@@ -104,14 +132,14 @@ impl StatusCard {
             *container_up,
             failure.as_deref(),
             *waiting_for,
-            progress,
+            (
+                *progress_code,
+                progress_params.as_ref(),
+                progress.as_deref(),
+            ),
         );
         let (progress, step_progress) = match shown {
-            Some(line)
-                if *state == TaskState::Running
-                    && *container_up
-                    && parse_router_step_progress(&line).is_some() =>
-            {
+            Some(line) if *state == TaskState::Running && *container_up && line.is_step() => {
                 (None, Some(line))
             }
             other => (other, None),
@@ -125,6 +153,9 @@ impl StatusCard {
             palette: robroz_card::palette(look.tone),
             progress,
             step_progress,
+            failure: failure
+                .clone()
+                .map(|f| (*failure_code, failure_detail.clone(), f)),
         })
     }
 }
@@ -145,6 +176,7 @@ pub fn latest_status(events: &[Event]) -> Option<&Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use robroz_contract::{ProgressCode, ProgressParams};
     use robroz_ui::i18n::{scoped, Locale};
 
     fn status(state: TaskState, container_up: bool) -> Event {
@@ -178,55 +210,124 @@ mod tests {
         }
     }
 
+    fn set_progress(ev: &mut Event, code: ProgressCode, params: ProgressParams) {
+        if let Event::Status {
+            progress,
+            progress_code,
+            progress_params,
+            ..
+        } = ev
+        {
+            *progress = Some("host text".into());
+            *progress_code = Some(code);
+            *progress_params = Some(params);
+        }
+    }
+
     #[test]
-    fn failed_task_is_grey_with_the_failure_line_never_green_done() {
+    fn failed_task_is_grey_with_the_code_line_never_green_done() {
         let mut ev = status(TaskState::Done, false);
         set(&mut ev, |f, _| {
             *f = Some("模型没回：模型服务返回 500".into())
-        }); // the variable part stays as the host sent it
+        });
+        if let Event::Status {
+            failure_code,
+            failure_detail,
+            ..
+        } = &mut ev
+        {
+            *failure_code = Some(FailureCode::ModelNoReply);
+            *failure_detail = Some("500".into());
+        }
         let card = StatusCard::from_event(&ev).unwrap();
         assert_eq!(card.tone, Tone::Gray);
         assert_ne!(card.palette, robroz_card::palette(Tone::Green));
+        {
+            let _en = scoped(Locale::En);
+            assert_eq!(
+                card.shown_status(),
+                "Couldn't finish: the model didn't reply (HTTP 500)"
+            );
+        }
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(card.shown_status(), "没做成：模型没回（HTTP 500）");
+        assert_eq!(card.detail_line(), None);
+    }
+
+    #[test]
+    fn a_raw_detail_goes_on_its_own_line_and_unknown_failures_fall_back() {
+        let mut ev = status(TaskState::Done, false);
+        set(&mut ev, |f, _| {
+            *f = Some("调用失败：connection refused".into())
+        });
+        if let Event::Status {
+            failure_code,
+            failure_detail,
+            ..
+        } = &mut ev
+        {
+            *failure_code = Some(FailureCode::ToolCallFailed);
+            *failure_detail = Some("connection refused".into());
+        }
+        let card = StatusCard::from_event(&ev).unwrap();
         let _en = scoped(Locale::En);
-        assert_eq!(
-            display(&card.status_line),
-            "Couldn't finish: No reply from the model: 模型服务返回 500"
-        );
+        assert_eq!(card.shown_status(), "Couldn't finish: a tool call failed");
+        assert_eq!(card.detail_line().as_deref(), Some("connection refused"));
+
+        // No code (older host, or a code this client stripped as unknown).
+        let mut old = status(TaskState::Done, false);
+        set(&mut old, |f, _| *f = Some("模型服务返回 500".into()));
+        let card = StatusCard::from_event(&old).unwrap();
+        assert_eq!(card.shown_status(), "Something went wrong");
+        assert_eq!(card.detail_line(), None);
     }
 
     #[test]
     fn live_router_step_goes_left_of_the_status_word() {
         let mut ev = status(TaskState::Running, true);
-        set(&mut ev, |_, p| {
-            *p = Some(robroz_contract::host_text::router_step_progress(2, 3))
-        });
+        let step = ProgressParams {
+            step: Some(2),
+            steps: Some(3),
+            ..Default::default()
+        };
+        set_progress(&mut ev, ProgressCode::RouterStep, step);
         let card = StatusCard::from_event(&ev).unwrap();
         assert_eq!(card.tone, Tone::Ink);
         assert_eq!(card.progress, None);
+        let step = card.step_progress.clone().unwrap();
+        assert_eq!(step.text_in(Locale::En), "Step 2 of 3");
+        assert_eq!(step.text_in(Locale::Zh), "第 2/3 步");
         let _en = scoped(Locale::En);
-        assert_eq!(
-            display(card.step_progress.as_deref().unwrap()),
-            "Step 2 of 3"
-        );
-        assert_eq!(display(&card.status_line), "Running");
+        assert_eq!(card.shown_status(), "Running");
         drop(_en);
         let _zh = scoped(Locale::Zh);
-        assert_eq!(display(card.step_progress.as_deref().unwrap()), "第 2/3 步");
-        assert_eq!(display(&card.status_line), "进行中");
+        assert_eq!(card.shown_status(), "进行中");
     }
 
     #[test]
     fn other_progress_stays_under_the_name_and_dead_runs_show_none() {
         let mut ev = status(TaskState::Running, true);
-        set(&mut ev, |_, p| *p = Some("在查  资料".into()));
+        let tool = ProgressParams {
+            tool: Some("web.search".into()),
+            ..Default::default()
+        };
+        set_progress(&mut ev, ProgressCode::UsingTool, tool);
         let card = StatusCard::from_event(&ev).unwrap();
-        assert_eq!(card.progress.as_deref(), Some("在查 资料"));
+        let p = card.progress.clone().unwrap();
+        assert_eq!(p.text_in(Locale::Zh), "在用 web.search");
+        assert_eq!(p.text_in(Locale::En), "Using web.search");
         assert_eq!(card.step_progress, None);
 
+        // Legacy text with no code: 「进行中」, never the host text.
+        let mut legacy = status(TaskState::Running, true);
+        set(&mut legacy, |_, p| *p = Some("在查  资料".into()));
+        let card = StatusCard::from_event(&legacy).unwrap();
+        let p = card.progress.unwrap();
+        assert_eq!(p.text_in(Locale::Zh), "进行中");
+        assert_eq!(p.text_in(Locale::En), "In progress");
+
         let mut dead = status(TaskState::Running, false);
-        set(&mut dead, |_, p| {
-            *p = Some(robroz_contract::host_text::router_step_progress(1, 2))
-        });
+        set_progress(&mut dead, ProgressCode::Started, ProgressParams::default());
         let card = StatusCard::from_event(&dead).unwrap();
         assert_eq!((card.progress, card.step_progress), (None, None));
         assert_eq!(card.tone, Tone::Gray);
@@ -241,7 +342,7 @@ mod tests {
         let card = StatusCard::from_event(&ev).unwrap();
         assert_eq!(card.tone, Tone::Gray);
         let _en = scoped(Locale::En);
-        assert_eq!(display(&card.status_line), "Needs your approval");
+        assert_eq!(card.shown_status(), "Needs your approval");
     }
 
     #[test]

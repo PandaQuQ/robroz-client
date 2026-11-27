@@ -136,6 +136,7 @@ mod tests {
             state,
             mcp_server: None,
             mcp_tool: None,
+            reason_code: None,
             reason: None,
             owner_id: owner.map(|o| o.0.into()),
             owner_name: owner.map(|o| o.1.into()),

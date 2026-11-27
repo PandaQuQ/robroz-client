@@ -20,6 +20,10 @@ use super::{locale, Key, Locale};
 /// Whole `host_text` strings, compared with `==`.
 pub(super) const WHOLE: &[(&str, Key)] = &[
     (ht::GROUP_NOT_FOUND, Key::HostGroupNotFound),
+    (ht::INVALID_AVATAR, Key::HostInvalidAvatar),
+    (ht::NOT_GROUP_CREATOR, Key::HostNotGroupCreator),
+    (ht::NOT_GROUP_MEMBER, Key::HostNotGroupMember),
+    (ht::GROUP_IS_DM, Key::HostGroupIsDm),
     (ht::BOT_NOT_IN_GROUP, Key::HostBotNotInGroup),
     (ht::NEED_TEXT, Key::HostNeedText),
     (ht::NEED_NAME, Key::HostNeedName),
