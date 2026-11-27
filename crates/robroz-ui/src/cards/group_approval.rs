@@ -12,7 +12,7 @@ use super::review_rules;
 use super::status::{self, clock_in, Dot};
 use super::{ApprovalCard, ApprovalState};
 use crate::i18n::Key;
-use robroz_contract::UserRole;
+use robroz_contract::{UserRole, BOOTSTRAP_ADMIN_ID};
 
 /// Who is looking at an approval card.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,16 +22,33 @@ pub enum Viewer {
     /// Anyone else. Also used while `GET /api/me` has not answered yet, so
     /// a button never shows for a click that would be refused.
     Other,
-    /// The host sent no owner (an older host): the v0.1 card.
+    /// No longer assigned by [`viewer`]: a missing owner is treated as
+    /// the bootstrap admin, same as the host's `may_answer`. Kept so
+    /// [`owner_layout`] still describes the old v0.1 card.
     Legacy,
 }
 
+/// Host `may_answer` treats a missing bro owner as the bootstrap admin
+/// (`local-admin`). Empty or whitespace-only ids are missing too.
+pub fn effective_owner_id(owner_id: Option<&str>) -> &str {
+    owner_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .unwrap_or(BOOTSTRAP_ADMIN_ID)
+}
+
+/// Whether `me` is this bro's owner. Unknown `me` is not.
+pub fn is_bro_owner(me: Option<&str>, owner_id: Option<&str>) -> bool {
+    me.is_some_and(|id| id == effective_owner_id(owner_id))
+}
+
 /// Decide who `me` is for this card. `me` is the id from `GET /api/me`.
+/// A missing owner is owned by [`BOOTSTRAP_ADMIN_ID`], not a Legacy card.
 pub fn viewer(card: &ApprovalCard, me: Option<&str>) -> Viewer {
-    match (card.owner_id.as_deref(), me) {
-        (None, _) => Viewer::Legacy,
-        (Some(owner), Some(me)) if owner == me => Viewer::Owner,
-        (Some(_), _) => Viewer::Other,
+    if is_bro_owner(me, card.owner_id.as_deref()) {
+        Viewer::Owner
+    } else {
+        Viewer::Other
     }
 }
 
@@ -271,13 +288,36 @@ mod tests {
     }
 
     #[test]
+    fn missing_owner_is_the_bootstrap_admin() {
+        assert_eq!(effective_owner_id(None), BOOTSTRAP_ADMIN_ID);
+        assert_eq!(effective_owner_id(Some("")), BOOTSTRAP_ADMIN_ID);
+        assert_eq!(effective_owner_id(Some("  ")), BOOTSTRAP_ADMIN_ID);
+        assert_eq!(effective_owner_id(Some("u-me")), "u-me");
+        // owner null: only local-admin is the owner; unknown me is not.
+        assert!(is_bro_owner(Some(BOOTSTRAP_ADMIN_ID), None));
+        assert!(!is_bro_owner(Some("u-lin"), None));
+        assert!(!is_bro_owner(None, None));
+        // owner set: match / mismatch, unknown me is not.
+        assert!(is_bro_owner(Some("u-me"), Some("u-me")));
+        assert!(!is_bro_owner(Some("u-lin"), Some("u-me")));
+        assert!(!is_bro_owner(None, Some("u-me")));
+    }
+
+    #[test]
     fn viewer_is_the_owner_only_when_the_ids_match() {
         let c = card(ApprovalState::Pending, Some(("u-me", "Panda")));
         assert_eq!(viewer(&c, Some("u-me")), Viewer::Owner);
         assert_eq!(viewer(&c, Some("u-lin")), Viewer::Other);
         assert_eq!(viewer(&c, None), Viewer::Other, "no buttons before /me");
         let old = card(ApprovalState::Pending, None);
-        assert_eq!(viewer(&old, Some("u-me")), Viewer::Legacy);
+        assert_eq!(
+            viewer(&old, Some(BOOTSTRAP_ADMIN_ID)),
+            Viewer::Owner,
+            "null owner is local-admin's bro"
+        );
+        assert_eq!(viewer(&old, Some("u-lin")), Viewer::Other);
+        assert_eq!(viewer(&old, None), Viewer::Other);
+        assert_ne!(viewer(&old, Some("u-me")), Viewer::Legacy);
     }
 
     #[test]

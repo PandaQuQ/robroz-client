@@ -72,8 +72,10 @@ impl Reminder {
     }
 
     /// Whether `me` is this card's owner. Unknown id (`None`) is not.
+    /// A missing or empty `owner_id` is the bootstrap admin, same as
+    /// the card and the list preview ([`super::is_bro_owner`]).
     pub fn is_owner(&self, me: Option<&str>) -> bool {
-        me.is_some_and(|id| !self.owner_id.is_empty() && id == self.owner_id)
+        super::is_bro_owner(me, Some(self.owner_id.as_str()))
     }
 
     /// The row's text: the ask while waiting, then the result.
@@ -190,6 +192,33 @@ mod tests {
         }
         let _g = scoped(Locale::Zh);
         assert_eq!(r.text(&Utc, Some("u-lin")), "等这个 bro 的主人审批");
+    }
+
+    #[test]
+    fn a_missing_owner_is_the_bootstrap_admin() {
+        use robroz_contract::BOOTSTRAP_ADMIN_ID;
+        let mut ev = event(ReminderState::Waiting, None);
+        if let Event::ApprovalReminder { owner_user_id, .. } = &mut ev {
+            *owner_user_id = String::new();
+        }
+        let r = Reminder::from_event(&ev).unwrap();
+        assert!(r.is_owner(Some(BOOTSTRAP_ADMIN_ID)));
+        assert!(!r.is_owner(Some("u-lin")));
+        assert!(!r.is_owner(None));
+        {
+            let _g = scoped(Locale::En);
+            assert_eq!(
+                r.text(&Utc, Some(BOOTSTRAP_ADMIN_ID)),
+                "Ada is waiting for your approval in Site"
+            );
+            assert_eq!(r.text(&Utc, Some("u-lin")), "Waiting for this bro's owner");
+            assert_eq!(r.text(&Utc, None), "Waiting for this bro's owner");
+        }
+        // Owner set: match / mismatch stay as they were.
+        let named = Reminder::from_event(&event(ReminderState::Waiting, None)).unwrap();
+        assert!(named.is_owner(Some("u-me")));
+        assert!(!named.is_owner(Some("u-lin")));
+        assert!(!named.is_owner(None));
     }
 
     #[test]
