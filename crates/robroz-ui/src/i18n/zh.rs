@@ -563,6 +563,11 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::McpToolsNotCounted => "还没数过",
         Key::McpUnknownReason => "原因不明",
         Key::McpToolCountOne => "1 个工具",
+        Key::McpFilterAll => "全部",
+        Key::McpConnectedCount => "已连接 {0} 个",
+        Key::McpConnect => "连接",
+        Key::McpConnected => "已连接",
+        Key::McpDisconnect => "断开",
 
         // ---- Secret fields (cards/secret.rs) ----
         Key::SecretClear => "清除",

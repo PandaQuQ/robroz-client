@@ -9,6 +9,7 @@ pub mod api;
 pub mod avatars;
 pub mod card;
 pub mod chat;
+pub mod mcp;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -257,6 +258,103 @@ fn apply_metrics(ui: &MainWindow) {
     hm.set_profile_edit_h(h::PROFILE_EDIT_H);
     hm.set_card_r(h::CARD_R);
     hm.set_card_row(h::CARD_ROW);
+    use robroz_tokens::mcp as k;
+    let mm = ui.global::<McpMetrics>();
+    mm.set_capsule(k::CAPSULE);
+    mm.set_capsule_pad(k::CAPSULE_PAD);
+    mm.set_capsule_gap(k::CAPSULE_GAP);
+    mm.set_capsule_text(k::CAPSULE_TEXT);
+    mm.set_row(k::ROW);
+    mm.set_icon(k::ICON);
+    mm.set_icon_r(k::ICON_R);
+    mm.set_icon_gap(k::ICON_GAP);
+    mm.set_icon_text(k::ICON_TEXT);
+    mm.set_row_name(k::ROW_NAME);
+    mm.set_row_sub(k::ROW_SUB);
+    mm.set_connect_h(k::CONNECT_H);
+    mm.set_connected_opacity(k::CONNECTED_OPACITY);
+}
+
+/// Push the MCP book into screen 9 (and its command sheet).
+fn apply_mcp(ui: &MainWindow, st: &State) {
+    let book = &st.mcp_book;
+    let rows: Vec<McpLine> = mcp::lines(book)
+        .into_iter()
+        .map(|l| McpLine {
+            id: l.id.into(),
+            name: l.name.into(),
+            letter: l.letter.into(),
+            sub: l.sub.into(),
+            connected: l.connected,
+        })
+        .collect();
+    ui.set_mcp_rows(ModelRc::new(VecModel::from(rows)));
+    ui.set_mcp_filter(mcp::filter_index(book.active_filter()));
+    ui.set_mcp_connected_text(mcp::connected_text(book).into());
+    ui.set_mcp_categories(mcp::show_categories(book));
+    ui.set_mcp_note(book.note.clone().unwrap_or_default().into());
+    ui.set_mcp_loaded(book.loaded);
+    ui.set_mcp_busy(book.busy);
+    let prompt = st
+        .mcp_prompt
+        .as_deref()
+        .and_then(|id| book.command_prompt_for(id).map(|p| (id, p)));
+    ui.set_mcp_prompt_open(prompt.is_some());
+    if let Some((id, p)) = prompt {
+        ui.set_mcp_prompt_command_text(p.command.clone().into());
+        ui.set_mcp_prompt_args_text(p.args.join("\n").into());
+        ui.set_mcp_prompt_note(book.approve_note_for(id).unwrap_or("").into());
+    }
+}
+
+/// Apply a connection test result: a 409 opens the command sheet.
+fn mcp_tested(
+    st: &mut State,
+    id: &str,
+    result: Result<robroz_contract::McpTestResult, api::McpTestError>,
+) {
+    match result {
+        Ok(r) => st.mcp_book.tested(id, &r),
+        Err(api::McpTestError::NeedsApproval(d)) => {
+            st.mcp_book.show_command_prompt(id, d.command, d.args);
+            st.mcp_prompt = Some(id.to_string());
+        }
+        Err(api::McpTestError::Failed(e)) => st.mcp_book.test_failed(id, &e.0),
+    }
+}
+
+/// Screen 9: load the server list.
+fn open_mcp(ui: &MainWindow, state: &Arc<Mutex<State>>) {
+    let Some(conn) = state.lock().unwrap().conn.clone() else {
+        return;
+    };
+    {
+        let mut st = state.lock().unwrap();
+        st.mcp_book = Default::default();
+        st.mcp_prompt = None;
+        apply_mcp(ui, &st);
+    }
+    ui.set_screen(9);
+    let weak = ui.as_weak();
+    let state = state.clone();
+    std::thread::spawn(move || {
+        let result = conn.mcp_servers();
+        let _ = slint::invoke_from_event_loop(move || {
+            let ui = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            match result {
+                Ok(list) => {
+                    st.mcp_book.load(list);
+                    st.mcp_book.note = None;
+                }
+                Err(e) => {
+                    st.mcp_book.loaded = true;
+                    st.mcp_book.note = Some(e.0);
+                }
+            }
+            apply_mcp(&ui, &st);
+        });
+    });
 }
 
 /// Open the avatar page for the open DM's bro, owner only.
@@ -366,6 +464,18 @@ fn apply_strings(ui: &MainWindow) {
     tr.set_members_title(Key::MembersTitle.as_str().into());
     tr.set_settings_title(Key::SettingsTitle.as_str().into());
     tr.set_sign_out(Key::SignOutOnThisDevice.as_str().into());
+    {
+        use robroz_ui::cards::mcp as m;
+        tr.set_mcp_title(m::TITLE.into());
+        tr.set_mcp_all(m::FILTER_ALL.as_str().into());
+        tr.set_mcp_connect(m::CONNECT.as_str().into());
+        tr.set_mcp_connected(m::CONNECTED.as_str().into());
+        tr.set_mcp_empty(m::EMPTY_TITLE.as_str().into());
+        tr.set_mcp_prompt_command(m::LABEL_PROMPT_COMMAND.as_str().into());
+        tr.set_mcp_prompt_args(m::LABEL_PROMPT_ARGS.as_str().into());
+        tr.set_mcp_runs_local(m::COMMAND_RUNS_LOCAL.as_str().into());
+        tr.set_mcp_approve_run(m::APPROVE_RUN.as_str().into());
+    }
     ui.set_locale_index(match i18n::locale() {
         Locale::En => 0,
         Locale::Zh => 1,
@@ -992,12 +1102,16 @@ struct State {
     group_edit: String,
     group_editing: bool,
     copied_until: Option<i64>,
+    /// MCP page (screen 9) and the server whose command sheet is open.
+    mcp_book: robroz_ui::cards::mcp::Book,
+    mcp_prompt: Option<String>,
 }
 
 /// Desktop-only shot hook: pre-fill screens from a fixture host when
 /// `ROBROZ_SHOT_SCREEN` is set (`connect`, `chats`, `chat-running`,
 /// `chat-failed`, `settings`, `connect-401`; PR2: `chat-group`, `chat-dm`,
-/// `chat-dm-other`, `create-bro`, `avatar`, `avatar-error`).
+/// `chat-dm-other`, `create-bro`, `avatar`, `avatar-error`; PR6: `mcp`,
+/// `mcp-prompt`).
 fn prepare_shot(ui: &MainWindow, state: &Arc<Mutex<State>>, shot: &str) {
     let shot = shot.trim();
     if shot == "connect" || shot == "connect-hint" {
@@ -1053,7 +1167,42 @@ fn prepare_shot(ui: &MainWindow, state: &Arc<Mutex<State>>, shot: &str) {
         "chats" => return ui.set_screen(1),
         "settings" => {
             state.lock().unwrap().before_settings = 1;
+            ui.set_mcp_available(true);
             return ui.set_screen(3);
+        }
+        "mcp" | "mcp-prompt" => {
+            let mut st = state.lock().unwrap();
+            st.before_settings = 1;
+            ui.set_mcp_available(true);
+            if let Some(conn) = st.conn.clone() {
+                match conn.mcp_servers() {
+                    Ok(list) => st.mcp_book.load(list),
+                    Err(e) => {
+                        st.mcp_book.loaded = true;
+                        st.mcp_book.note = Some(e.0);
+                    }
+                }
+                // `mcp-prompt`: Connect on the first stdio server whose
+                // command is not approved, so the sheet shows.
+                let first = st
+                    .mcp_book
+                    .servers
+                    .iter()
+                    .find(|s| robroz_ui::cards::mcp::command_unapproved(s))
+                    .map(|s| s.id.clone());
+                if let (true, Some(id)) = (shot == "mcp-prompt", first) {
+                    if st.mcp_book.connect_to_send(&id).is_some() {
+                        if let Ok(server) = conn.set_mcp_enabled(&id, true) {
+                            st.mcp_book.connect_enabled(&server);
+                        }
+                        let result = conn.test_mcp(&id);
+                        mcp_tested(&mut st, &id, result);
+                    }
+                }
+            }
+            ui.set_screen(9);
+            apply_mcp(ui, &st);
+            return;
         }
         "chat-running" => ("g1", 2),
         "chat-failed" => ("g2", 2),
@@ -1385,6 +1534,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let screen = ui.get_screen();
             let to = match screen {
                 3 => state.lock().unwrap().before_settings,
+                9 => 3,
                 6 | 7 => 2,
                 8 => 6,
                 _ => 1,
@@ -1405,7 +1555,11 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         move || {
             let ui = weak.unwrap();
-            state.lock().unwrap().before_settings = ui.get_screen();
+            {
+                let mut st = state.lock().unwrap();
+                st.before_settings = ui.get_screen();
+                ui.set_mcp_available(st.conn.is_some());
+            }
             ui.set_screen(3);
         }
     });
@@ -1743,6 +1897,114 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     apply_find(&ui, &st);
                 });
             });
+        }
+    });
+    ui.on_open_mcp({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || open_mcp(&weak.unwrap(), &state)
+    });
+    ui.on_mcp_pick_filter({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move |i| {
+            let mut st = state.lock().unwrap();
+            st.mcp_book.set_filter(mcp::filter_from_index(i));
+            apply_mcp(&weak.unwrap(), &st);
+        }
+    });
+    ui.on_mcp_connect_server({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move |id| {
+            let id = id.to_string();
+            let ui = weak.unwrap();
+            let (conn, step) = {
+                let mut st = state.lock().unwrap();
+                let step = st.mcp_book.connect_to_send(&id);
+                apply_mcp(&ui, &st);
+                (st.conn.clone(), step)
+            };
+            let (Some(conn), Some(step)) = (conn, step) else {
+                return;
+            };
+            let weak = ui.as_weak();
+            let state = state.clone();
+            std::thread::spawn(move || {
+                use robroz_ui::cards::mcp::ConnectStep;
+                let enabled = match step {
+                    ConnectStep::Enable => Some(conn.set_mcp_enabled(&id, true)),
+                    ConnectStep::Test => None,
+                };
+                let test = match &enabled {
+                    Some(Err(_)) => None,
+                    _ => Some(conn.test_mcp(&id)),
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    let ui = weak.unwrap();
+                    let mut st = state.lock().unwrap();
+                    match enabled {
+                        Some(Ok(server)) => st.mcp_book.connect_enabled(&server),
+                        Some(Err(e)) => st.mcp_book.entry_failed(&id, &e.0),
+                        None => {}
+                    }
+                    if let Some(result) = test {
+                        mcp_tested(&mut st, &id, result);
+                    }
+                    apply_mcp(&ui, &st);
+                });
+            });
+        }
+    });
+    ui.on_mcp_approve({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            let (conn, id) = {
+                let mut st = state.lock().unwrap();
+                let id = st
+                    .mcp_prompt
+                    .clone()
+                    .and_then(|id| st.mcp_book.approve_command_to_send(&id));
+                apply_mcp(&ui, &st);
+                (st.conn.clone(), id)
+            };
+            let (Some(conn), Some(id)) = (conn, id) else {
+                return;
+            };
+            let weak = ui.as_weak();
+            let state = state.clone();
+            std::thread::spawn(move || {
+                let approved = conn.approve_mcp_command(&id);
+                let test = approved.is_ok().then(|| conn.test_mcp(&id));
+                let _ = slint::invoke_from_event_loop(move || {
+                    let ui = weak.unwrap();
+                    let mut st = state.lock().unwrap();
+                    match approved {
+                        Ok(server) => {
+                            st.mcp_book.command_approved(server);
+                            st.mcp_prompt = None;
+                        }
+                        Err(e) => st.mcp_book.approve_command_failed(&id, &e.0),
+                    }
+                    if let Some(result) = test {
+                        mcp_tested(&mut st, &id, result);
+                    }
+                    apply_mcp(&ui, &st);
+                });
+            });
+        }
+    });
+    ui.on_mcp_cancel_prompt({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let mut st = state.lock().unwrap();
+            if let Some(id) = st.mcp_prompt.take() {
+                st.mcp_book.cancel_command_prompt(&id);
+            }
+            apply_mcp(&weak.unwrap(), &st);
         }
     });
     ui.on_open_members({

@@ -258,6 +258,28 @@ pub mod home {
     pub const DIALOG_W: f32 = 400.0;
 }
 
+/// MCP page (v0.2 PR6): category capsules, the "N connected" capsule and
+/// 64px server rows with a 44px r12 icon tile.
+pub mod mcp {
+    pub const CAPSULE: f32 = 36.0;
+    /// Left and right padding inside a capsule.
+    pub const CAPSULE_PAD: f32 = 14.0;
+    pub const CAPSULE_GAP: f32 = 8.0;
+    pub const CAPSULE_TEXT: f32 = 14.0;
+    pub const ROW: f32 = 64.0;
+    pub const ICON: f32 = 44.0;
+    pub const ICON_R: f32 = 12.0;
+    /// Icon tile to the name column.
+    pub const ICON_GAP: f32 = 12.0;
+    pub const ICON_TEXT: f32 = 18.0;
+    pub const ROW_NAME: f32 = 15.0;
+    pub const ROW_SUB: f32 = 12.0;
+    /// The Connect capsule on a row.
+    pub const CONNECT_H: f32 = 32.0;
+    /// "Connected" is shown at this opacity and does nothing on click.
+    pub const CONNECTED_OPACITY: f32 = 0.4;
+}
+
 /// Font sizes and line heights, logical px. Weights are 400 and 700 only.
 pub mod font {
     use crate::base::type_scale as ts;
@@ -455,6 +477,27 @@ fn scalar_vars() -> Vec<(String, String)> {
             ("dialog-w", crate::home::DIALOG_W),
         ],
     );
+    add(
+        "mcp",
+        &[
+            ("capsule", crate::mcp::CAPSULE),
+            ("capsule-pad", crate::mcp::CAPSULE_PAD),
+            ("capsule-gap", crate::mcp::CAPSULE_GAP),
+            ("capsule-text", crate::mcp::CAPSULE_TEXT),
+            ("row", crate::mcp::ROW),
+            ("icon", crate::mcp::ICON),
+            ("icon-r", crate::mcp::ICON_R),
+            ("icon-gap", crate::mcp::ICON_GAP),
+            ("icon-text", crate::mcp::ICON_TEXT),
+            ("row-name", crate::mcp::ROW_NAME),
+            ("row-sub", crate::mcp::ROW_SUB),
+            ("connect-h", crate::mcp::CONNECT_H),
+        ],
+    );
+    v.push((
+        "--robroz-spec-mcp-connected-opacity".into(),
+        format!("{}", crate::mcp::CONNECTED_OPACITY),
+    ));
     v.push((
         "--robroz-spec-font-weight-regular".into(),
         f::WEIGHT_REGULAR.to_string(),
@@ -534,6 +577,17 @@ mod tests {
             h::GROUP_STACK + 2.0 * (h::GROUP_STACK - h::GROUP_STACK_OVERLAP),
             h::ROW_FACE_W
         );
+    }
+
+    #[test]
+    fn mcp_metrics_match_the_pr6_spec() {
+        use crate::mcp as m;
+        assert_eq!(m::CAPSULE, 36.0);
+        assert_eq!(m::ROW, 64.0);
+        assert_eq!(m::ICON, 44.0);
+        assert_eq!(m::ICON_R, 12.0);
+        assert_eq!(m::CONNECTED_OPACITY, 0.4);
+        assert!(m::ICON < m::ROW && m::CONNECT_H < m::ROW);
     }
 
     fn on_disk(rel: &str) -> String {

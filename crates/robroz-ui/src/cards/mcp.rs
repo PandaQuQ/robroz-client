@@ -59,6 +59,52 @@ pub const COMMAND_UNAPPROVED: Key = Key::McpCommandUnapproved;
 pub const TOOLS_NEED_APPROVAL: Key = Key::McpToolsNeedApproval;
 pub const COMMAND_RUNS_LOCAL: Key = Key::McpCommandRunsLocal;
 pub const APPROVE_RUN: Key = Key::McpApproveRun;
+pub const FILTER_ALL: Key = Key::McpFilterAll;
+pub const CONNECT: Key = Key::McpConnect;
+pub const CONNECTED: Key = Key::McpConnected;
+pub const DISCONNECT: Key = Key::McpDisconnect;
+
+/// 「已连接 N 个」 / "N connected" capsule.
+pub fn connected_count_text(n: usize) -> String {
+    Key::McpConnectedCount.fill(&[&n])
+}
+
+/// Connected: switched on, and a stdio server's command is approved. A
+/// connected row shows the inert "Connected" label; anything else shows
+/// Connect.
+pub fn is_connected(s: &McpServer) -> bool {
+    s.enabled && !command_unapproved(s)
+}
+
+/// The letter on a server's icon tile: the first letter or digit of the
+/// name, upper-cased. The contract has no icon field.
+pub fn icon_letter(name: &str) -> String {
+    name.chars()
+        .find(|c| c.is_alphanumeric())
+        .map(|c| c.to_uppercase().collect())
+        .unwrap_or_else(|| "·".to_string())
+}
+
+/// Which servers the list shows. The contract has no category field, so
+/// the category capsules split by transport (stdio / HTTP); the
+/// "N connected" capsule is the other filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Filter {
+    #[default]
+    All,
+    Transport(Transport),
+    Connected,
+}
+
+/// What Connect has to do first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectStep {
+    /// `PATCH {"enabled":true}`, then test the connection.
+    Enable,
+    /// Already on but the stdio command is not approved: test, which
+    /// returns 409 `command_not_approved` and opens the approval panel.
+    Test,
+}
 
 pub fn approve_failed(reason: &str) -> String {
     Key::McpApproveFailed.fill(&[&crate::i18n::host_text(reason)])
@@ -367,9 +413,100 @@ pub struct Book {
     /// Set when 「批准运行」 fails; shown in red under that button.
     pub approve_note: Option<(String, String)>,
     pub form_note: Option<String>,
+    /// Selected category or the "N connected" capsule.
+    pub filter: Filter,
 }
 
 impl Book {
+    pub fn connected_count(&self) -> usize {
+        self.servers.iter().filter(|s| is_connected(s)).count()
+    }
+
+    /// Transports that at least one server uses, stdio first.
+    pub fn transports(&self) -> Vec<Transport> {
+        [Transport::Stdio, Transport::Http]
+            .into_iter()
+            .filter(|t| {
+                self.servers
+                    .iter()
+                    .any(|s| Transport::parse(&s.transport) == Some(*t))
+            })
+            .collect()
+    }
+
+    /// Category capsules only help when there is more than one category.
+    pub fn show_categories(&self) -> bool {
+        self.transports().len() > 1
+    }
+
+    /// The filter in effect: a capsule that is no longer shown falls back
+    /// to All, so the list never sticks on a filter with no button.
+    pub fn active_filter(&self) -> Filter {
+        match self.filter {
+            Filter::All => Filter::All,
+            Filter::Connected if self.connected_count() > 0 => Filter::Connected,
+            Filter::Transport(t) if self.show_categories() && self.transports().contains(&t) => {
+                Filter::Transport(t)
+            }
+            _ => Filter::All,
+        }
+    }
+
+    /// Pressing the selected capsule again goes back to All.
+    pub fn set_filter(&mut self, f: Filter) {
+        self.filter = if self.active_filter() == f {
+            Filter::All
+        } else {
+            f
+        };
+    }
+
+    pub fn visible(&self) -> impl Iterator<Item = &McpServer> {
+        let f = self.active_filter();
+        self.servers.iter().filter(move |s| match f {
+            Filter::All => true,
+            Filter::Connected => is_connected(s),
+            Filter::Transport(t) => Transport::parse(&s.transport) == Some(t),
+        })
+    }
+
+    /// Connect on a row. `None` when busy, unknown, or already connected.
+    pub fn connect_to_send(&mut self, id: &str) -> Option<ConnectStep> {
+        if self.busy {
+            return None;
+        }
+        let s = self.servers.iter().find(|s| s.id == id)?;
+        let step = if !s.enabled {
+            ConnectStep::Enable
+        } else if command_unapproved(s) {
+            ConnectStep::Test
+        } else {
+            return None;
+        };
+        self.entry_note = None;
+        match step {
+            ConnectStep::Enable => self.busy = true,
+            ConnectStep::Test => {
+                self.tests.insert(id.to_string(), TestState::Running);
+            }
+        }
+        Some(step)
+    }
+
+    /// A row's second line: the latest test result, else the tool count
+    /// (or "needs approval").
+    pub fn row_line(&self, s: &McpServer) -> String {
+        self.test_for(&s.id)
+            .map(TestState::text)
+            .unwrap_or_else(|| row_subtitle(s))
+    }
+
+    /// The enable from Connect came back: test once, like after Save.
+    pub fn connect_enabled(&mut self, server: &McpServer) {
+        self.set_enabled(&server.id, server.enabled);
+        self.tests.insert(server.id.clone(), TestState::Running);
+    }
+
     pub fn load(&mut self, mut servers: Vec<McpServer>) {
         servers.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         self.servers = servers;
@@ -1065,5 +1202,109 @@ mod tests {
         b.cancel_command_prompt("s3");
         assert_eq!(b.approve_note_for("s3"), None);
         assert_eq!(approve_failed("超时"), "批准失败：超时");
+    }
+
+    fn http(id: &str, name: &str, enabled: bool) -> McpServer {
+        let mut s = server(id, name, enabled, Some(3));
+        s.transport = "http".into();
+        s.command = None;
+        s.args = None;
+        s.url = Some("https://mcp.example/".into());
+        s.command_approved = None;
+        s.command_approved_at = None;
+        s
+    }
+
+    #[test]
+    fn connected_means_on_and_command_approved() {
+        assert!(is_connected(&server("a", "A", true, None)));
+        assert!(!is_connected(&server("b", "B", false, None)));
+        assert!(!is_connected(&unapproved("c", "C")));
+        assert!(is_connected(&http("d", "D", true)));
+        let b = book();
+        assert_eq!(b.connected_count(), 1);
+    }
+
+    #[test]
+    fn connected_capsule_copy() {
+        let _zh = crate::i18n::scoped(crate::i18n::Locale::Zh);
+        assert_eq!(connected_count_text(3), "已连接 3 个");
+        assert_eq!(CONNECT, "连接");
+        assert_eq!(CONNECTED, "已连接");
+        drop(_zh);
+        let _en = crate::i18n::scoped(crate::i18n::Locale::En);
+        assert_eq!(connected_count_text(3), "3 connected");
+        assert_eq!(FILTER_ALL, "All");
+    }
+
+    #[test]
+    fn icon_letter_is_the_first_letter() {
+        assert_eq!(icon_letter("github"), "G");
+        assert_eq!(icon_letter("  文档"), "文");
+        assert_eq!(icon_letter("@@"), "·");
+    }
+
+    #[test]
+    fn category_capsules_follow_the_transports_present() {
+        let mut b = book();
+        assert_eq!(b.transports(), vec![Transport::Stdio]);
+        assert!(!b.show_categories());
+        b.load(vec![
+            server("s1", "文档", true, Some(2)),
+            http("h1", "网页", false),
+        ]);
+        assert!(b.show_categories());
+        b.set_filter(Filter::Transport(Transport::Http));
+        let ids: Vec<&str> = b.visible().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, vec!["h1"]);
+        // Pressing the selected capsule again goes back to All.
+        b.set_filter(Filter::Transport(Transport::Http));
+        assert_eq!(b.active_filter(), Filter::All);
+        assert_eq!(b.visible().count(), 2);
+        // A capsule that disappears falls back to All.
+        b.set_filter(Filter::Transport(Transport::Http));
+        b.load(vec![server("s1", "文档", true, Some(2))]);
+        assert_eq!(b.active_filter(), Filter::All);
+    }
+
+    #[test]
+    fn connected_filter_and_fallback() {
+        let mut b = book();
+        b.set_filter(Filter::Connected);
+        let ids: Vec<&str> = b.visible().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, vec!["s1"]);
+        b.set_enabled("s1", false);
+        assert_eq!(b.connected_count(), 0);
+        assert_eq!(b.active_filter(), Filter::All);
+        assert_eq!(b.visible().count(), 2);
+    }
+
+    #[test]
+    fn connect_enables_then_tests() {
+        let mut b = book();
+        assert_eq!(b.connect_to_send("s1"), None, "already connected");
+        assert_eq!(b.connect_to_send("s2"), Some(ConnectStep::Enable));
+        assert!(b.busy);
+        assert_eq!(b.connect_to_send("s2"), None, "busy");
+        let mut on = b.servers.iter().find(|s| s.id == "s2").unwrap().clone();
+        on.enabled = true;
+        b.connect_enabled(&on);
+        assert!(!b.busy);
+        assert_eq!(b.test_for("s2"), Some(&TestState::Running));
+        assert!(is_connected(
+            b.servers.iter().find(|s| s.id == "s2").unwrap()
+        ));
+    }
+
+    #[test]
+    fn connect_on_an_unapproved_command_asks_for_approval() {
+        let mut b = Book::default();
+        b.load(vec![unapproved("s3", "回声")]);
+        assert_eq!(b.connect_to_send("s3"), Some(ConnectStep::Test));
+        assert!(!b.busy);
+        // The test comes back 409 and the approval panel opens.
+        b.show_command_prompt("s3", "echo".into(), vec!["hello".into()]);
+        assert_eq!(b.open.as_deref(), Some("s3"));
+        assert!(b.command_prompt_for("s3").is_some());
     }
 }
