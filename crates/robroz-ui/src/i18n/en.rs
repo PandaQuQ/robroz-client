@@ -631,6 +631,22 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ClientNewBroFailed => "Couldn't add a bro: {0}",
         // 没改成：{0}  [approved, batch 2]
         Key::ClientRenameFailed => "Couldn't rename: {0}",
+        // 只有这个 bro 的主人能改头像  [approved, PR2 avatar]
+        Key::AvatarNotOwner => "Only this bro's owner can change its avatar",
+        // 头像没存上，再试一次  [approved, PR2 avatar]
+        Key::AvatarSaveFailed => "Couldn't save the avatar. Try again",
+        // 头像  [pending UI review]
+        Key::AvatarTitle => "Avatar",
+        // 形状  [pending UI review]
+        Key::AvatarShape => "Shape",
+        // 颜色  [pending UI review]
+        Key::AvatarColor => "Color",
+        // 用默认头像  [pending UI review]
+        Key::AvatarUseDefault => "Use default",
+        // 给 bro 起个名字  [pending UI review]
+        Key::CreateBroNamePlaceholder => "Name your bro",
+        // 引入  [pending UI review]
+        Key::CreateBroCreate => "Add",
         // 没发出去：{0}  [approved, batch 2]
         Key::ClientSendFailed => "Didn't send: {0}",
         //  · 实时  [approved, batch 2]

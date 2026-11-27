@@ -5362,6 +5362,8 @@ dependencies = [
  "robroz-card",
  "robroz-contract",
  "robroz-tokens",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

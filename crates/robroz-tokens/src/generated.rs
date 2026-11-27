@@ -8,6 +8,66 @@ pub const VERSION: &str = "2026-11-20";
 pub mod base {
     #[allow(unused_imports)]
     use crate::{Rgb, Rgba};
+    pub mod avatar {
+        #[allow(unused_imports)]
+        use crate::{Rgb, Rgba};
+        pub const COLORS: f32 = 10.0;
+        pub const CREATE_EMPTY_OPACITY: f32 = 0.4;
+        pub mod dark {
+            #[allow(unused_imports)]
+            use crate::{Rgb, Rgba};
+            pub const C0: Rgb = [0xf0, 0x8a, 0x95];
+            pub const C1: Rgb = [0xe9, 0x8b, 0xc6];
+            pub const C2: Rgb = [0xc3, 0x9c, 0xf0];
+            pub const C3: Rgb = [0xa3, 0xa6, 0xf5];
+            pub const C4: Rgb = [0x7f, 0xb0, 0xec];
+            pub const C5: Rgb = [0x5c, 0xc2, 0xcc];
+            pub const C6: Rgb = [0x6c, 0xc7, 0xa0];
+            pub const C7: Rgb = [0xb5, 0xc2, 0x5a];
+            pub const C8: Rgb = [0xcf, 0x9e, 0x7c];
+            pub const C9: Rgb = [0xaa, 0xa6, 0x9e];
+        }
+        pub const DEFAULT_HUES: f32 = 8.0;
+        pub const EYE_DARK: Rgb = [0x16, 0x18, 0x1d];
+        pub const EYE_LIGHT: Rgb = [0xff, 0xff, 0xff];
+        pub const EYE_RADIUS: f32 = 0.055;
+        pub mod light {
+            #[allow(unused_imports)]
+            use crate::{Rgb, Rgba};
+            pub const C0: Rgb = [0xc0, 0x3a, 0x4b];
+            pub const C1: Rgb = [0xb4, 0x3a, 0x86];
+            pub const C2: Rgb = [0x8a, 0x49, 0xc4];
+            pub const C3: Rgb = [0x58, 0x56, 0xc9];
+            pub const C4: Rgb = [0x2f, 0x6d, 0xb5];
+            pub const C5: Rgb = [0x12, 0x75, 0x80];
+            pub const C6: Rgb = [0x2a, 0x76, 0x5c];
+            pub const C7: Rgb = [0x65, 0x70, 0x1b];
+            pub const C8: Rgb = [0x8a, 0x5a, 0x3c];
+            pub const C9: Rgb = [0x6e, 0x6c, 0x66];
+        }
+        pub const MORE_BUTTON: f32 = 32.0;
+        pub const NAME_HEIGHT: f32 = 52.0;
+        pub const NAME_RADIUS: f32 = 16.0;
+        pub const PAGE_MAX: f32 = 440.0;
+        pub const PREVIEW: f32 = 160.0;
+        pub const PREVIEW_GLYPH: f32 = 112.0;
+        pub const PREVIEW_RADIUS: f32 = 32.0;
+        pub const RULE: &str = "bro avatar = shape 0-11 + color 0-9 (robroz#194 indices). c0-c7 are hues, c8 brown, c9 grey, no white. Default from hash(bro id): shape mod 12, color mod 8. Light set >= 4.5:1 on window and surface (name text uses it); dark set >= 4.5:1 on dark window and surface. Eyes are two round dots.";
+        pub const SECTION_GAP: f32 = 24.0;
+        pub const SELECTED_RING: f32 = 2.0;
+        pub const SHAPE_CELL: f32 = 56.0;
+        pub const SHAPE_COLS: f32 = 5.0;
+        pub const SHAPE_GLYPH: f32 = 36.0;
+        pub const SHAPES: f32 = 12.0;
+        pub const SWATCH: f32 = 32.0;
+        pub const SWATCH_HIT: f32 = 44.0;
+        pub const TITLE_HEIGHT: f32 = 40.0;
+        pub const TITLE_MAX: f32 = 3.0;
+        pub const TITLE_OVERLAP: f32 = 8.0;
+        pub const TITLE_PAD: f32 = 8.0;
+        pub const TITLE_RING: f32 = 2.0;
+        pub const TITLE_SIZE: f32 = 24.0;
+    }
     pub mod brand {
         #[allow(unused_imports)]
         use crate::{Rgb, Rgba};

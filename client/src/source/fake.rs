@@ -406,7 +406,8 @@ pub fn fake_chats() -> (Vec<Unread>, Vec<Bro>) {
             id: "bot-ada".into(),
             name: "Ada".into(),
             dm_group_id: Some(DM.into()),
-            owner_user_id: None,
+            // The fake signed-in user owns Ada, so her avatar can be edited.
+            owner_user_id: Some(crate::api::FAKE_ME_ID.into()),
         }],
     )
 }

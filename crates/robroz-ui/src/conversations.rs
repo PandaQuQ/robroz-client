@@ -46,6 +46,9 @@ pub struct Conversation {
     /// Newest activity, RFC 3339. `None` for a chat with nothing in it.
     pub last_at: Option<String>,
     pub unread: u64,
+    /// A DM's bro avatar (stored or id default); `None` for groups and for
+    /// a DM whose bro is not known yet.
+    pub bro_avatar: Option<crate::avatar::BroAvatar>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -114,6 +117,13 @@ impl Conversations {
     pub fn set_preview(&mut self, group_id: &str, preview: String) {
         if let Some(c) = self.rows.iter_mut().find(|c| c.group_id == group_id) {
             c.preview = Some(clip(&preview, PREVIEW_CHARS));
+        }
+    }
+
+    /// The avatar to draw for a DM row.
+    pub fn set_avatar(&mut self, group_id: &str, avatar: crate::avatar::BroAvatar) {
+        if let Some(c) = self.rows.iter_mut().find(|c| c.group_id == group_id) {
+            c.bro_avatar = Some(avatar);
         }
     }
 

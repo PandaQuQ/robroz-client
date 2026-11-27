@@ -1,0 +1,515 @@
+//! iced views for bro avatars: the shape glyph, the stacked title
+//! avatars, the picker, and the create-bro and avatar pages. Geometry and
+//! colours come from [`crate::avatar`]; sizes from `robroz-tokens`
+//! (`base.avatar`).
+
+use iced::mouse;
+use iced::widget::canvas::{self, Frame, Geometry, Path, Program, Stroke};
+use iced::widget::{button, canvas as canvas_widget, column, container, row, space, text, text_input};
+use iced::{
+    Alignment, Border, Color, Element, Fill, Length, Padding, Point, Rectangle, Renderer,
+    Shadow as IcedShadow, Theme as IcedTheme,
+};
+use robroz_tokens::base::avatar as tok;
+
+use crate::avatar::{self, BroAvatar, Seg, COLORS, SHAPES};
+use crate::i18n::Key;
+use crate::theme::{Mode, Rgb, Skin};
+use crate::view::{bold, color, faded, Action};
+
+/// Widget id of the create-bro name field.
+pub const NEW_BRO_NAME: &str = "robroz-new-bro-name";
+
+/// One bro avatar: the filled shape and two round eyes. `ring` draws a
+/// band of that colour around the outline (used where avatars overlap).
+pub struct Glyph {
+    pub avatar: BroAvatar,
+    pub dark: bool,
+    pub ring: Option<(Color, f32)>,
+}
+
+impl<M> Program<M> for Glyph {
+    type State = ();
+
+    fn draw(
+        &self,
+        _: &(),
+        renderer: &Renderer,
+        _: &IcedTheme,
+        bounds: Rectangle,
+        _: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let side = bounds.width.min(bounds.height);
+        let inset = self.ring.map_or(0.0, |(_, w)| w);
+        let scale = side - 2.0 * inset;
+        let ox = (bounds.width - side) / 2.0 + inset;
+        let oy = (bounds.height - side) / 2.0 + inset;
+        let p = |x: f32, y: f32| Point::new(ox + x * scale, oy + y * scale);
+        let outline = avatar::outline(self.avatar.shape);
+        let path = Path::new(|b| {
+            for seg in &outline {
+                match *seg {
+                    Seg::Move(x, y) => b.move_to(p(x, y)),
+                    Seg::Line(x, y) => b.line_to(p(x, y)),
+                    Seg::Quad(cx, cy, x, y) => b.quadratic_curve_to(p(cx, cy), p(x, y)),
+                    Seg::Cubic(a, c, d, e, x, y) => b.bezier_curve_to(p(a, c), p(d, e), p(x, y)),
+                    Seg::Close => b.close(),
+                }
+            }
+        });
+        if let Some((ring, w)) = self.ring {
+            frame.stroke(
+                &path,
+                Stroke::default()
+                    .with_color(ring)
+                    .with_width(w * 2.0)
+                    .with_line_join(canvas::LineJoin::Round),
+            );
+        }
+        frame.fill(&path, color(avatar::color(self.avatar.color, self.dark)));
+        let eyes = avatar::eyes(self.avatar.shape);
+        let eye = color(avatar::eye_color(self.dark));
+        for (x, y) in [eyes.left, eyes.right] {
+            frame.fill(&Path::circle(p(x, y), eyes.r * scale), eye);
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
+fn dark(t: &Skin) -> bool {
+    t.mode == Mode::Dark
+}
+
+/// A bro avatar of `size` px.
+pub fn bro_avatar<'a, M: 'a>(t: &Skin, a: BroAvatar, size: f32) -> Element<'a, M> {
+    canvas_widget(Glyph {
+        avatar: a,
+        dark: dark(t),
+        ring: None,
+    })
+    .width(Length::Fixed(size))
+    .height(Length::Fixed(size))
+    .into()
+}
+
+/// Title-capsule avatars: 24px, each overlapping the previous by 8px,
+/// with a 2px band in `bg` so overlaps stay readable; then `+N`.
+pub fn avatar_stack<'a, M: 'a>(
+    t: &Skin,
+    avatars: &[BroAvatar],
+    more: usize,
+    bg: Rgb,
+) -> Element<'a, M> {
+    let size = tok::TITLE_SIZE;
+    let step = size - tok::TITLE_OVERLAP;
+    let ring = tok::TITLE_RING;
+    let width = avatar::stack_width(avatars.len(), size, tok::TITLE_OVERLAP);
+    // Later layers draw on top; the first avatar is the top one.
+    let mut layers = iced::widget::Stack::new()
+        .width(Length::Fixed(width))
+        .height(Length::Fixed(size));
+    for (i, a) in avatars.iter().enumerate().rev() {
+        let glyph = canvas_widget(Glyph {
+            avatar: *a,
+            dark: dark(t),
+            ring: (i > 0 || avatars.len() > 1).then_some((color(bg), ring)),
+        })
+        .width(Length::Fixed(size))
+        .height(Length::Fixed(size));
+        layers = layers.push(container(glyph).padding(Padding {
+            left: step * i as f32,
+            ..Padding::ZERO
+        }));
+    }
+    let mut r = row![layers].spacing(4).align_y(Alignment::Center);
+    if more > 0 {
+        r = r.push(
+            text(format!("+{more}"))
+                .size(t.type_.foot)
+                .color(color(t.palette.text2)),
+        );
+    }
+    r.into()
+}
+
+fn round_button_style(t: Skin) -> impl Fn(&IcedTheme, button::Status) -> button::Style {
+    move |_, status| {
+        let bg = match status {
+            button::Status::Hovered | button::Status::Pressed => t.palette.control_hover,
+            _ => t.palette.surface,
+        };
+        button::Style {
+            background: Some(color(bg).into()),
+            text_color: color(t.palette.text),
+            border: Border::default()
+                .width(t.stroke.card)
+                .color(color(t.palette.border))
+                .rounded(tok::MORE_BUTTON / 2.0),
+            shadow: IcedShadow::default(),
+            snap: false,
+        }
+    }
+}
+
+/// Round 32px button with a single glyph (`…`, `‹`).
+pub fn round_button<'a>(t: &Skin, glyph: &'static str, on: Action) -> Element<'a, Action> {
+    let s = tok::MORE_BUTTON;
+    button(
+        container(text(glyph).size(t.type_.row_name).color(color(t.palette.text)))
+            .width(Length::Fixed(s))
+            .height(Length::Fixed(s))
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center),
+    )
+    .padding(0)
+    .width(Length::Fixed(s))
+    .height(Length::Fixed(s))
+    .style(round_button_style(*t))
+    .on_press(on)
+    .into()
+}
+
+/// The capsule behind the chat title: surface fill, fully rounded.
+pub fn capsule_style(t: Skin) -> impl Fn(&IcedTheme) -> container::Style {
+    move |_| container::Style {
+        background: Some(color(t.palette.surface).into()),
+        border: Border::default()
+            .width(t.stroke.card)
+            .color(color(t.palette.border))
+            .rounded(tok::TITLE_HEIGHT / 2.0),
+        ..container::Style::default()
+    }
+}
+
+/// Inline note under the preview (save or create errors). One line.
+fn preview_note<'a>(t: &Skin, note: Option<&'a str>) -> Element<'a, Action> {
+    match note {
+        Some(n) => container(
+            text(n.to_string())
+                .size(t.type_.foot)
+                .color(color(t.palette.text2)),
+        )
+        .width(Fill)
+        .center_x(Fill)
+        .into(),
+        None => space::vertical().height(0).into(),
+    }
+}
+
+/// 160px preview tile, radius 32, with a 112px avatar.
+pub fn avatar_preview<'a, M: 'a>(t: &Skin, a: BroAvatar) -> Element<'a, M> {
+    let sunken = t.palette.sunken;
+    container(bro_avatar(t, a, tok::PREVIEW_GLYPH))
+        .width(Length::Fixed(tok::PREVIEW))
+        .height(Length::Fixed(tok::PREVIEW))
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .style(move |_| container::Style {
+            background: Some(color(sunken).into()),
+            border: Border::default().rounded(tok::PREVIEW_RADIUS),
+            ..container::Style::default()
+        })
+        .into()
+}
+
+fn section_label<'a>(t: &Skin, key: Key) -> Element<'a, Action> {
+    text(key.as_str())
+        .size(t.type_.foot)
+        .color(color(t.palette.text3))
+        .into()
+}
+
+fn cell_style(t: Skin, selected: bool) -> impl Fn(&IcedTheme, button::Status) -> button::Style {
+    move |_, status| {
+        let bg = match status {
+            button::Status::Hovered | button::Status::Pressed => t.palette.control_hover,
+            _ => t.palette.surface,
+        };
+        let border = if selected {
+            Border::default()
+                .width(tok::SELECTED_RING)
+                .color(color(t.palette.text))
+        } else {
+            Border::default()
+                .width(t.stroke.card)
+                .color(color(t.palette.border))
+        };
+        button::Style {
+            background: Some(color(bg).into()),
+            text_color: color(t.palette.text),
+            border: border.rounded(tok::SHAPE_CELL / 4.0),
+            shadow: IcedShadow::default(),
+            snap: false,
+        }
+    }
+}
+
+/// 12 shapes, five per row, 56px cells (the selected one has a 2px `text`
+/// ring); then 10 colour circles, 32px inside a 44px hit area. Each cell
+/// shows the shape in the current colour.
+pub fn avatar_picker<'a>(t: &Skin, current: BroAvatar) -> Element<'a, Action> {
+    let cell = tok::SHAPE_CELL;
+    let cols = tok::SHAPE_COLS as usize;
+    let gap = (tok::PAGE_MAX - cell * cols as f32) / (cols as f32 - 1.0);
+    let mut grid = column![].spacing(gap.min(16.0));
+    let mut line = row![].spacing(gap);
+    for s in 0..SHAPES {
+        let selected = s == current.shape;
+        let b = button(
+            container(bro_avatar(
+                t,
+                BroAvatar::new(s, current.color),
+                tok::SHAPE_GLYPH,
+            ))
+            .width(Fill)
+            .height(Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center),
+        )
+        .padding(0)
+        .width(Length::Fixed(cell))
+        .height(Length::Fixed(cell))
+        .style(cell_style(*t, selected))
+        .on_press(Action::AvatarShape(s));
+        line = line.push(b);
+        if (usize::from(s) + 1) % cols == 0 {
+            grid = grid.push(line);
+            line = row![].spacing(gap);
+        }
+    }
+    grid = grid.push(line);
+
+    let swatch = tok::SWATCH;
+    let hit = tok::SWATCH_HIT;
+    let ring = tok::SELECTED_RING;
+    let mut swatches = row![].spacing(0);
+    for c in 0..COLORS {
+        let selected = c == current.color;
+        let fill = avatar::color(c, dark(t));
+        let dot = container(space::horizontal().width(0))
+            .width(Length::Fixed(swatch))
+            .height(Length::Fixed(swatch))
+            .style(move |_| container::Style {
+                background: Some(color(fill).into()),
+                border: Border::default().rounded(swatch / 2.0),
+                ..container::Style::default()
+            });
+        let outer = swatch + 4.0 * ring;
+        let text_c = t.palette.text;
+        let ringed = container(dot)
+            .width(Length::Fixed(outer))
+            .height(Length::Fixed(outer))
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .style(move |_| container::Style {
+                border: if selected {
+                    Border::default()
+                        .width(ring)
+                        .color(color(text_c))
+                        .rounded(outer / 2.0)
+                } else {
+                    Border::default()
+                },
+                ..container::Style::default()
+            });
+        swatches = swatches.push(
+            button(
+                container(ringed)
+                    .width(Fill)
+                    .height(Fill)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center),
+            )
+            .padding(0)
+            .width(Length::Fixed(hit))
+            .height(Length::Fixed(hit))
+            .style(|_, _| button::Style::default())
+            .on_press(Action::AvatarColor(c)),
+        );
+    }
+    column![
+        section_label(t, Key::AvatarShape),
+        grid,
+        space::vertical().height(tok::SECTION_GAP - 8.0),
+        section_label(t, Key::AvatarColor),
+        swatches.wrap(),
+    ]
+    .spacing(8)
+    .into()
+}
+
+fn name_input_style(t: Skin) -> impl Fn(&IcedTheme, text_input::Status) -> text_input::Style {
+    move |_, status| {
+        let border = match status {
+            text_input::Status::Focused { .. } => t.palette.focus,
+            _ => t.palette.border,
+        };
+        let sel = t.palette.selection;
+        text_input::Style {
+            background: color(t.palette.surface).into(),
+            border: Border::default()
+                .width(t.stroke.card)
+                .color(color(border))
+                .rounded(tok::NAME_RADIUS),
+            icon: color(t.palette.text),
+            placeholder: color(t.palette.text3),
+            value: color(t.palette.text),
+            selection: faded(sel.rgb, sel.alpha),
+        }
+    }
+}
+
+fn primary_style(t: Skin, alpha: f32) -> impl Fn(&IcedTheme, button::Status) -> button::Style {
+    move |_, _| button::Style {
+        background: Some(faded(t.palette.accent_strong, alpha).into()),
+        text_color: faded(t.palette.on_accent, alpha),
+        border: Border::default().rounded(tok::NAME_RADIUS),
+        shadow: IcedShadow::default(),
+        snap: false,
+    }
+}
+
+fn secondary_style(t: Skin) -> impl Fn(&IcedTheme, button::Status) -> button::Style {
+    move |_, status| {
+        let bg = match status {
+            button::Status::Hovered | button::Status::Pressed => t.palette.control_hover,
+            _ => t.palette.surface,
+        };
+        button::Style {
+            background: Some(color(bg).into()),
+            text_color: color(t.palette.text),
+            border: Border::default()
+                .width(t.stroke.card)
+                .color(color(t.palette.border))
+                .rounded(tok::NAME_RADIUS),
+            shadow: IcedShadow::default(),
+            snap: false,
+        }
+    }
+}
+
+fn page_head<'a>(t: &Skin, title: String, trailing: Element<'a, Action>) -> Element<'a, Action> {
+    row![
+        text(title)
+            .size(t.type_.list_title)
+            .font(bold())
+            .color(color(t.palette.text)),
+        space::horizontal(),
+        trailing,
+    ]
+    .align_y(Alignment::Center)
+    .height(Length::Fixed(tok::TITLE_HEIGHT))
+    .into()
+}
+
+fn page_frame<'a>(t: &Skin, body: iced::widget::Column<'a, Action>) -> Element<'a, Action> {
+    iced::widget::scrollable(
+        container(container(body).max_width(tok::PAGE_MAX))
+            .width(Fill)
+            .center_x(Fill)
+            .padding(t.metrics.stream_padding),
+    )
+    .height(Fill)
+    .width(Fill)
+    .into()
+}
+
+/// The create-bro page: preview, name, shape and colour, then 引入.
+/// 引入 is at 40% opacity and inert while the name is empty.
+pub fn create_bro_page<'a>(
+    t: &Skin,
+    name: &'a str,
+    a: BroAvatar,
+    note: Option<&'a str>,
+    busy: bool,
+) -> Element<'a, Action> {
+    let can = !busy && !name.trim().is_empty();
+    let mut input = text_input(Key::CreateBroNamePlaceholder.as_str(), name)
+        .id(NEW_BRO_NAME)
+        .size(16)
+        .padding(Padding::from([0.0, 16.0]))
+        .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
+            tok::NAME_HEIGHT - 2.0 * t.stroke.card,
+        )))
+        .style(name_input_style(*t));
+    if !busy {
+        input = input.on_input(|text| Action::NewBroName { text });
+        if can {
+            input = input.on_submit(Action::NewBroCreate);
+        }
+    }
+    let alpha = if can { 1.0 } else { tok::CREATE_EMPTY_OPACITY };
+    let mut create = button(
+        container(text(Key::CreateBroCreate.as_str()).size(t.type_.body))
+            .width(Fill)
+            .height(Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center),
+    )
+    .padding(0)
+    .width(Fill)
+    .height(Length::Fixed(tok::NAME_HEIGHT))
+    .style(primary_style(*t, alpha));
+    if can {
+        create = create.on_press(Action::NewBroCreate);
+    }
+    let cancel = button(text(Key::ViewRenameCancel.as_str()).size(t.type_.body))
+        .padding(Padding::from([6.0, 12.0]))
+        .style(secondary_style(*t))
+        .on_press(Action::AvatarPageClose);
+    let body = column![
+        page_head(t, Key::ConversationsNewBro.as_str().to_string(), cancel.into()),
+        container(avatar_preview(t, a)).width(Fill).center_x(Fill),
+        preview_note(t, note),
+        input,
+        avatar_picker(t, a),
+        create,
+    ]
+    .spacing(tok::SECTION_GAP);
+    page_frame(t, body)
+}
+
+/// A bro's avatar page (owner only): preview, name, picker; each pick
+/// saves at once. 「用默认头像」 only while an avatar is stored.
+pub fn avatar_page<'a>(
+    t: &Skin,
+    name: &'a str,
+    a: BroAvatar,
+    stored: bool,
+    note: Option<&'a str>,
+) -> Element<'a, Action> {
+    let back = round_button(t, "‹", Action::AvatarPageClose);
+    let mut body = column![
+        page_head(t, Key::AvatarTitle.as_str().to_string(), back),
+        container(avatar_preview(t, a)).width(Fill).center_x(Fill),
+        preview_note(t, note),
+        container(
+            text(name.to_string())
+                .size(16)
+                .font(bold())
+                .color(color(t.palette.text))
+        )
+        .width(Fill)
+        .center_x(Fill),
+        avatar_picker(t, a),
+    ]
+    .spacing(tok::SECTION_GAP);
+    if stored {
+        body = body.push(
+            button(
+                container(text(Key::AvatarUseDefault.as_str()).size(t.type_.body))
+                    .width(Fill)
+                    .height(Fill)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center),
+            )
+            .padding(0)
+            .width(Fill)
+            .height(Length::Fixed(tok::NAME_HEIGHT))
+            .style(secondary_style(*t))
+            .on_press(Action::AvatarReset),
+        );
+    }
+    page_frame(t, body)
+}
