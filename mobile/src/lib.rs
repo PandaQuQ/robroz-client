@@ -1420,8 +1420,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
     apply_unencrypted_hint(&ui);
     apply_token_field(&ui, &state.lock().unwrap());
 
-    if std::env::var("ROBROZ_SHOT_SCREEN").is_ok()
-        || std::env::var("ROBROZ_FAKE_RECONNECTING").is_ok()
+    // Same rule as the desktop client: freeze the process clock only for
+    // fake/gallery scenes whose fixture times are relative to FAKE_NOW_ISO.
+    // ROBROZ_SHOT_SCREEN is also used against a live host; freezing it at
+    // October 2026 made a task that had been running for hours render as
+    // "Working under 1s" / 「处理中不到 1 秒」.
+    if std::env::var("ROBROZ_FAKE_RECONNECTING").is_ok()
         || std::env::var("ROBROZ_FAKE_SYNCING").is_ok()
         || std::env::var("ROBROZ_FAKE_TOO_MANY_STREAMS").is_ok()
     {
