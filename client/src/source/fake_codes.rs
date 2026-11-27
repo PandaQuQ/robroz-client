@@ -40,6 +40,8 @@ fn failed(id: &str, code: FailureCode, detail: Option<&str>, legacy: &str, hm: &
     GroupEvent {
         group_id: GROUP.into(),
         event: Event::Status {
+            progress_code: None,
+            progress_params: None,
             id: id.into(),
             task_id: id.into(),
             bot_id: "bot-ada".into(),
@@ -64,6 +66,8 @@ fn legacy_failed(id: &str, legacy: &str, hm: &str) -> GroupEvent {
     GroupEvent {
         group_id: GROUP.into(),
         event: Event::Status {
+            progress_code: None,
+            progress_params: None,
             id: id.into(),
             task_id: id.into(),
             bot_id: "bot-ada".into(),
@@ -189,6 +193,7 @@ pub fn codes_chats() -> (Vec<Unread>, Vec<Bro>) {
             last_activity_at: Some(ts("18:48")),
         }],
         vec![Bro {
+            avatar: None,
             id: "bot-ada".into(),
             name: "Ada".into(),
             dm_group_id: None,

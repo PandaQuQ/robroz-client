@@ -961,6 +961,8 @@ mod tests {
 
     fn status(task: &str, bot: &str, state: TaskState, container_up: bool) -> Event {
         Event::Status {
+            progress_code: None,
+            progress_params: None,
             id: task.into(),
             task_id: task.into(),
             bot_id: format!("bot-{bot}"),
@@ -1809,6 +1811,7 @@ mod tests {
     #[test]
     fn settings_approval_is_kept_out_of_the_feed() {
         let event = Event::Approval {
+            reason_code: None,
             id: "apr-settings".into(),
             bot_id: robroz_contract::SETTINGS_APPROVAL_BOT_ID.into(),
             bot_name: robroz_contract::SETTINGS_APPROVAL_BOT_NAME.into(),

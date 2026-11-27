@@ -149,6 +149,8 @@ mod tests {
 
     fn status(state: TaskState, container_up: bool) -> Event {
         Event::Status {
+            progress_code: None,
+            progress_params: None,
             id: "e1".into(),
             task_id: "t1".into(),
             bot_id: "b1".into(),

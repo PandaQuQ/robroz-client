@@ -378,6 +378,8 @@ mod tests {
     #[test]
     fn rows_put_active_sessions_first() {
         let g = |id: &str| Group {
+            created_by: None,
+            dm: false,
             id: id.into(),
             name: id.into(),
             tenant_id: "t".into(),

@@ -376,6 +376,7 @@ mod tests {
     fn answered_by_shows_me_other_or_nobody() {
         let _zh = crate::i18n::scoped(crate::i18n::Locale::Zh);
         let event = |decision, by: Option<&str>| Event::Approval {
+            reason_code: None,
             id: "a1".into(),
             bot_id: "bot-doc".into(),
             bot_name: "文档哥".into(),
@@ -490,6 +491,7 @@ mod tests {
 
     fn call_event(summary: &str, server: Option<&str>, tool: Option<&str>) -> Event {
         Event::Approval {
+            reason_code: None,
             id: "a-call".into(),
             bot_id: "bot-doc".into(),
             bot_name: "文档哥".into(),
@@ -555,6 +557,7 @@ mod tests {
 
     fn approval_event() -> Event {
         Event::Approval {
+            reason_code: None,
             id: "a-exp".into(),
             bot_id: "bot-doc".into(),
             bot_name: "文档哥".into(),
@@ -637,6 +640,7 @@ mod tests {
     fn unknown_action_is_a_generic_card() {
         let _zh = crate::i18n::scoped(crate::i18n::Locale::Zh);
         let event = Event::Approval {
+            reason_code: None,
             id: "a-future".into(),
             bot_id: "bot-doc".into(),
             bot_name: "文档哥".into(),
