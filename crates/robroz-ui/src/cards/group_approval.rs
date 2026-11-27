@@ -295,6 +295,7 @@ mod tests {
             reason: None,
             owner_id: owner.map(|o| o.0.into()),
             owner_name: owner.map(|o| o.1.into()),
+            task_id: None,
         }
     }
 
@@ -574,6 +575,7 @@ mod tests {
             reason: None,
             owner_id: owner.map(|o| o.0.into()),
             owner_name: owner.map(|o| o.1.into()),
+            task_id: None,
         }
     }
 

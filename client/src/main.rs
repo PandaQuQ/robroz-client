@@ -4233,7 +4233,7 @@ impl App {
             .feeds
             .get(id)
             .into_iter()
-            .flat_map(Feed::items)
+            .flat_map(Feed::visible_items)
             .collect::<Vec<_>>();
         // More than three pending confirm cards from one task fold away
         // behind 「还有 N 条待确认」.
