@@ -223,6 +223,8 @@ export struct SessionRow {
     time: string,
     glyph: image,
     has-glyph: bool,
+    // First letter, shown when there is no stored glyph (iced fallback).
+    initial: string,
 }
 
 export struct FindHit {
@@ -906,6 +908,16 @@ export component MainWindow inherits Window {
                                         background: Brand.surface;
                                         border-width: 1px;
                                         border-color: Brand.border;
+                                        if s.initial != "": Text {
+                                            width: 100%;
+                                            height: 100%;
+                                            text: s.initial;
+                                            color: Brand.muted;
+                                            font-size: 19px;
+                                            font-weight: 700;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
                                     }
                                 }
                             }

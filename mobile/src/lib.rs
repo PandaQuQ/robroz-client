@@ -158,7 +158,12 @@ fn apply_theme(ui: &MainWindow, mode: Mode) {
     let brand = ui.global::<Brand>();
     brand.set_paper(color(p.window));
     brand.set_ink(color(p.text));
-    brand.set_muted(color(p.text2));
+    // UI姐: dark text.muted is #8E939B (5.75:1 on #17181A, 5.33:1 on #1D1F25).
+    brand.set_muted(color(if mode == Mode::Dark {
+        [0x8E, 0x93, 0x9B]
+    } else {
+        p.text2
+    }));
     brand.set_rule(color(p.divider));
     brand.set_accent(color(p.accent));
     brand.set_accent_strong(color(p.accent_strong));
@@ -916,6 +921,7 @@ fn apply_sessions(ui: &MainWindow, st: &State) {
                 time: SharedString::default(),
                 glyph,
                 has_glyph,
+                initial: conversations::initial(&g.name).into(),
             }
         })
         .collect();

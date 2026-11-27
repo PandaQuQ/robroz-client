@@ -655,6 +655,8 @@ struct App {
     scale: f32,
     /// Touch input seen (or `ROBROZ_TOUCH=1`): raises hit areas to the floor.
     touch: bool,
+    /// Phone target (`ROBROZ_PHONE=1`): MCP is list and status only.
+    phone: bool,
 }
 
 /// Run a blocking source call off the UI thread.
@@ -835,6 +837,7 @@ impl App {
             gallery,
             scale,
             touch: std::env::var("ROBROZ_TOUCH").is_ok_and(|v| v == "1"),
+            phone: std::env::var("ROBROZ_PHONE").is_ok_and(|v| v == "1"),
         };
         // `ROBROZ_SHOT=<file>` (gallery or fake): write the window's RGBA
         // after `ROBROZ_SHOT_DELAY` ms (default 2500), then exit. Used for
@@ -875,7 +878,9 @@ impl App {
     }
 
     fn skin(&self) -> Skin {
-        Skin::for_mode(self.mode()).for_input(self.touch, self.width)
+        Skin::for_mode(self.mode())
+            .for_input(self.touch, self.width)
+            .with_phone(self.phone)
     }
 
     /// One pane at a time: the sidebar is hidden below
@@ -1248,7 +1253,9 @@ impl App {
         // Newest change time wins the list preview; a tie goes to the
         // outcome (see `model::preview_wins`), not to arrival order.
         let at = change_time(event);
-        let shown = self.previews.offer(&group, event);
+        let shown = self
+            .previews
+            .offer(&group, event, self.me.as_ref().map(|m| m.id.as_str()));
         self.convs.touch(&group, shown, Some(at));
         self.feeds
             .entry(group)
@@ -3403,7 +3410,10 @@ impl App {
                     i18n::set_locale(locale);
                     // Stored text was drawn in the old language. Cards and
                     // statuses render on the fly; previews are cached.
-                    for (group, line) in self.previews.redraw() {
+                    for (group, line) in self
+                        .previews
+                        .redraw(self.me.as_ref().map(|m| m.id.as_str()))
+                    {
                         self.convs.set_preview(group, line);
                     }
                     if !self.fake {
@@ -4718,7 +4728,7 @@ fn item_view<'a>(
             }
         }
         Row::Delivery(c) => card(delivery_view(t, c, card_w)),
-        Row::Reminder(r) => view::reminder_row(t, r).map(Message::Ui),
+        Row::Reminder(r) => view::reminder_row(t, r, me).map(Message::Ui),
         Row::Card(c) => {
             let state = ui.get(c.id()).unwrap_or(empty);
             card(view::card(t, c, state, caps, card_w, in_group, true, me).map(Message::Ui))
