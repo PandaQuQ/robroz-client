@@ -5,8 +5,6 @@
 //! changes. The desktop and mobile clients both use this so grouping stays
 //! identical. The default window is five minutes ([`GROUP_SECS`]).
 
-use std::cmp::Ordering;
-
 use chrono::{Datelike, NaiveDate, TimeZone};
 
 use crate::i18n::{self, Key};
@@ -43,17 +41,30 @@ pub const RANK_TASK: u8 = 1;
 /// An approval, confirm, choice, draft, or reminder card.
 pub const RANK_CARD: u8 = 2;
 
-/// Stable order: earlier timestamp first; equal times go by
-/// [`Meta::rank`]. A missing time keeps its original relative place.
-pub fn cmp_time_and_rank<S>(a: &Meta<S>, b: &Meta<S>) -> Ordering {
-    match (a.at, b.at) {
-        (Some(ta), Some(tb)) => ta.cmp(&tb).then(a.rank.cmp(&b.rank)),
-        _ => Ordering::Equal,
+/// Effective timestamp for sorting: an item with no time inherits the
+/// previous item's effective time, in arrival order. Leading items
+/// with no time use [`i64::MIN`] so they sort first and keep arrival
+/// order among themselves when rank is equal.
+fn effective_times<T, S>(items: &[(T, Meta<S>)]) -> Vec<i64> {
+    let mut out = Vec::with_capacity(items.len());
+    let mut prev = None;
+    for (_, meta) in items {
+        let at = meta.at.or(prev).unwrap_or(i64::MIN);
+        out.push(at);
+        prev = Some(at);
     }
+    out
 }
 
-fn sort_by_time_and_rank<T, S>(items: &mut [(T, Meta<S>)]) {
-    items.sort_by(|a, b| cmp_time_and_rank(&a.1, &b.1));
+/// Total order: `(effective_at, kind rank, arrival index)`. A `/say`
+/// trigger message and its task at the same instant therefore sort as
+/// message then task, and a missing time cannot make the order
+/// unspecified or panic.
+fn sort_by_time_and_rank<T, S>(items: &mut Vec<(T, Meta<S>)>) {
+    let times = effective_times(items);
+    let mut indexed: Vec<(usize, (T, Meta<S>))> = items.drain(..).enumerate().collect();
+    indexed.sort_by_key(|(i, (_, meta))| (times[*i], meta.rank, *i));
+    items.extend(indexed.into_iter().map(|(_, item)| item));
 }
 
 /// Consecutive items of one sender, drawn as one block.
@@ -401,5 +412,34 @@ mod tests {
             &chrono::Utc,
         );
         assert_eq!(run_items(&ordered), ["first", "second"]);
+    }
+
+    #[test]
+    fn untimed_items_inherit_the_previous_effective_time() {
+        // A(10), B(None), C(5) is not a partial-order trap: C sorts first,
+        // then A, then B which inherits A's time.
+        let ordered = super::blocks(
+            [
+                ("A", ranked(Who::Own, Some(T0 + 10), RANK_MESSAGE)),
+                ("B", ranked(Who::Own, None, RANK_MESSAGE)),
+                ("C", ranked(Who::Own, Some(T0 + 5), RANK_MESSAGE)),
+            ],
+            GROUP_SECS,
+            &chrono::Utc,
+        );
+        assert_eq!(run_items(&ordered), ["C", "A", "B"]);
+
+        // Leading items with no time sort first, in arrival order when
+        // rank is equal, before any real timestamp.
+        let ordered = super::blocks(
+            [
+                ("lead1", ranked(Who::Own, None, RANK_MESSAGE)),
+                ("lead2", ranked(Who::Own, None, RANK_MESSAGE)),
+                ("later", ranked(Who::Own, Some(T0), RANK_MESSAGE)),
+            ],
+            GROUP_SECS,
+            &chrono::Utc,
+        );
+        assert_eq!(run_items(&ordered), ["lead1", "lead2", "later"]);
     }
 }
