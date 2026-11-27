@@ -9,12 +9,12 @@ use robroz_ui::theme::Mode;
 
 use crate::chat::{ChatItem, Side};
 
-/// Pixels per logical pixel for avatar bitmaps (phones are 2x–3x).
-const RASTER_SCALE: f32 = 3.0;
-
-/// One avatar as a Slint image of `size` logical px.
-pub fn glyph(a: BroAvatar, mode: Mode, size: f32) -> slint::Image {
-    let px = (size * RASTER_SCALE).round().max(1.0) as u32;
+/// One avatar as a Slint image of `size` logical px, drawn at `scale`
+/// (the window's device-pixel ratio) so the bitmap matches the screen
+/// pixels 1:1 and is not scaled again by the Image element.
+pub fn glyph(a: BroAvatar, mode: Mode, size: f32, scale: f32) -> slint::Image {
+    let scale = scale.max(1.0);
+    let px = (size * scale).round().max(1.0) as u32;
     let rgba = avatar::rasterize(a, mode == Mode::Dark, None, px);
     let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&rgba, px, px);
     slint::Image::from_rgba8(buf)
@@ -22,17 +22,18 @@ pub fn glyph(a: BroAvatar, mode: Mode, size: f32) -> slint::Image {
 
 /// The title capsule's avatars as one image (first on top, `ring` bands)
 /// and its width in logical px; an empty image for no bros.
-pub fn stack(list: &[BroAvatar], mode: Mode, ring: [u8; 3]) -> (slint::Image, f32) {
+pub fn stack(list: &[BroAvatar], mode: Mode, ring: [u8; 3], scale: f32) -> (slint::Image, f32) {
     use robroz_tokens::base::avatar as tok;
     if list.is_empty() {
         return (slint::Image::default(), 0.0);
     }
-    let px = (tok::TITLE_SIZE * RASTER_SCALE).round() as u32;
-    let step = ((tok::TITLE_SIZE - tok::TITLE_OVERLAP) * RASTER_SCALE).round() as u32;
+    let scale = scale.max(1.0);
+    let px = (tok::TITLE_SIZE * scale).round() as u32;
+    let step = ((tok::TITLE_SIZE - tok::TITLE_OVERLAP) * scale).round() as u32;
     let (w, rgba) = avatar::rasterize_stack(
         list,
         mode == Mode::Dark,
-        (ring, tok::TITLE_RING * RASTER_SCALE),
+        (ring, tok::TITLE_RING * scale),
         px,
         step,
     );

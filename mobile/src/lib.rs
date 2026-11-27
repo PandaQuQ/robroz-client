@@ -348,17 +348,22 @@ fn apply_token_field(ui: &MainWindow, st: &State) {
     }
 }
 
+fn window_scale(ui: &MainWindow) -> f32 {
+    ui.window().scale_factor().max(1.0)
+}
+
 fn chat_rows(
     items: &[chat::ChatItem],
     fallback_name: &str,
     mode: Mode,
     in_group: bool,
     bros: &[Bro],
+    scale: f32,
 ) -> Vec<ChatRow> {
     let now = runs::now_unix();
     chat::feed(items, fallback_name, in_group, now)
         .into_iter()
-        .map(|entry| feed_entry_row(entry, fallback_name, mode, bros))
+        .map(|entry| feed_entry_row(entry, fallback_name, mode, bros, scale))
         .collect()
 }
 
@@ -370,6 +375,7 @@ fn render_chat(ui: &MainWindow, st: &State) {
         st.theme,
         st.chat_in_group,
         &st.bros,
+        window_scale(ui),
     ))));
     render_title(ui, st);
     render_page(ui, st);
@@ -386,7 +392,7 @@ fn render_title(ui: &MainWindow, st: &State) {
         .iter()
         .map(|id| avatars::avatar_of(&st.bros, id))
         .collect();
-    let (img, width) = avatars::stack(&list, st.theme, ring);
+    let (img, width) = avatars::stack(&list, st.theme, ring, window_scale(ui));
     ui.set_title_avatars(img);
     ui.set_title_avatars_width(width);
     ui.set_title_more(more as i32);
@@ -413,13 +419,14 @@ fn render_page(ui: &MainWindow, st: &State) {
         }
         _ => return,
     };
+    let scale = window_scale(ui);
     let t = robroz_tokens::base::avatar::PREVIEW_GLYPH;
-    ui.set_avatar_preview(avatars::glyph(current, st.theme, t));
+    ui.set_avatar_preview(avatars::glyph(current, st.theme, t, scale));
     ui.set_avatar_note(note.unwrap_or_default().into());
     ui.set_avatar_stored(stored);
     ui.set_avatar_name(name.into());
     ui.set_avatar_busy(st.creating);
-    let cell = robroz_tokens::base::avatar::SHAPE_GLYPH;
+    let cell = 32.0; // matches AvatarMetrics.cell-glyph
     let shapes: Vec<PickerCell> = (0..avatar::SHAPES)
         .map(|shape| PickerCell {
             glyph: avatars::glyph(
@@ -429,6 +436,7 @@ fn render_page(ui: &MainWindow, st: &State) {
                 },
                 st.theme,
                 cell,
+                scale,
             ),
             selected: shape == current.shape,
             ..PickerCell::default()
@@ -445,7 +453,13 @@ fn render_page(ui: &MainWindow, st: &State) {
     ui.set_picker_swatches(ModelRc::new(VecModel::from(swatches)));
 }
 
-fn feed_entry_row(entry: chat::FeedEntry, fallback: &str, mode: Mode, bros: &[Bro]) -> ChatRow {
+fn feed_entry_row(
+    entry: chat::FeedEntry,
+    fallback: &str,
+    mode: Mode,
+    bros: &[Bro],
+    scale: f32,
+) -> ChatRow {
     let shown = |p: &Option<robroz_ui::cards::codes::ProgressLine>| -> SharedString {
         p.as_ref().map(|p| p.text()).unwrap_or_default().into()
     };
@@ -489,6 +503,7 @@ fn feed_entry_row(entry: chat::FeedEntry, fallback: &str, mode: Mode, bros: &[Br
                     avatars::avatar_of(bros, bro_id),
                     mode,
                     robroz_tokens::base::chat::AVATAR,
+                    scale,
                 )
             } else {
                 slint::Image::default()

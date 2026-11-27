@@ -445,8 +445,12 @@ fn paint_glyph(
     }
     let eyes = eyes(a.shape);
     let eye = paint(eye_color(dark));
+    // A 32px cell on a 1x screen would otherwise get a 1.8px eye that
+    // anti-aliases into a slit. The floor is in pixmap pixels, so a
+    // 3x 96px cell already has ~5px eyes and is unchanged.
+    let r = (eyes.r * scale).max(3.0);
     for (x, y) in [eyes.left, eyes.right] {
-        if let Some(c) = PathBuilder::from_circle(px(x), py(y), eyes.r * scale) {
+        if let Some(c) = PathBuilder::from_circle(px(x), py(y), r) {
             pm.fill_path(&c, &eye, FillRule::Winding, Transform::identity(), None);
         }
     }
@@ -609,6 +613,42 @@ mod tests {
         let ringed = rasterize(a, false, Some(([1, 2, 3], 2.0)), 48);
         assert!(opaque(&ringed) > 0 && opaque(&bare) > 0);
         assert!(ringed.chunks(4).any(|p| p[..3] == [1, 2, 3] && p[3] == 255));
+    }
+
+    #[test]
+    fn small_glyph_eyes_are_filled_circles_of_at_least_three_pixels() {
+        let px = 32u32;
+        let a = BroAvatar { shape: 0, color: 4 };
+        let rgba = rasterize(a, false, None, px);
+        let e = eyes(0);
+        let cx = e.left.0 * px as f32;
+        let cy = e.left.1 * px as f32;
+        let want = eye_color(false);
+        let at = |x: i32, y: i32| {
+            let i = ((y as u32 * px + x as u32) * 4) as usize;
+            [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+        };
+        let is_eye = |x: i32, y: i32| {
+            let p = at(x, y);
+            p[0] == want[0] && p[1] == want[1] && p[2] == want[2] && p[3] == 255
+        };
+        // Pixel centres 2px from the eye sit inside a 3px-radius disk
+        // and outside the un-clamped 1.8px design radius.
+        let mut n = 0;
+        for y in 0..px as i32 {
+            for x in 0..px as i32 {
+                let d = {
+                    let dx = x as f32 + 0.5 - cx;
+                    let dy = y as f32 + 0.5 - cy;
+                    (dx * dx + dy * dy).sqrt()
+                };
+                if (2.0..2.5).contains(&d) {
+                    assert!(is_eye(x, y), "eye pixel ({x},{y}) at {d}");
+                    n += 1;
+                }
+            }
+        }
+        assert!(n >= 1, "expected pixels in the 3px disc's outer ring");
     }
 
     #[test]

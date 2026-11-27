@@ -357,12 +357,18 @@ component AvatarPicker inherits VerticalLayout {
     in property <[PickerCell]> swatches;
     callback pick-shape(int);
     callback pick-color(int);
+    // Same 8px as the desktop picker (label to grid, label to swatches).
+    // vertical-stretch stays 0 so leftover page height cannot inflate
+    // the labels and open a ~40px gap under 「形状」 / 「颜色」.
     spacing: 8px;
+    alignment: start;
+    vertical-stretch: 0;
     property <int> shape-cols: 6;
     property <length> gap: 12px;
-    Text { text: Tr.shape; color: Brand.text3; font-size: 13px; }
+    Text { text: Tr.shape; color: Brand.text3; font-size: 13px; vertical-stretch: 0; }
     Rectangle {
         height: 2 * AvatarMetrics.cell + root.gap;
+        vertical-stretch: 0;
         for c[i] in root.shapes: Rectangle {
             x: mod(i, root.shape-cols) * (AvatarMetrics.cell + root.gap);
             y: floor(i / root.shape-cols) * (AvatarMetrics.cell + root.gap);
@@ -376,11 +382,11 @@ component AvatarPicker inherits VerticalLayout {
             TouchArea { clicked => { root.pick-shape(i); } }
         }
     }
-    Rectangle { height: 8px; }
-    Text { text: Tr.color; color: Brand.text3; font-size: 13px; }
+    Text { text: Tr.color; color: Brand.text3; font-size: 13px; vertical-stretch: 0; }
     Rectangle {
         property <length> step: (self.width - 5 * AvatarMetrics.swatch-hit) / 4 + AvatarMetrics.swatch-hit;
         height: 2 * AvatarMetrics.swatch-hit;
+        vertical-stretch: 0;
         for c[i] in root.swatches: Rectangle {
             x: mod(i, 5) * parent.step;
             y: floor(i / 5) * AvatarMetrics.swatch-hit;
