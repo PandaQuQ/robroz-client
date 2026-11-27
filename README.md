@@ -34,7 +34,7 @@ The desktop client UI is English by default. Switch to 中文 under Settings, Ge
 
 Under Language is an Appearance / 「外观」 row that opens a list: System / 「跟随系统」, Light / 「浅色」, and Dark / 「深色」. The default is System, which follows the operating system as it changes. The choice is saved as one line (`system`, `light`, or `dark`) in a `theme` file next to `lang`.
 
-## Works today
+## Features
 
 - **Chat bubbles.** Your messages sit on the right; bro cards sit on the left, grouped by sender. A delivery with a `bot_name` is attached to that bro; a delivery without one stands alone.
 - **Group turns.** Send a message in a group and every bro can reply, or stay quiet. A bro you name with `@name` at the start of the message speaks first.
@@ -48,7 +48,7 @@ Under Language is an Appearance / 「外观」 row that opens a list: System / �
 
 You can also use web search (Brave or SearXNG), MCP tools, and scheduled routines. When a step runs long or stalls, a hint appears on the card; the work is not cancelled.
 
-## Not yet
+## Roadmap
 
 These are accepted design or in progress. They are **not** shipped on `main`. Details: [design/multi-agent.md](https://github.com/PandaQuQ/robroz/blob/main/docs/design/multi-agent.md) in the host repository.
 
