@@ -1,4 +1,4 @@
-import { ListView, AboutSlint, ScrollView, Palette } from "std-widgets.slint";
+import { ListView, ScrollView, Palette } from "std-widgets.slint";
 
 // Colours are pushed from Rust (`robroz_tokens` / `Skin`). Nothing here
 // restates a hex value. Status card fill/text still come from robroz-card.
@@ -22,6 +22,8 @@ export global Brand {
     in property <color> danger;
     // Stuck / "pay attention" yellow; used by the reconnect capsule.
     in property <color> stuck;
+    // `status.done` green; used by the MCP Connected label.
+    in property <color> done;
 }
 
 // Lengths from robroz-tokens `base.chat`. Rust pushes the values; this
@@ -102,6 +104,15 @@ export global Tr {
     in property <string> settings-title;
     in property <string> sign-out;
     in property <string> settings-general;
+    in property <string> mcp-title;
+    in property <string> mcp-all;
+    in property <string> mcp-connect;
+    in property <string> mcp-connected;
+    in property <string> mcp-empty;
+    in property <string> mcp-prompt-command;
+    in property <string> mcp-prompt-args;
+    in property <string> mcp-runs-local;
+    in property <string> mcp-approve-run;
 }
 
 // Settings page (PR5). Values pushed from `robroz_tokens::settings`.
@@ -110,7 +121,7 @@ export global SettingsMetrics {
     in property <length> group-gap: 24px;
     in property <length> group-title: 12px;
     in property <length> group-title-gap: 8px;
-    in property <length> row: 52px;
+    in property <length> row: 44px;
     in property <length> divider: 1px;
     in property <length> side-pad: 16px;
     in property <length> version: 12px;
@@ -167,6 +178,33 @@ export global HomeMetrics {
     in property <length> profile-edit-h: 32px;
     in property <length> card-r: 16px;
     in property <length> card-row: 52px;
+}
+
+// MCP page (PR6). Values pushed from `robroz_tokens::mcp`.
+export global McpMetrics {
+    in property <length> capsule: 36px;
+    in property <length> capsule-pad: 14px;
+    in property <length> capsule-gap: 8px;
+    in property <length> capsule-text: 14px;
+    in property <length> row: 64px;
+    in property <length> icon: 44px;
+    in property <length> icon-r: 12px;
+    in property <length> icon-gap: 12px;
+    in property <length> icon-text: 18px;
+    in property <length> row-name: 15px;
+    in property <length> row-sub: 12px;
+    in property <length> connect-h: 32px;
+    in property <length> count-text: 13px;
+    in property <length> connected-dot: 6px;
+}
+
+// One MCP server row. `connected` shows the inert label instead of Connect.
+export struct McpLine {
+    id: string,
+    name: string,
+    letter: string,
+    sub: string,
+    connected: bool,
 }
 
 // One shape cell or colour swatch of the avatar picker.
@@ -606,6 +644,27 @@ component MenuBox inherits Rectangle {
     }
 }
 
+// 36px capsule; the selected one is inverted (ink fill, paper text).
+component Capsule inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    callback clicked();
+    height: McpMetrics.capsule;
+    width: label.preferred-width + 2 * McpMetrics.capsule-pad;
+    border-radius: self.height / 2;
+    background: root.selected ? Brand.ink : Brand.surface;
+    border-width: root.selected ? 0px : 1px;
+    border-color: Brand.border;
+    label := Text {
+        text: root.text;
+        color: root.selected ? Brand.paper : Brand.ink;
+        font-size: McpMetrics.capsule-text;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
 export component MainWindow inherits Window {
     // 0 connect, 1 sessions, 2 card, 3 settings, 4 create bro, 5 avatar,
     // 6 profile, 7 find, 8 members, 9 settings choice
@@ -665,6 +724,20 @@ export component MainWindow inherits Window {
     in-out property <string> find-query;
     in property <bool> find-busy: false;
     in property <[MemberLine]> members-list;
+    // MCP page (screen 9). Filter: 0 all, 1 stdio, 2 HTTP.
+    in property <[McpLine]> mcp-rows;
+    // Settings shows the MCP row only with a host connection.
+    in property <bool> mcp-available: false;
+    in property <int> mcp-filter: 0;
+    in property <string> mcp-connected-text;
+    in property <bool> mcp-categories: false;
+    in property <string> mcp-note;
+    in property <bool> mcp-loaded: false;
+    in property <bool> mcp-busy: false;
+    in property <bool> mcp-prompt-open: false;
+    in property <string> mcp-prompt-command-text;
+    in property <string> mcp-prompt-args-text;
+    in property <string> mcp-prompt-note;
     // Create-bro (screen 4) and avatar (screen 5) pages.
     in property <image> avatar-preview;
     in property <string> avatar-note;
@@ -718,6 +791,11 @@ export component MainWindow inherits Window {
     callback sign-out();
     callback home-search-edited();
     callback open-hit(string);
+    callback open-mcp();
+    callback mcp-pick-filter(int);
+    callback mcp-connect-server(string);
+    callback mcp-approve();
+    callback mcp-cancel-prompt();
 
     changed os-dark => { root.theme-follow-system(); }
 
@@ -728,10 +806,10 @@ export component MainWindow inherits Window {
     min-height: 844px;
 
     VerticalLayout {
-        padding-left: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 ? HomeMetrics.profile-side : 20px);
-        padding-right: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 ? HomeMetrics.profile-side : 20px);
+        padding-left: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 || root.screen == 10 ? HomeMetrics.profile-side : 20px);
+        padding-right: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 || root.screen == 10 ? HomeMetrics.profile-side : 20px);
         padding-top: 20px + root.safe-area-insets.top + root.extra-safe-top;
-        padding-bottom: root.screen == 2 ? 0 : ((root.screen == 3 || root.screen == 9 ? SettingsMetrics.bottom-pad : 20px) + root.safe-area-insets.bottom + root.extra-safe-bottom);
+        padding-bottom: root.screen == 2 ? 0 : ((root.screen == 3 || root.screen == 9 || root.screen == 10 ? SettingsMetrics.bottom-pad : 20px) + root.safe-area-insets.bottom + root.extra-safe-bottom);
         spacing: 14px;
 
         if root.screen == 0: VerticalLayout {
@@ -1517,6 +1595,9 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
+                    if root.mcp-available: SettingsCard {
+                        SettingsRow { label: Tr.mcp-title; clicked => { root.open-mcp(); } }
+                    }
                     SettingsCard {
                         SettingsRow { label: Tr.sign-out; danger: true; chevron: false; clicked => { root.sign-out(); } }
                     }
@@ -1525,11 +1606,6 @@ export component MainWindow inherits Window {
                         color: Brand.text3;
                         font-size: SettingsMetrics.version;
                         horizontal-alignment: center;
-                    }
-                    // The Slint attribution slot, at the very bottom of Settings.
-                    Rectangle {
-                        height: 160px;
-                        AboutSlint { }
                     }
                 }
             }
@@ -1737,6 +1813,164 @@ export component MainWindow inherits Window {
                             Text { text: m.name; color: Brand.ink; font-size: 16px; overflow: elide; }
                             if m.detail != "": Text { text: m.detail; color: Brand.text3; font-size: 12px; overflow: elide; }
                         }
+                    }
+                }
+            }
+        }
+        // MCP page: capsules, 64px rows with a 44px r12 tile, Connect or the
+        // inert Connected label.
+        if root.screen == 10: VerticalLayout {
+            spacing: 8px;
+            HorizontalLayout {
+                height: HomeMetrics.float-btn + 16px;
+                spacing: 12px;
+                VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.back(); } } }
+                Text { text: Tr.mcp-title; color: Brand.ink; font-size: SettingsMetrics.title; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
+                if root.mcp-connected-text != "": VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: root.mcp-connected-text;
+                        color: Brand.muted;
+                        font-size: McpMetrics.count-text;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            if root.mcp-categories: HorizontalLayout {
+                spacing: McpMetrics.capsule-gap;
+                alignment: start;
+                Capsule { text: Tr.mcp-all; selected: root.mcp-filter == 0; clicked => { root.mcp-pick-filter(0); } }
+                Capsule { text: "stdio"; selected: root.mcp-filter == 1; clicked => { root.mcp-pick-filter(1); } }
+                Capsule { text: "HTTP"; selected: root.mcp-filter == 2; clicked => { root.mcp-pick-filter(2); } }
+            }
+            if root.mcp-note != "": Text { text: root.mcp-note; color: Brand.muted; font-size: 13px; wrap: word-wrap; }
+            if root.mcp-loaded && root.mcp-rows.length == 0 && root.mcp-note == "": Text {
+                text: Tr.mcp-empty; color: Brand.muted; font-size: 14px; wrap: word-wrap;
+            }
+            ListView {
+                for r in root.mcp-rows: Rectangle {
+                    height: McpMetrics.row;
+                    HorizontalLayout {
+                        spacing: McpMetrics.icon-gap;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: McpMetrics.icon;
+                                height: McpMetrics.icon;
+                                border-radius: McpMetrics.icon-r;
+                                background: Brand.segment-fill;
+                                border-width: 1px;
+                                border-color: Brand.border;
+                                Text { text: r.letter; color: Brand.muted; font-size: McpMetrics.icon-text; font-weight: 700; }
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 2px;
+                            horizontal-stretch: 1;
+                            Text { text: r.name; color: Brand.ink; font-size: McpMetrics.row-name; font-weight: 600; overflow: elide; }
+                            Text { text: r.sub; color: Brand.text3; font-size: McpMetrics.row-sub; overflow: elide; }
+                        }
+                        // Vertically centred in the 64px row, same as the icon.
+                        // Inside the group, the dot stays centred on the label
+                        // and the group is right-aligned with the Connect capsule.
+                        if r.connected: VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 0;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: end;
+                                vertical-stretch: 0;
+                                horizontal-stretch: 0;
+                                height: McpMetrics.connect-h;
+                                Rectangle {
+                                    width: McpMetrics.connected-dot;
+                                    height: McpMetrics.connected-dot;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: self.height / 2;
+                                    background: Brand.done;
+                                    vertical-stretch: 0;
+                                    horizontal-stretch: 0;
+                                }
+                                Text {
+                                    text: Tr.mcp-connected;
+                                    color: Brand.muted;
+                                    font-size: McpMetrics.capsule-text;
+                                    vertical-alignment: center;
+                                    vertical-stretch: 0;
+                                    horizontal-stretch: 0;
+                                }
+                            }
+                        }
+                        if !r.connected: VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 0;
+                            Rectangle {
+                                height: McpMetrics.connect-h;
+                                width: connect-label.preferred-width + 2 * McpMetrics.capsule-pad;
+                                vertical-stretch: 0;
+                                horizontal-stretch: 0;
+                                border-radius: self.height / 2;
+                                background: Brand.surface;
+                                border-width: 1px;
+                                border-color: Brand.border;
+                                connect-label := Text { text: Tr.mcp-connect; color: Brand.ink; font-size: McpMetrics.capsule-text; font-weight: 600; }
+                                TouchArea { clicked => { if !root.mcp-busy { root.mcp-connect-server(r.id); } } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // stdio command approval: bottom sheet with the exact command and args.
+    if root.screen == 10 && root.mcp-prompt-open: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+        TouchArea { clicked => { root.mcp-cancel-prompt(); } }
+        Rectangle {
+            y: parent.height - self.height;
+            width: 100%;
+            border-top-left-radius: HomeMetrics.card-r;
+            border-top-right-radius: HomeMetrics.card-r;
+            height: mcp-sheet.preferred-height;
+            background: Brand.paper;
+            TouchArea { }
+            mcp-sheet := VerticalLayout {
+                alignment: start;
+                padding: 20px;
+                padding-bottom: 20px + root.safe-area-insets.bottom + root.extra-safe-bottom;
+                spacing: 8px;
+                Text { text: Tr.mcp-prompt-command; color: Brand.muted; font-size: 12px; }
+                Text { text: root.mcp-prompt-command-text; color: Brand.ink; font-size: 13px; font-family: Metrics.mono-font; wrap: char-wrap; }
+                Text { text: Tr.mcp-prompt-args; color: Brand.muted; font-size: 12px; }
+                Text { text: root.mcp-prompt-args-text; color: Brand.ink; font-size: 13px; font-family: Metrics.mono-font; wrap: char-wrap; }
+                Text { text: Tr.mcp-runs-local; color: Brand.text3; font-size: 12px; wrap: word-wrap; }
+                if root.mcp-prompt-note != "": Text { text: root.mcp-prompt-note; color: Brand.danger; font-size: 13px; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    padding-top: 4px;
+                    Rectangle {
+                        height: 48px;
+                        // Equal widths: stretch from a zero preferred width.
+                        preferred-width: 0px;
+                        horizontal-stretch: 1;
+                        border-radius: 10px;
+                        background: Brand.surface;
+                        Text { text: Tr.cancel; color: Brand.ink; font-size: 16px; font-weight: 600; }
+                        TouchArea { clicked => { root.mcp-cancel-prompt(); } }
+                    }
+                    Rectangle {
+                        height: 48px;
+                        // Equal widths: stretch from a zero preferred width.
+                        preferred-width: 0px;
+                        horizontal-stretch: 1;
+                        border-radius: 10px;
+                        background: Brand.accent;
+                        Text { text: Tr.mcp-approve-run; color: Brand.on-accent; font-size: 16px; font-weight: 600; }
+                        TouchArea { clicked => { if !root.mcp-busy { root.mcp-approve(); } } }
                     }
                 }
             }

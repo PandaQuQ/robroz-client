@@ -15,8 +15,9 @@ use std::time::Duration;
 
 use robroz_contract::{
     Bro, BroAvatar, Bros, CreateBro, ErrorBody, Event, Events, Group, GroupMembers, GroupSearch,
-    Groups, Me, PatchBro, RenameGroup, ScheduleEntry, Schedules, Unread, Unreads, UserRole,
-    FORBIDDEN_NOT_BRO_OWNER, GROUP_SEARCH_DEFAULT_LIMIT,
+    Groups, McpCommandNotApproved, McpServer, McpServers, McpTestResult, Me, PatchBro, RenameGroup,
+    ScheduleEntry, Schedules, Unread, Unreads, UserRole, FORBIDDEN_NOT_BRO_OWNER,
+    GROUP_SEARCH_DEFAULT_LIMIT, MCP_COMMAND_NOT_APPROVED,
 };
 use robroz_ui::i18n::{host_text, Key};
 
@@ -123,6 +124,7 @@ impl Conn {
             status: 0,
             code: None,
             message: ApiError(message),
+            denied: None,
         };
         let sent = match (method, json) {
             ("GET", _) => {
@@ -165,10 +167,16 @@ impl Conn {
         let code = serde_json::from_str::<serde_json::Value>(&body)
             .ok()
             .and_then(|v| v.get("code")?.as_str().map(str::to_string));
+        // MCP 409: the stdio command to show before approving it.
+        let denied = (status == 409)
+            .then(|| serde_json::from_str::<McpCommandNotApproved>(&body).ok())
+            .flatten()
+            .filter(|d| d.error == MCP_COMMAND_NOT_APPROVED);
         let failure = |message: String| Failure {
             status,
             code: code.clone(),
             message: ApiError(message),
+            denied: denied.clone(),
         };
         if let Some(key) = code.as_deref().and_then(copy_for_code) {
             return Err(failure(key.as_str().to_string()));
@@ -306,6 +314,46 @@ impl Conn {
         Self::decode(&self.get(&path)?)
     }
 
+    /// `GET /api/mcp/servers`.
+    pub fn mcp_servers(&self) -> Result<Vec<McpServer>, ApiError> {
+        Ok(Self::decode::<McpServers>(&self.get("/api/mcp/servers")?)?.servers)
+    }
+
+    /// `PATCH /api/mcp/servers/{id}` with `{"enabled":…}`.
+    pub fn set_mcp_enabled(&self, id: &str, on: bool) -> Result<McpServer, ApiError> {
+        let out = self
+            .send(
+                "PATCH",
+                &format!("/api/mcp/servers/{id}"),
+                Some(format!(r#"{{"enabled":{on}}}"#)),
+            )
+            .map_err(|e| e.message)?;
+        Self::decode(&out)
+    }
+
+    /// `POST /api/mcp/servers/{id}/test`.
+    pub fn test_mcp(&self, id: &str) -> Result<McpTestResult, McpTestError> {
+        match self.send("POST", &format!("/api/mcp/servers/{id}/test"), None) {
+            Ok(body) => Self::decode(&body).map_err(McpTestError::Failed),
+            Err(Failure {
+                denied: Some(d), ..
+            }) => Err(McpTestError::NeedsApproval(d)),
+            Err(f) => Err(McpTestError::Failed(f.message)),
+        }
+    }
+
+    /// `POST /api/mcp/servers/{id}/approve-command`.
+    pub fn approve_mcp_command(&self, id: &str) -> Result<McpServer, ApiError> {
+        let out = self
+            .send(
+                "POST",
+                &format!("/api/mcp/servers/{id}/approve-command"),
+                None,
+            )
+            .map_err(|e| e.message)?;
+        Self::decode(&out)
+    }
+
     /// `GET /api/groups/{id}/schedules`.
     pub fn schedules(&self, id: &str) -> Result<Vec<ScheduleEntry>, ApiError> {
         Ok(
@@ -354,6 +402,15 @@ struct Failure {
     status: u16,
     code: Option<String>,
     message: ApiError,
+    denied: Option<McpCommandNotApproved>,
+}
+
+/// Why an MCP connection test did not run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpTestError {
+    /// 409 `command_not_approved`: the command and args to approve.
+    NeedsApproval(McpCommandNotApproved),
+    Failed(ApiError),
 }
 
 /// Why an avatar save failed, for UI姐's two inline lines.
@@ -584,6 +641,45 @@ mod tests {
         assert!(!err.0.to_ascii_lowercase().contains("bearer"));
         assert!(!err.0.contains("dummy-token"));
         assert!(!err.0.contains(robroz_contract::host_text::TOKEN_REJECTED));
+    }
+
+    #[test]
+    fn mcp_test_409_carries_the_command_to_approve() {
+        let (base, seen) = fake_host(
+            "409 Conflict",
+            r#"{"error":"command_not_approved","command":"npx","args":["-y","pkg"]}"#,
+        );
+        let conn = Conn::new(&base, "dummy-token-for-fixture-only").unwrap();
+        match conn.test_mcp("s1") {
+            Err(McpTestError::NeedsApproval(d)) => {
+                assert_eq!(d.command, "npx");
+                assert_eq!(d.args, vec!["-y".to_string(), "pkg".to_string()]);
+            }
+            other => panic!("{other:?}"),
+        }
+        let request = seen.join().unwrap().to_ascii_lowercase();
+        assert!(
+            request.starts_with("post /api/mcp/servers/s1/test "),
+            "{request}"
+        );
+    }
+
+    #[test]
+    fn mcp_enable_patches_the_flag() {
+        let (base, seen) = fake_host(
+            "200 OK",
+            r#"{"id":"s1","name":"Docs","transport":"http","url":"https://x.invalid/","secrets":[],"enabled":true,"createdAt":"2026-11-27T00:00:00Z","updatedAt":"2026-11-27T00:00:00Z"}"#,
+        );
+        let conn = Conn::new(&base, "dummy-token-for-fixture-only").unwrap();
+        let s = conn.set_mcp_enabled("s1", true).unwrap();
+        assert!(s.enabled);
+        let request = seen.join().unwrap();
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .starts_with("patch /api/mcp/servers/s1 "),
+            "{request}"
+        );
     }
 
     #[test]

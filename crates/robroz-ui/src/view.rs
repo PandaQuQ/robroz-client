@@ -309,9 +309,18 @@ pub enum Action {
     },
     McpDeleteConfirm,
     McpDeleteCancel,
-    /// Flip the server's own enable switch.
+    /// Turn the server off (Disconnect in a connected row's expanded part).
     McpToggleEnabled {
         id: String,
+    },
+    /// Connect on a row: switch it on, then test (a stdio command that is
+    /// not approved opens the approval panel).
+    McpConnect {
+        id: String,
+    },
+    /// A category capsule or the "N connected" capsule.
+    McpFilter {
+        filter: mcp::Filter,
     },
     McpToggleGroup {
         id: String,
@@ -2845,17 +2854,38 @@ pub fn skills_panel<'a>(
 
 // ---------- MCP page ----------
 
-/// The MCP page: a list of servers, each with an enable switch and tool
-/// count, plus a form to add or edit one, a tool list, and per-group toggles.
-pub fn mcp_panel<'a>(
-    t: &Skin,
-    book: &'a McpBook,
-    _now: i64,
-    _width: f32,
-    titled: bool,
-) -> Element<'a, Action> {
-    let m = t.metrics;
-    let busy = book.busy;
+/// Count and Add for the Settings title row (right of ‹ MCP), so they
+/// do not sit on a second, empty-left row. Phone: count only; no Add.
+pub fn mcp_title_trailing<'a>(t: &Skin, book: &'a McpBook) -> Element<'a, Action> {
+    mcp_title_actions(t, book)
+}
+
+fn mcp_title_actions<'a>(t: &Skin, book: &'a McpBook) -> Element<'a, Action> {
+    let mut actions = row![]
+        .spacing(t.controls.button_gap)
+        .align_y(Alignment::Center);
+    let connected = book.connected_count();
+    if connected > 0 {
+        actions = actions.push(
+            text(mcp::connected_count_text(connected))
+                .size(robroz_tokens::mcp::COUNT_TEXT)
+                .color(color(t.palette.text2)),
+        );
+    }
+    // Phone: no add / edit / disconnect / delete (desktop only).
+    if book.form.is_none() && !t.narrow {
+        actions = actions.push(btn(
+            t,
+            mcp::ADD.into(),
+            Look::Secondary,
+            Leading::None,
+            (!book.busy).then_some(Action::McpAddOpen),
+        ));
+    }
+    actions.into()
+}
+
+fn mcp_title_row<'a>(t: &Skin, book: &'a McpBook, titled: bool) -> Element<'a, Action> {
     let mut head = if titled {
         row![text(mcp::TITLE)
             .size(t.type_.list_title)
@@ -2868,29 +2898,36 @@ pub fn mcp_panel<'a>(
             .spacing(t.controls.button_gap)
             .align_y(Alignment::Center)
     };
-    if titled && !book.servers.is_empty() {
-        head = head.push(
-            text(book.servers.len().to_string())
-                .size(t.type_.list_count)
-                .color(color(t.palette.text3)),
-        );
-    }
     head = head.push(space::horizontal());
-    if book.form.is_none() {
-        head = head.push(btn(
-            t,
-            mcp::ADD.into(),
-            Look::Secondary,
-            Leading::None,
-            (!busy).then_some(Action::McpAddOpen),
-        ));
-    }
-    let mut col = if titled || book.form.is_none() {
+    head = head.push(mcp_title_actions(t, book));
+    head.into()
+}
+
+/// The MCP page: a list of servers, each with Connect or a Connected
+/// status, plus a form to add or edit one, a tool list, and per-group toggles.
+///
+/// `titled` is true only when this panel draws its own title. The Settings
+/// sub-page chrome (`settings_sub_page`) passes `false` and supplies the
+/// round ‹ and 20px title itself.
+pub fn mcp_panel<'a>(
+    t: &Skin,
+    book: &'a McpBook,
+    _now: i64,
+    _width: f32,
+    titled: bool,
+) -> Element<'a, Action> {
+    let m = t.metrics;
+    let busy = book.busy;
+    let filter = book.active_filter();
+    // When `titled` is false, the Settings chrome already shows the title
+    // and `mcp_title_trailing` (count + Add) on that same row.
+    let mut col = if titled {
         column![
-            container(head)
+            container(mcp_title_row(t, book, true))
                 .height(Length::Fixed(m.panel_head_height))
                 .padding(Padding::from([0.0, m.row_pad_h]))
-                .align_y(Alignment::Center),
+                .align_y(Alignment::Center)
+                .width(Fill),
             divider(t, 0.0),
         ]
     } else {
@@ -2944,8 +2981,34 @@ pub fn mcp_panel<'a>(
         return col.into();
     }
 
+    if book.show_categories() {
+        let mut caps = row![mcp_capsule(
+            t,
+            mcp::FILTER_ALL.into(),
+            filter == mcp::Filter::All,
+            mcp::Filter::All,
+        )]
+        .spacing(robroz_tokens::mcp::CAPSULE_GAP)
+        .align_y(Alignment::Center);
+        for tr in book.transports() {
+            caps = caps.push(mcp_capsule(
+                t,
+                tr.label().into(),
+                filter == mcp::Filter::Transport(tr),
+                mcp::Filter::Transport(tr),
+            ));
+        }
+        col = col.push(
+            scrollable(container(caps).padding(Padding::from([12.0, m.row_pad_h])))
+                .direction(scrollable::Direction::Horizontal(
+                    scrollable::Scrollbar::new().width(0).scroller_width(0),
+                ))
+                .width(Fill),
+        );
+    }
+
     let mut list = column![];
-    for (i, server) in book.servers.iter().enumerate() {
+    for (i, server) in book.visible().enumerate() {
         if i > 0 {
             list = list.push(divider(t, 0.0));
         }
@@ -2957,7 +3020,16 @@ pub fn mcp_panel<'a>(
             list = list.push(container(mcp_form(t, book, busy)).padding(pad));
             continue;
         }
-        list = list.push(container(mcp_row(t, book, server, busy)).padding(pad));
+        list = list.push(container(mcp_row(t, book, server, busy)).padding(Padding {
+            top: 0.0,
+            bottom: if book.open.as_deref() == Some(server.id.as_str()) {
+                m.row_pad_h * 0.75
+            } else {
+                0.0
+            },
+            left: m.row_pad_h,
+            right: m.row_pad_h,
+        }));
     }
     col = col.push(list);
     col.into()
@@ -2968,7 +3040,8 @@ fn mcp_form<'a>(t: &Skin, book: &'a McpBook, busy: bool) -> Element<'a, Action> 
     let form = book.form.as_ref().expect("form open");
     let mut name = text_input(mcp::NAME_PLACEHOLDER.as_str(), &form.name)
         .size(t.type_.body)
-        .padding(Padding::from([8.0, 10.0]));
+        .padding(field_padding())
+        .style(field_input_style(*t));
     if !busy {
         name = name.on_input(|text| Action::McpFormName { text });
     }
@@ -2995,10 +3068,12 @@ fn mcp_form<'a>(t: &Skin, book: &'a McpBook, busy: bool) -> Element<'a, Action> 
         mcp::Transport::Stdio => {
             let mut command = text_input(mcp::COMMAND_PLACEHOLDER.as_str(), &form.command)
                 .size(t.type_.body)
-                .padding(Padding::from([8.0, 10.0]));
+                .padding(field_padding())
+                .style(field_input_style(*t));
             let mut args = text_input(mcp::ARGS_PLACEHOLDER.as_str(), &form.args)
                 .size(t.type_.body)
-                .padding(Padding::from([8.0, 10.0]));
+                .padding(field_padding())
+                .style(field_input_style(*t));
             if !busy {
                 command = command.on_input(|text| Action::McpFormCommand { text });
                 args = args.on_input(|text| Action::McpFormArgs { text });
@@ -3010,7 +3085,8 @@ fn mcp_form<'a>(t: &Skin, book: &'a McpBook, busy: bool) -> Element<'a, Action> 
         mcp::Transport::Http => {
             let mut url = text_input(mcp::URL_PLACEHOLDER.as_str(), &form.url)
                 .size(t.type_.body)
-                .padding(Padding::from([8.0, 10.0]));
+                .padding(field_padding())
+                .style(field_input_style(*t));
             if !busy {
                 url = url.on_input(|text| Action::McpFormUrl { text });
             }
@@ -3125,7 +3201,8 @@ fn mcp_secret_row<'a>(
 ) -> Element<'a, Action> {
     let mut name = text_input(mcp::SECRET_NAME_PLACEHOLDER.as_str(), &secret.name)
         .size(t.type_.body)
-        .padding(Padding::from([8.0, 10.0]));
+        .padding(field_padding())
+        .style(field_input_style(*t));
     if !busy {
         name = name.on_input(move |text| Action::McpSecretName { index, text });
     }
@@ -3226,6 +3303,151 @@ fn switch_control<'a>(
     hit_area(t, track.into(), Some(w), h, on_press)
 }
 
+/// A 36px capsule on the MCP page; the selected one is inverted (text
+/// colour fill, page colour text).
+fn mcp_capsule<'a>(
+    t: &Skin,
+    label: String,
+    selected: bool,
+    filter: mcp::Filter,
+) -> Element<'a, Action> {
+    use robroz_tokens::mcp as k;
+    let t = *t;
+    let fg = if selected {
+        t.palette.content
+    } else {
+        t.palette.text
+    };
+    button(
+        text(label)
+            .size(k::CAPSULE_TEXT)
+            .height(Fill)
+            .align_y(Alignment::Center)
+            .wrapping(text::Wrapping::None)
+            .color(color(fg)),
+    )
+    .height(Length::Fixed(k::CAPSULE))
+    .padding(Padding::from([0.0, k::CAPSULE_PAD]))
+    .style(move |theme, status| {
+        if selected {
+            button::Style {
+                background: Some(Background::Color(color(t.palette.text))),
+                text_color: color(t.palette.content),
+                border: Border::default().rounded(k::CAPSULE / 2.0),
+                ..button::Style::default()
+            }
+        } else {
+            let mut st = float_button_style(t)(theme, status);
+            st.border.radius = (k::CAPSULE / 2.0).into();
+            st
+        }
+    })
+    .on_press(Action::McpFilter { filter })
+    .into()
+}
+
+/// Connect: a 32px capsule on the surface2 fill (same treatment as the
+/// group profile's Edit capsule).
+fn mcp_connect_button<'a>(t: &Skin, on_press: Option<Action>) -> Element<'a, Action> {
+    use robroz_tokens::mcp as k;
+    let t = *t;
+    let mut b = button(
+        text(mcp::CONNECT)
+            .size(k::CAPSULE_TEXT)
+            .font(semibold())
+            .height(Fill)
+            .align_y(Alignment::Center)
+            .wrapping(text::Wrapping::None)
+            .color(color(t.palette.text)),
+    )
+    .height(Length::Fixed(k::CONNECT_H))
+    .padding(Padding::from([0.0, k::CAPSULE_PAD]))
+    .style(move |theme, status| {
+        let mut st = float_button_style(t)(theme, status);
+        st.border.radius = (k::CONNECT_H / 2.0).into();
+        st
+    });
+    if let Some(a) = on_press {
+        b = b.on_press(a);
+    }
+    b.into()
+}
+
+/// Outline delete: 1px border, `danger` text, no red fill. The confirm
+/// already follows.
+fn mcp_delete_button<'a>(t: &Skin, on_press: Option<Action>) -> Element<'a, Action> {
+    let t = *t;
+    let enabled = on_press.is_some();
+    let fg = color(crate::theme::DANGER);
+    let visual = move |hovered: bool| -> Element<'a, Action> {
+        container(
+            text(mcp::DELETE)
+                .size(t.type_.button)
+                .font(semibold())
+                .color(fg)
+                .height(Fill)
+                .align_y(Alignment::Center),
+        )
+        .height(Length::Fixed(t.controls.button_h))
+        .padding(Padding::from([0.0, t.controls.button_px]))
+        .align_y(Alignment::Center)
+        .style(move |_| container::Style {
+            background: hovered.then(|| color(t.palette.control_hover).into()),
+            border: Border::default()
+                .width(t.stroke.control)
+                .color(color(t.palette.border2))
+                .rounded(t.radii.button),
+            shadow: shadow(&t),
+            ..container::Style::default()
+        })
+        .into()
+    };
+    let shown = if enabled {
+        hover(visual(false), visual(true))
+    } else {
+        visual(false)
+    };
+    hit_area(&t, shown, None, t.controls.button_h, on_press)
+}
+
+/// 6px `status.done` dot used in front of the Connected label.
+fn mcp_connected_dot<'a>(t: &Skin) -> Element<'a, Action> {
+    let size = robroz_tokens::mcp::CONNECTED_DOT;
+    let c = color(t.status.done);
+    container(Space::new().width(size).height(size))
+        .style(move |_| container::Style {
+            background: Some(c.into()),
+            border: Border::default().rounded(size / 2.0),
+            ..container::Style::default()
+        })
+        .into()
+}
+
+/// 44px r12 icon tile. The contract has no icon field, so the tile carries
+/// the name's first letter on the sunken fill.
+fn mcp_icon_tile<'a>(t: &Skin, name: &str) -> Element<'a, Action> {
+    use robroz_tokens::mcp as k;
+    let t = *t;
+    container(
+        text(mcp::icon_letter(name))
+            .size(k::ICON_TEXT)
+            .font(bold())
+            .color(color(t.palette.text2)),
+    )
+    .center_x(Length::Fixed(k::ICON))
+    .center_y(Length::Fixed(k::ICON))
+    .style(move |_| container::Style {
+        background: Some(color(t.palette.sunken).into()),
+        border: Border {
+            color: color(t.palette.border2),
+            width: 1.0,
+            radius: k::ICON_R.into(),
+        },
+        ..container::Style::default()
+    })
+    .into()
+}
+
 fn mcp_row<'a>(
     t: &Skin,
     book: &'a McpBook,
@@ -3236,57 +3458,69 @@ fn mcp_row<'a>(
     let id = server.id.clone();
     let open = book.open.as_deref() == Some(server.id.as_str());
     let asking = book.confirm_delete.as_deref() == Some(server.id.as_str());
-    let unapproved = mcp::command_unapproved(server);
-    let toggle = switch_control(
-        t,
-        server.enabled,
-        color(t.palette.accent),
-        color(t.palette.toggle_off),
-        color(t.palette.knob),
-        (!busy).then(|| Action::McpToggleEnabled { id: id.clone() }),
-    );
-    let mut name = row![text(server.name.as_str())
-        .size(t.type_.row_name)
-        .font(bold())
-        .color(color(t.palette.text))]
-    .spacing(t.controls.button_gap)
-    .align_y(Alignment::Center);
-    if unapproved {
-        name = name.push(tag(t, mcp::COMMAND_UNAPPROVED.as_str(), t.palette.accent));
-    }
-    let mut title = column![name].spacing(2.0);
-    title = title.push(
-        text(mcp::row_subtitle(server))
-            .size(t.type_.foot)
-            .color(color(t.palette.text3)),
-    );
+    // An unapproved stdio command is said on the second line ("Approve the
+    // command to load its tools"), so the 64px row carries no extra tag.
+    let name = text(server.name.as_str())
+        .size(robroz_tokens::mcp::ROW_NAME)
+        .font(semibold())
+        .wrapping(text::Wrapping::None)
+        .color(color(t.palette.text));
+    // The second line: the latest test result when there is one, else the
+    // tool count (or "needs approval").
+    let (sub, sub_rgb) = match book.test_for(&server.id) {
+        Some(test @ mcp::TestState::Running) => (test.text(), t.palette.text3),
+        Some(test) => (test.text(), t.palette.text2),
+        None => (mcp::row_subtitle(server), t.palette.text3),
+    };
+    let title = container(
+        column![
+            name,
+            text(sub)
+                .size(robroz_tokens::mcp::ROW_SUB)
+                .wrapping(text::Wrapping::None)
+                .color(color(sub_rgb)),
+        ]
+        .spacing(2.0),
+    )
+    .width(Fill)
+    .clip(true);
+    let right: Element<'a, Action> = if mcp::is_connected(server) {
+        // Inert: muted status text with a 6px done dot, not a button.
+        row![
+            mcp_connected_dot(t),
+            text(mcp::CONNECTED)
+                .size(robroz_tokens::mcp::CAPSULE_TEXT)
+                .wrapping(text::Wrapping::None)
+                .color(color(t.palette.text2)),
+        ]
+        .spacing(6.0)
+        .align_y(Alignment::Center)
+        .into()
+    } else {
+        mcp_connect_button(t, (!busy).then(|| Action::McpConnect { id: id.clone() }))
+    };
     let top = row![
-        button(title)
-            .padding(0)
-            .style(|_, _| button::Style {
-                background: None,
-                ..button::Style::default()
-            })
-            .on_press(Action::McpOpen { id: id.clone() }),
-        space::horizontal(),
-        toggle,
+        button(
+            row![mcp_icon_tile(t, &server.name), title]
+                .spacing(robroz_tokens::mcp::ICON_GAP)
+                .align_y(Alignment::Center)
+        )
+        .padding(0)
+        .width(Fill)
+        .style(|_, _| button::Style {
+            background: None,
+            ..button::Style::default()
+        })
+        .on_press(Action::McpOpen { id: id.clone() }),
+        right,
     ]
     .spacing(t.controls.button_gap)
     .align_y(Alignment::Center)
+    .height(Length::Fixed(robroz_tokens::mcp::ROW))
     .width(Fill);
 
-    let mut col = column![top].spacing(m.dot_gap + 2.0);
-    if let Some(test) = book.test_for(&server.id) {
-        col = col.push(
-            text(test.text())
-                .size(t.type_.foot)
-                .color(color(match test {
-                    mcp::TestState::Ok { .. } => t.palette.text2,
-                    mcp::TestState::Failed(_) => t.palette.text2,
-                    mcp::TestState::Running => t.palette.text3,
-                })),
-        );
-    }
+    // 16px between the tool list, the group list, and the action buttons.
+    let mut col = column![top].spacing(16.0);
     if open {
         if book.command_prompt_for(&server.id).is_some() {
             col = col.push(mcp_command_prompt(t, book, server, busy));
@@ -3296,52 +3530,58 @@ fn mcp_row<'a>(
         if !book.chats.is_empty() {
             col = col.push(mcp_group_toggles(t, book, &server.id, busy));
         }
-        if asking {
-            col = col.push(
-                column![
-                    text(mcp::DELETE_ASK)
-                        .size(t.type_.foot)
-                        .color(color(t.palette.text2)),
-                    row![
-                        btn(
-                            t,
-                            mcp::DELETE.into(),
-                            Look::Primary,
-                            Leading::None,
-                            (!busy).then_some(Action::McpDeleteConfirm),
-                        ),
-                        btn(
-                            t,
-                            mcp::CANCEL.into(),
-                            Look::Secondary,
-                            Leading::None,
-                            Some(Action::McpDeleteCancel),
-                        ),
+        // Phone is read-only: no add / edit / disconnect / delete, so no
+        // action row and no delete confirm (no dead or greyed controls).
+        if !t.narrow {
+            if asking {
+                col = col.push(
+                    column![
+                        text(mcp::DELETE_ASK)
+                            .size(t.type_.foot)
+                            .color(color(t.palette.text2)),
+                        row![
+                            btn(
+                                t,
+                                mcp::DELETE.into(),
+                                Look::Primary,
+                                Leading::None,
+                                (!busy).then_some(Action::McpDeleteConfirm),
+                            ),
+                            btn(
+                                t,
+                                mcp::CANCEL.into(),
+                                Look::Secondary,
+                                Leading::None,
+                                Some(Action::McpDeleteCancel),
+                            ),
+                        ]
+                        .spacing(t.controls.button_gap),
                     ]
-                    .spacing(t.controls.button_gap),
-                ]
-                .spacing(m.dot_gap),
-            );
-        } else {
-            col = col.push(
-                row![
-                    btn(
+                    .spacing(m.dot_gap),
+                );
+            } else {
+                let mut actions = row![btn(
+                    t,
+                    mcp::EDIT.into(),
+                    Look::Secondary,
+                    Leading::None,
+                    (!busy).then_some(Action::McpEdit { id: id.clone() }),
+                )];
+                if mcp::is_connected(server) {
+                    actions = actions.push(btn(
                         t,
-                        mcp::EDIT.into(),
+                        mcp::DISCONNECT.into(),
                         Look::Secondary,
                         Leading::None,
-                        (!busy).then_some(Action::McpEdit { id: id.clone() }),
-                    ),
-                    btn(
-                        t,
-                        mcp::DELETE.into(),
-                        Look::Secondary,
-                        Leading::None,
-                        (!busy).then_some(Action::McpDeleteAsk { id: id.clone() }),
-                    ),
-                ]
-                .spacing(t.controls.button_gap),
-            );
+                        (!busy).then(|| Action::McpToggleEnabled { id: id.clone() }),
+                    ));
+                }
+                actions = actions.push(mcp_delete_button(
+                    t,
+                    (!busy).then_some(Action::McpDeleteAsk { id: id.clone() }),
+                ));
+                col = col.push(actions.spacing(t.controls.button_gap));
+            }
         }
     }
     if let Some(note) = book.note_for(&server.id) {
@@ -3451,11 +3691,10 @@ fn mcp_group_toggles<'a>(
     busy: bool,
 ) -> Element<'a, Action> {
     let m = t.metrics;
-    let mut toggles = row![text(mcp::GROUP_ENABLE)
+    let mut list = column![text(mcp::GROUP_ENABLE)
         .size(t.type_.foot)
         .color(color(t.palette.text3))]
-    .spacing(t.controls.button_gap)
-    .align_y(Alignment::Center);
+    .spacing(m.dot_gap);
     for (group, name) in &book.chats {
         let load = book.group_load_state(group);
         let known = (load == mcp::GroupLoad::Ready)
@@ -3489,20 +3728,20 @@ fn mcp_group_toggles<'a>(
                 })
             }),
         );
-        let mut cell = row![
-            text(name.as_str())
-                .size(t.type_.foot)
-                .color(color(t.palette.text2)),
-            toggle,
-        ]
-        .spacing(m.dot_gap)
-        .align_y(Alignment::Center);
+        let mut label = column![text(name.as_str())
+            .size(t.type_.body)
+            .color(color(t.palette.text))]
+        .spacing(2.0);
         if let Some(hint) = hint {
-            cell = cell.push(text(hint).size(t.type_.foot).color(color(t.palette.text3)));
+            label = label.push(text(hint).size(t.type_.foot).color(color(t.palette.text3)));
         }
-        toggles = toggles.push(cell);
+        list = list.push(
+            row![container(label).width(Fill), toggle]
+                .spacing(t.controls.button_gap)
+                .align_y(Alignment::Center),
+        );
     }
-    toggles.wrap().into()
+    list.into()
 }
 
 // ---------- Conversation list ----------
@@ -5803,6 +6042,7 @@ fn settings_frame<'a, M: 'a>(
     back: Option<Action>,
     body: Element<'a, M>,
     ui: fn(Action) -> M,
+    trailing: Option<Element<'a, M>>,
 ) -> Element<'a, M> {
     use robroz_tokens::settings as st;
     let mut bar = row![].spacing(12).align_y(Alignment::Center);
@@ -5815,8 +6055,13 @@ fn settings_frame<'a, M: 'a>(
             .font(bold())
             .color(color(t.palette.text)),
     );
+    bar = bar.push(space::horizontal());
+    if let Some(extra) = trailing {
+        bar = bar.push(extra);
+    }
     let inner = column![
         container(bar)
+            .width(Fill)
             .height(Length::Fixed(robroz_tokens::home::FLOAT_BTN + 16.0))
             .align_y(Alignment::Center),
         body,
@@ -5886,7 +6131,7 @@ pub fn settings_page<'a>(t: &Skin, p: SettingsPage) -> Element<'a, Action> {
                 .align_x(Alignment::Center),
         );
     }
-    settings_frame(t, p.title, p.back, col.into(), std::convert::identity)
+    settings_frame(t, p.title, p.back, col.into(), std::convert::identity, None)
 }
 
 /// A Settings choice page (Language, Appearance): one card, the active
@@ -5923,6 +6168,7 @@ pub fn settings_choice_page<'a>(
         Some(Action::SettingsBack),
         settings_card(t, rows),
         std::convert::identity,
+        None,
     )
 }
 
@@ -5935,5 +6181,18 @@ pub fn settings_sub_page<'a, M: 'a>(
     body: Element<'a, M>,
     ui: fn(Action) -> M,
 ) -> Element<'a, M> {
-    settings_frame(*t, title, Some(back), body, ui)
+    settings_sub_page_with(t, title, back, body, None, ui)
+}
+
+/// Like [`settings_sub_page`], with optional trailing widgets on the
+/// right of the title row (MCP puts the connected count and Add there).
+pub fn settings_sub_page_with<'a, M: 'a>(
+    t: &Skin,
+    title: String,
+    back: Action,
+    body: Element<'a, M>,
+    trailing: Option<Element<'a, M>>,
+    ui: fn(Action) -> M,
+) -> Element<'a, M> {
+    settings_frame(*t, title, Some(back), body, ui, trailing)
 }

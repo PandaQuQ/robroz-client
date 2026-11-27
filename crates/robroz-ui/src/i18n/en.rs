@@ -1109,6 +1109,17 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::McpUnknownReason => "Unknown reason",
         // 1 个工具  [approved, batch 2]
         Key::McpToolCountOne => "1 tool",
+        // ---- MCP page capsules and Connect (v0.2 PR6) ----
+        // 全部  [approved, PR6]
+        Key::McpFilterAll => "All",
+        // 已连接 {0} 个  [approved, PR6]
+        Key::McpConnectedCount => "{0} connected",
+        // 连接  [approved, PR6]
+        Key::McpConnect => "Connect",
+        // 已连接  [approved, PR6]
+        Key::McpConnected => "Connected",
+        // 断开  [approved, PR6]
+        Key::McpDisconnect => "Disconnect",
 
         // ---- Secret fields (cards/secret.rs) ----
         // 清除  [approved, batch 2]

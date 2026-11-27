@@ -387,6 +387,8 @@ enum Message {
     McpEnabled {
         id: String,
         result: Result<McpServer, ApiError>,
+        /// Sent by Connect: test the connection once it is on.
+        connect: bool,
     },
     McpGroupToggled {
         id: String,
@@ -1562,8 +1564,23 @@ impl App {
                 return Task::perform(job, move |result| Message::McpEnabled {
                     id: id.clone(),
                     result,
+                    connect: false,
                 });
             }
+            Action::McpConnect { id } => match book.connect_to_send(&id) {
+                Some(mcp::ConnectStep::Enable) => {
+                    let key = id.clone();
+                    let job = call(&self.api, move |api| api.set_mcp_enabled(&key, true));
+                    return Task::perform(job, move |result| Message::McpEnabled {
+                        id: id.clone(),
+                        result,
+                        connect: true,
+                    });
+                }
+                Some(mcp::ConnectStep::Test) => return self.test_mcp(id),
+                None => {}
+            },
+            Action::McpFilter { filter } => book.set_filter(filter),
             Action::McpToggleGroup { id, group } => {
                 let Some(on) = book.toggle_group_to_send(&id, &group) else {
                     return Task::none();
@@ -1952,7 +1969,9 @@ impl App {
             | Action::McpToggleEnabled { .. }
             | Action::McpToggleGroup { .. }
             | Action::McpApproveCommand { .. }
-            | Action::McpCancelCommand { .. } => self.on_mcp_action(action),
+            | Action::McpCancelCommand { .. }
+            | Action::McpConnect { .. }
+            | Action::McpFilter { .. } => self.on_mcp_action(action),
             Action::SearchPick { .. }
             | Action::SearchUrl { .. }
             | Action::SearchKey { .. }
@@ -2703,7 +2722,15 @@ impl App {
                 }
                 Err(err) => self.mcp.approve_command_failed(&id, &err.reason()),
             },
-            Message::McpEnabled { id, result } => match result {
+            Message::McpEnabled {
+                id,
+                result,
+                connect,
+            } => match result {
+                Ok(server) if connect && server.enabled => {
+                    self.mcp.connect_enabled(&server);
+                    return self.test_mcp(server.id);
+                }
                 Ok(server) => self.mcp.set_enabled(&server.id, server.enabled),
                 Err(err) => self.mcp.entry_failed(&id, &err.reason()),
             },
@@ -4018,12 +4045,13 @@ impl App {
             );
         }
         if self.page == Page::Mcp {
-            return view::settings_sub_page(
+            return view::settings_sub_page_with(
                 t,
                 robroz_ui::cards::mcp::TITLE.into(),
                 self.settings_sub_back(),
                 view::mcp_panel(t, &self.mcp, now_unix(), self.content_width(t), false)
                     .map(Message::Ui),
+                Some(view::mcp_title_trailing(t, &self.mcp).map(Message::Ui)),
                 Message::Ui,
             );
         }
