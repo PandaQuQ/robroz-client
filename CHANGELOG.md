@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Approve / Reject follow who may answer on the host (`may_answer`): rule and settings cards on the review-rules page show the buttons only to an admin from `/api/me`, and anyone else sees "Waiting for an admin" / 「等管理员确认」 with no buttons; a bro's approval card in a DM shows the buttons only to the bro's owner. If `/api/me` has not loaded, no buttons are shown. No contract change.
+- Approve / Reject follow who may answer on the host (`may_answer`): rule and settings cards on the review-rules page show the buttons only to an admin from `/api/me`, and anyone else sees "Waiting for an admin" / 「等管理员确认」 and the rule text, with no "Confirm to add this allow rule" / 「确认后加入放行规则」 line and no buttons; a bro's approval card in a DM shows the buttons only to the bro's owner. If `/api/me` has not loaded, no buttons are shown. No contract change.
 - Approval, process and find-in-chat follow-ups from the PR4 review: a non-owner sees "Waiting for this bro's owner" / 「等这个 bro 的主人审批」 (not the owner's account name); a duration under 1s reads "Worked for under 1s" / 「用了不到 1 秒」 (live: "Working under 1s" / 「处理中不到 1 秒」); a task blocked on an approval keeps the `status.blocked` yellow dot; find-in-chat uses the same search capsule as the home list. A truncated sidebar name shows the full name on hover. The sidebar stays 220px.
 
 ## [0.1.1] - 2026-11-25

@@ -61,6 +61,13 @@ pub fn may_decide(role: Option<robroz_contract::UserRole>) -> bool {
     role == Some(robroz_contract::UserRole::Admin)
 }
 
+/// The "Confirm to add / delete" line on a rule card. Only someone who
+/// can answer sees it; a member gets the waiting line and the rule text,
+/// and not this hint.
+pub fn confirm_hint(is_delete: bool, can_decide: bool) -> Option<Key> {
+    can_decide.then_some(if is_delete { DELETE_HINT } else { ADD_HINT })
+}
+
 /// Prefix on a blocked-action DM card's reason line, wording from 最优雅UI姐.
 pub const BLOCKED_REASON_PREFIX: Key = Key::ReviewRulesBlockedReasonPrefix;
 
@@ -321,6 +328,14 @@ mod tests {
         assert!(may_decide(Some(UserRole::Admin)));
         assert!(!may_decide(Some(UserRole::Member)));
         assert!(!may_decide(None), "no buttons before /api/me answers");
+    }
+
+    #[test]
+    fn a_member_does_not_see_the_confirm_hint() {
+        assert_eq!(confirm_hint(false, true), Some(ADD_HINT));
+        assert_eq!(confirm_hint(true, true), Some(DELETE_HINT));
+        assert_eq!(confirm_hint(false, false), None);
+        assert_eq!(confirm_hint(true, false), None);
     }
 
     use super::*;

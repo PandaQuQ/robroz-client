@@ -4953,11 +4953,6 @@ fn rule_confirm_fields<'a>(
     note: Option<String>,
     mut col: iced::widget::Column<'a, Action>,
 ) -> iced::widget::Column<'a, Action> {
-    let hint = if kind == crate::cards::ActionKind::RuleDelete {
-        review_rules::DELETE_HINT
-    } else {
-        review_rules::ADD_HINT
-    };
     if matches!(state, crate::cards::ApprovalState::Expired { .. }) {
         col = col.push(
             text(review_rules::EXPIRED)
@@ -4966,10 +4961,16 @@ fn rule_confirm_fields<'a>(
         );
         col = col.push(gap(t.metrics.head_gap));
     }
-    col = col
-        .push(body(t, summary))
-        .push(gap(t.metrics.head_gap))
-        .push(text(hint).size(t.type_.foot).color(color(t.palette.text2)));
+    col = col.push(body(t, summary));
+    // Members cannot confirm, so they do not see this line — only the
+    // waiting status and the rule text.
+    if let Some(hint) =
+        review_rules::confirm_hint(kind == crate::cards::ActionKind::RuleDelete, show_buttons)
+    {
+        col = col
+            .push(gap(t.metrics.head_gap))
+            .push(text(hint).size(t.type_.foot).color(color(t.palette.text2)));
+    }
     if show_buttons {
         let (ok, look) = if kind == crate::cards::ActionKind::RuleDelete {
             (review_rules::DELETE_ACTION, Look::Danger)
