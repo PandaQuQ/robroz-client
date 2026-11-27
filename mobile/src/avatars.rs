@@ -1,0 +1,249 @@
+//! Bro avatars on mobile: who may edit, what the title capsule shows, and
+//! the optimistic save with its revert. Shapes and colours come from
+//! [`robroz_ui::avatar`], the same module the desktop client draws from;
+//! [`glyph`] turns one into a Slint image.
+
+use robroz_contract::{Bro, BroAvatar, Me};
+use robroz_ui::avatar;
+use robroz_ui::theme::Mode;
+
+use crate::chat::{ChatItem, Side};
+
+/// Pixels per logical pixel for avatar bitmaps (phones are 2x–3x).
+const RASTER_SCALE: f32 = 3.0;
+
+/// One avatar as a Slint image of `size` logical px.
+pub fn glyph(a: BroAvatar, mode: Mode, size: f32) -> slint::Image {
+    let px = (size * RASTER_SCALE).round().max(1.0) as u32;
+    let rgba = avatar::rasterize(a, mode == Mode::Dark, None, px);
+    let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&rgba, px, px);
+    slint::Image::from_rgba8(buf)
+}
+
+/// The title capsule's avatars as one image (first on top, `ring` bands)
+/// and its width in logical px; an empty image for no bros.
+pub fn stack(list: &[BroAvatar], mode: Mode, ring: [u8; 3]) -> (slint::Image, f32) {
+    use robroz_tokens::base::avatar as tok;
+    if list.is_empty() {
+        return (slint::Image::default(), 0.0);
+    }
+    let px = (tok::TITLE_SIZE * RASTER_SCALE).round() as u32;
+    let step = ((tok::TITLE_SIZE - tok::TITLE_OVERLAP) * RASTER_SCALE).round() as u32;
+    let (w, rgba) = avatar::rasterize_stack(
+        list,
+        mode == Mode::Dark,
+        (ring, tok::TITLE_RING * RASTER_SCALE),
+        px,
+        step,
+    );
+    let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&rgba, w, px);
+    (
+        slint::Image::from_rgba8(buf),
+        avatar::stack_width(list.len(), tok::TITLE_SIZE, tok::TITLE_OVERLAP),
+    )
+}
+
+/// You own this bro: its `ownerUserId` is your `GET /api/me` id. Unknown
+/// on either side means no, so the edit entry stays hidden.
+pub fn owns(me: Option<&Me>, bro: &Bro) -> bool {
+    matches!((me, &bro.owner_user_id), (Some(me), Some(owner)) if &me.id == owner)
+}
+
+/// The avatar to draw for bro `id`: the stored one, else the id default.
+pub fn avatar_of(bros: &[Bro], id: &str) -> BroAvatar {
+    let stored = bros.iter().find(|b| b.id == id).and_then(|b| b.avatar);
+    avatar::resolve(stored, id)
+}
+
+/// The bro whose DM is `group`.
+pub fn dm_bro<'a>(bros: &'a [Bro], group: &str) -> Option<&'a Bro> {
+    bros.iter()
+        .find(|b| b.dm_group_id.as_deref() == Some(group))
+}
+
+/// Bros for the title capsule: a DM shows its bro; a group shows the bros
+/// seen in its feed, newest first (same rule as the desktop client).
+pub fn title_ids(dm: Option<&Bro>, items: &[ChatItem]) -> Vec<String> {
+    if let Some(b) = dm {
+        return vec![b.id.clone()];
+    }
+    let mut ids: Vec<String> = Vec::new();
+    for item in items.iter().rev() {
+        let id = match item {
+            ChatItem::Text {
+                side: Side::Bro { id, .. },
+                ..
+            } => id,
+            ChatItem::Status(c) => &c.bot_id,
+            _ => continue,
+        };
+        if !id.is_empty() && !ids.contains(id) {
+            ids.push(id.clone());
+        }
+    }
+    ids
+}
+
+/// The avatar page's save state for one bro.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Editor {
+    pub bro: String,
+    /// What the host last confirmed; a failed save puts this back.
+    pub confirmed: Option<BroAvatar>,
+    /// Latest save sent; only its reply may revert or clear the note.
+    pub seq: u64,
+    /// The inline line under the preview.
+    pub note: Option<String>,
+}
+
+impl Editor {
+    pub fn open(bro: &Bro) -> Self {
+        Self {
+            bro: bro.id.clone(),
+            confirmed: bro.avatar,
+            seq: 0,
+            note: None,
+        }
+    }
+
+    /// Show `next` at once (optimistic). `None` when nothing changes.
+    pub fn begin(&mut self, bros: &mut [Bro], next: Option<BroAvatar>) -> Option<u64> {
+        let b = bros.iter_mut().find(|b| b.id == self.bro)?;
+        if b.avatar == next {
+            return None;
+        }
+        b.avatar = next;
+        self.note = None;
+        self.seq += 1;
+        Some(self.seq)
+    }
+
+    /// Apply the host's answer to save `seq`. A failure of the latest save
+    /// puts the confirmed avatar back and sets the note.
+    pub fn finish(
+        &mut self,
+        bros: &mut [Bro],
+        seq: u64,
+        result: Result<Bro, crate::api::AvatarError>,
+    ) {
+        let latest = seq == self.seq;
+        match result {
+            Ok(saved) => {
+                self.confirmed = saved.avatar;
+                if latest {
+                    if let Some(b) = bros.iter_mut().find(|b| b.id == saved.id) {
+                        *b = saved;
+                    }
+                    self.note = None;
+                }
+            }
+            Err(_) if !latest => {}
+            Err(e) => {
+                if let Some(b) = bros.iter_mut().find(|b| b.id == self.bro) {
+                    b.avatar = self.confirmed;
+                }
+                self.note = Some(e.copy());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::AvatarError;
+    use robroz_contract::UserRole;
+    use robroz_ui::i18n::Key;
+
+    fn bro(id: &str, owner: Option<&str>, avatar: Option<BroAvatar>) -> Bro {
+        Bro {
+            id: id.into(),
+            name: id.into(),
+            dm_group_id: Some(format!("dm-{id}")),
+            owner_user_id: owner.map(str::to_string),
+            avatar,
+        }
+    }
+
+    fn me(id: &str) -> Me {
+        Me {
+            id: id.into(),
+            name: id.into(),
+            role: UserRole::Member,
+        }
+    }
+
+    const A: BroAvatar = BroAvatar { shape: 1, color: 2 };
+    const B: BroAvatar = BroAvatar { shape: 5, color: 6 };
+
+    #[test]
+    fn only_the_owner_may_edit() {
+        let b = bro("ada", Some("u1"), None);
+        assert!(owns(Some(&me("u1")), &b));
+        assert!(!owns(Some(&me("u2")), &b));
+        assert!(!owns(None, &b));
+        assert!(!owns(Some(&me("u1")), &bro("ada", None, None)));
+    }
+
+    #[test]
+    fn clearing_shows_the_id_default_at_once() {
+        let mut bros = vec![bro("ada", Some("u1"), Some(A))];
+        let mut ed = Editor::open(&bros[0]);
+        assert_eq!(ed.begin(&mut bros, None), Some(1));
+        assert_eq!(avatar_of(&bros, "ada"), avatar::default_for("ada"));
+    }
+
+    #[test]
+    fn a_failed_save_reverts_and_sets_the_line() {
+        let mut bros = vec![bro("ada", Some("u1"), Some(A))];
+        let mut ed = Editor::open(&bros[0]);
+        let seq = ed.begin(&mut bros, Some(B)).unwrap();
+        assert_eq!(bros[0].avatar, Some(B));
+        ed.finish(&mut bros, seq, Err(AvatarError::Failed));
+        assert_eq!(bros[0].avatar, Some(A));
+        assert_eq!(ed.note.as_deref(), Some(Key::AvatarSaveFailed.as_str()));
+        // The next pick clears the line; a 403 has its own copy.
+        let seq = ed.begin(&mut bros, None).unwrap();
+        assert_eq!(ed.note, None);
+        ed.finish(&mut bros, seq, Err(AvatarError::NotOwner));
+        assert_eq!(bros[0].avatar, Some(A));
+        assert_eq!(ed.note.as_deref(), Some(Key::AvatarNotOwner.as_str()));
+    }
+
+    #[test]
+    fn only_the_latest_reply_decides() {
+        let mut bros = vec![bro("ada", Some("u1"), None)];
+        let mut ed = Editor::open(&bros[0]);
+        let first = ed.begin(&mut bros, Some(A)).unwrap();
+        let second = ed.begin(&mut bros, Some(B)).unwrap();
+        // The first save lands, then fails late: nothing moves.
+        ed.finish(&mut bros, first, Ok(bro("ada", Some("u1"), Some(A))));
+        assert_eq!(bros[0].avatar, Some(B));
+        ed.finish(&mut bros, first, Err(AvatarError::Failed));
+        assert_eq!((bros[0].avatar, ed.note.clone()), (Some(B), None));
+        // The latest fails: back to what the host confirmed (A).
+        ed.finish(&mut bros, second, Err(AvatarError::Failed));
+        assert_eq!(bros[0].avatar, Some(A));
+    }
+
+    #[test]
+    fn title_shows_the_dm_bro_or_feed_bros_newest_first() {
+        let ada = bro("ada", None, None);
+        assert_eq!(title_ids(Some(&ada), &[]), vec!["ada".to_string()]);
+        let text = |id: &str| ChatItem::Text {
+            body: "x".into(),
+            side: Side::Bro {
+                id: id.into(),
+                name: id.into(),
+            },
+            at: None,
+        };
+        let own = ChatItem::Text {
+            body: "x".into(),
+            side: Side::Own,
+            at: None,
+        };
+        let items = vec![text("ada"), own, text("bea"), text("ada"), text("cy")];
+        assert_eq!(title_ids(None, &items), vec!["cy", "ada", "bea"]);
+    }
+}

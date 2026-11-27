@@ -3,18 +3,14 @@
 //! colours come from [`crate::avatar`]; sizes from `robroz-tokens`
 //! (`base.avatar`).
 
-use iced::mouse;
-use iced::widget::canvas::{self, Frame, Geometry, Path, Program, Stroke};
-use iced::widget::{
-    button, canvas as canvas_widget, column, container, row, space, text, text_input,
-};
+use iced::widget::image;
+use iced::widget::{button, column, container, row, space, text, text_input};
 use iced::{
-    Alignment, Border, Color, Element, Fill, Length, Padding, Point, Rectangle, Renderer,
-    Shadow as IcedShadow, Theme as IcedTheme,
+    Alignment, Border, Element, Fill, Length, Padding, Shadow as IcedShadow, Theme as IcedTheme,
 };
 use robroz_tokens::base::avatar as tok;
 
-use crate::avatar::{self, BroAvatar, Seg, COLORS, SHAPES};
+use crate::avatar::{self, BroAvatar, COLORS, SHAPES};
 use crate::i18n::Key;
 use crate::theme::{Mode, Rgb, Skin};
 use crate::view::{bold, color, faded, Action};
@@ -22,61 +18,40 @@ use crate::view::{bold, color, faded, Action};
 /// Widget id of the create-bro name field.
 pub const NEW_BRO_NAME: &str = "robroz-new-bro-name";
 
-/// One bro avatar: the filled shape and two round eyes. `ring` draws a
-/// band of that colour around the outline (used where avatars overlap).
-pub struct Glyph {
-    pub avatar: BroAvatar,
-    pub dark: bool,
-    pub ring: Option<(Color, f32)>,
+/// Raster scale: glyphs are drawn at this many pixels per logical pixel
+/// and filtered down, so they stay sharp on 2x screens.
+const RASTER_SCALE: f32 = 2.0;
+
+type GlyphKey = (BroAvatar, bool, u32);
+
+/// One bro avatar as an image: the filled shape and two round eyes,
+/// drawn with tiny-skia ([`avatar::rasterize`]).
+///
+/// Not a `canvas`: iced 0.14's wgpu backend drops most canvas meshes when
+/// several sit over quads in one layer (picker cells, preview, list rows),
+/// while images draw reliably on both backends. Handles are cached so a
+/// glyph is rasterised and uploaded once.
+fn glyph_handle(a: BroAvatar, dark: bool, size: f32) -> image::Handle {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<GlyphKey, image::Handle>>> = OnceLock::new();
+    let key: GlyphKey = (a, dark, size.to_bits());
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(h) = cache.lock().expect("glyph cache").get(&key) {
+        return h.clone();
+    }
+    let px = (size * RASTER_SCALE).round().max(1.0) as u32;
+    let rgba = avatar::rasterize(a, dark, None, px);
+    let h = image::Handle::from_rgba(px, px, rgba);
+    cache.lock().expect("glyph cache").insert(key, h.clone());
+    h
 }
 
-impl<M> Program<M> for Glyph {
-    type State = ();
-
-    fn draw(
-        &self,
-        _: &(),
-        renderer: &Renderer,
-        _: &IcedTheme,
-        bounds: Rectangle,
-        _: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        let side = bounds.width.min(bounds.height);
-        let inset = self.ring.map_or(0.0, |(_, w)| w);
-        let scale = side - 2.0 * inset;
-        let ox = (bounds.width - side) / 2.0 + inset;
-        let oy = (bounds.height - side) / 2.0 + inset;
-        let p = |x: f32, y: f32| Point::new(ox + x * scale, oy + y * scale);
-        let outline = avatar::outline(self.avatar.shape);
-        let path = Path::new(|b| {
-            for seg in &outline {
-                match *seg {
-                    Seg::Move(x, y) => b.move_to(p(x, y)),
-                    Seg::Line(x, y) => b.line_to(p(x, y)),
-                    Seg::Quad(cx, cy, x, y) => b.quadratic_curve_to(p(cx, cy), p(x, y)),
-                    Seg::Cubic(a, c, d, e, x, y) => b.bezier_curve_to(p(a, c), p(d, e), p(x, y)),
-                    Seg::Close => b.close(),
-                }
-            }
-        });
-        if let Some((ring, w)) = self.ring {
-            frame.stroke(
-                &path,
-                Stroke::default()
-                    .with_color(ring)
-                    .with_width(w * 2.0)
-                    .with_line_join(canvas::LineJoin::Round),
-            );
-        }
-        frame.fill(&path, color(avatar::color(self.avatar.color, self.dark)));
-        let eyes = avatar::eyes(self.avatar.shape);
-        let eye = color(avatar::eye_color(self.dark));
-        for (x, y) in [eyes.left, eyes.right] {
-            frame.fill(&Path::circle(p(x, y), eyes.r * scale), eye);
-        }
-        vec![frame.into_geometry()]
-    }
+fn glyph<'a, M: 'a>(a: BroAvatar, dark: bool, size: f32) -> Element<'a, M> {
+    image(glyph_handle(a, dark, size))
+        .width(Length::Fixed(size))
+        .height(Length::Fixed(size))
+        .into()
 }
 
 fn dark(t: &Skin) -> bool {
@@ -85,46 +60,47 @@ fn dark(t: &Skin) -> bool {
 
 /// A bro avatar of `size` px.
 pub fn bro_avatar<'a, M: 'a>(t: &Skin, a: BroAvatar, size: f32) -> Element<'a, M> {
-    canvas_widget(Glyph {
-        avatar: a,
-        dark: dark(t),
-        ring: None,
-    })
-    .width(Length::Fixed(size))
-    .height(Length::Fixed(size))
-    .into()
+    glyph(a, dark(t), size)
 }
 
 /// Title-capsule avatars: 24px, each overlapping the previous by 8px,
-/// with a 2px band in `bg` so overlaps stay readable; then `+N`.
+/// the first on top, with a 2px band in `bg` so overlaps stay readable;
+/// then `+N`. Drawn as one bitmap so the stacking order is the same on
+/// every renderer.
 pub fn avatar_stack<'a, M: 'a>(
     t: &Skin,
     avatars: &[BroAvatar],
     more: usize,
     bg: Rgb,
 ) -> Element<'a, M> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    type Key = (Vec<BroAvatar>, bool, Rgb);
+    static CACHE: OnceLock<Mutex<HashMap<Key, image::Handle>>> = OnceLock::new();
     let size = tok::TITLE_SIZE;
-    let step = size - tok::TITLE_OVERLAP;
-    let ring = tok::TITLE_RING;
     let width = avatar::stack_width(avatars.len(), size, tok::TITLE_OVERLAP);
-    // Later layers draw on top; the first avatar is the top one.
-    let mut layers = iced::widget::Stack::new()
+    let key: Key = (avatars.to_vec(), dark(t), bg);
+    let cache = CACHE.get_or_init(Default::default);
+    let cached = cache.lock().expect("stack cache").get(&key).cloned();
+    let handle = cached.unwrap_or_else(|| {
+        let px = (size * RASTER_SCALE).round() as u32;
+        let step = ((size - tok::TITLE_OVERLAP) * RASTER_SCALE).round() as u32;
+        let (w, rgba) = avatar::rasterize_stack(
+            avatars,
+            dark(t),
+            (bg, tok::TITLE_RING * RASTER_SCALE),
+            px,
+            step,
+        );
+        let h = image::Handle::from_rgba(w, px, rgba);
+        cache.lock().expect("stack cache").insert(key, h.clone());
+        h
+    });
+    let mut r = row![image(handle)
         .width(Length::Fixed(width))
-        .height(Length::Fixed(size));
-    for (i, a) in avatars.iter().enumerate().rev() {
-        let glyph = canvas_widget(Glyph {
-            avatar: *a,
-            dark: dark(t),
-            ring: (i > 0 || avatars.len() > 1).then_some((color(bg), ring)),
-        })
-        .width(Length::Fixed(size))
-        .height(Length::Fixed(size));
-        layers = layers.push(container(glyph).padding(Padding {
-            left: step * i as f32,
-            ..Padding::ZERO
-        }));
-    }
-    let mut r = row![layers].spacing(4).align_y(Alignment::Center);
+        .height(Length::Fixed(size))]
+    .spacing(4)
+    .align_y(Alignment::Center);
     if more > 0 {
         r = r.push(
             text(format!("+{more}"))

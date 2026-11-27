@@ -431,11 +431,10 @@ enum Message {
     /// The card's 300 ms accent stroke is over.
     FlashOff(String),
     BroCreated(Result<Bro, ApiError>),
-    /// robroz#194 avatar save. `prev` is the stored avatar before this
-    /// change, restored when the save fails; `seq` drops stale replies.
+    /// robroz#194 avatar save; `seq` tells the latest save from older
+    /// ones still in flight.
     AvatarSaved {
         bro: String,
-        prev: Option<BroAvatar>,
         seq: u64,
         result: Result<Bro, ApiError>,
     },
@@ -514,8 +513,12 @@ struct App {
     avatar_bro: Option<String>,
     /// Last avatar save error, shown under the preview.
     avatar_note: Option<String>,
-    /// Latest avatar save sent; older replies are ignored.
+    /// Latest avatar save sent; only its failure reverts the preview.
     avatar_seq: u64,
+    /// The bro last opened on the avatar page and the avatar the host last
+    /// confirmed for it; a failed save puts this back, even after the page
+    /// is closed.
+    avatar_confirmed: Option<(String, Option<BroAvatar>)>,
     /// The signed-in person (`GET /api/me`); decides who sees the approval
     /// buttons. `None` until the host answers, and on an older host.
     me: Option<Me>,
@@ -678,6 +681,7 @@ impl App {
             avatar_bro: None,
             avatar_note: None,
             avatar_seq: 0,
+            avatar_confirmed: None,
             me: None,
             drafts: HashMap::new(),
             sending: false,
@@ -880,8 +884,7 @@ impl App {
         let Some(entry) = self.bros.iter_mut().find(|b| b.id == id) else {
             return Task::none();
         };
-        let prev = entry.avatar;
-        if prev == next {
+        if entry.avatar == next {
             return Task::none();
         }
         entry.avatar = next;
@@ -894,7 +897,6 @@ impl App {
             call(&self.api, move |api| api.set_avatar(&bro, next)),
             move |result| Message::AvatarSaved {
                 bro: id.clone(),
-                prev,
                 seq,
                 result,
             },
@@ -1946,6 +1948,7 @@ impl App {
                     return Task::none();
                 }
                 self.avatar_bro = Some(bro.id.clone());
+                self.avatar_confirmed = Some((bro.id.clone(), bro.avatar));
                 self.avatar_note = None;
                 self.page = Page::BroAvatar;
                 self.narrow_open = true;
@@ -2405,25 +2408,30 @@ impl App {
                     }
                 }
             }
-            Message::AvatarSaved {
-                bro,
-                prev,
-                seq,
-                result,
-            } => {
-                if seq != self.avatar_seq {
-                    return Task::none();
-                }
+            Message::AvatarSaved { bro, seq, result } => {
+                let mine = self
+                    .avatar_confirmed
+                    .as_ref()
+                    .is_some_and(|(id, _)| *id == bro);
+                let latest = mine && seq == self.avatar_seq;
                 match result {
                     Ok(entry) => {
+                        if mine {
+                            self.avatar_confirmed = Some((bro.clone(), entry.avatar));
+                        }
+                        if !latest {
+                            return Task::none();
+                        }
                         if let Some(b) = self.bros.iter_mut().find(|b| b.id == entry.id) {
                             *b = entry;
                         }
                         self.avatar_note = None;
                     }
+                    Err(_) if !latest => return Task::none(),
                     Err(err) => {
+                        let back = self.avatar_confirmed.as_ref().and_then(|(_, a)| *a);
                         if let Some(b) = self.bros.iter_mut().find(|b| b.id == bro) {
-                            b.avatar = prev;
+                            b.avatar = back;
                         }
                         self.avatar_note = Some(match err {
                             ApiError::NotBroOwner { .. } => Text::AvatarNotOwner.into(),

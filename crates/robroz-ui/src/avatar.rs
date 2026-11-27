@@ -353,6 +353,121 @@ pub fn stack_width(n: usize, size: f32, overlap: f32) -> f32 {
     }
 }
 
+/// RGBA (straight alpha) of one glyph in a `px`-square: the filled shape,
+/// two round eyes and, with `ring`, a band of that colour `w` px wide
+/// around the outline. Both clients show this bitmap, so desktop and mobile
+/// draw the same bro.
+pub fn rasterize(a: BroAvatar, dark: bool, ring: Option<(Rgb, f32)>, px: u32) -> Vec<u8> {
+    let Some(mut pm) = tiny_skia::Pixmap::new(px, px) else {
+        return vec![0; (px * px * 4) as usize];
+    };
+    paint_glyph(&mut pm, a, dark, ring, 0.0, px as f32);
+    let edge = ring.map_or_else(|| color(a.color, dark), |(c, _)| c);
+    straight_rgba(&pm, edge)
+}
+
+/// The title capsule's avatars as one bitmap, `px` tall: each `px` wide,
+/// every next one `step` px further right, the first on top, each with a
+/// `ring` band so the overlaps stay readable. One bitmap keeps the order
+/// the same on every renderer. Returns `(width, rgba)`.
+pub fn rasterize_stack(
+    avatars: &[BroAvatar],
+    dark: bool,
+    ring: (Rgb, f32),
+    px: u32,
+    step: u32,
+) -> (u32, Vec<u8>) {
+    let n = avatars.len().max(1) as u32;
+    let w = px + (n - 1) * step;
+    let Some(mut pm) = tiny_skia::Pixmap::new(w, px) else {
+        return (w, vec![0; (w * px * 4) as usize]);
+    };
+    for (i, a) in avatars.iter().enumerate().rev() {
+        paint_glyph(
+            &mut pm,
+            *a,
+            dark,
+            Some(ring),
+            (i as u32 * step) as f32,
+            px as f32,
+        );
+    }
+    (w, straight_rgba(&pm, ring.0))
+}
+
+fn paint_glyph(
+    pm: &mut tiny_skia::Pixmap,
+    a: BroAvatar,
+    dark: bool,
+    ring: Option<(Rgb, f32)>,
+    ox: f32,
+    side: f32,
+) {
+    use tiny_skia::{FillRule, LineJoin, Paint, PathBuilder, Stroke as SkStroke, Transform};
+    let inset = ring.map_or(0.0, |(_, w)| w);
+    let scale = side - 2.0 * inset;
+    let px = |v: f32| ox + inset + v * scale;
+    let py = |v: f32| inset + v * scale;
+    let mut pb = PathBuilder::new();
+    for seg in outline(a.shape) {
+        match seg {
+            Seg::Move(x, y) => pb.move_to(px(x), py(y)),
+            Seg::Line(x, y) => pb.line_to(px(x), py(y)),
+            Seg::Quad(cx, cy, x, y) => pb.quad_to(px(cx), py(cy), px(x), py(y)),
+            Seg::Cubic(a1, b1, c1, d1, x, y) => {
+                pb.cubic_to(px(a1), py(b1), px(c1), py(d1), px(x), py(y))
+            }
+            Seg::Close => pb.close(),
+        }
+    }
+    let paint = |c: Rgb| {
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(c[0], c[1], c[2], 255);
+        paint.anti_alias = true;
+        paint
+    };
+    if let Some(path) = pb.finish() {
+        if let Some((rc, w)) = ring {
+            let stroke = SkStroke {
+                width: w * 2.0,
+                line_join: LineJoin::Round,
+                ..SkStroke::default()
+            };
+            pm.stroke_path(&path, &paint(rc), &stroke, Transform::identity(), None);
+        }
+        pm.fill_path(
+            &path,
+            &paint(color(a.color, dark)),
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+    let eyes = eyes(a.shape);
+    let eye = paint(eye_color(dark));
+    for (x, y) in [eyes.left, eyes.right] {
+        if let Some(c) = PathBuilder::from_circle(px(x), py(y), eyes.r * scale) {
+            pm.fill_path(&c, &eye, FillRule::Winding, Transform::identity(), None);
+        }
+    }
+}
+
+/// tiny-skia stores premultiplied alpha; the clients want straight. Fully
+/// clear pixels take `edge` instead of black, so scaling and filtering
+/// don't leave a dark fringe around the shape.
+fn straight_rgba(pm: &tiny_skia::Pixmap, edge: Rgb) -> Vec<u8> {
+    pm.pixels()
+        .iter()
+        .flat_map(|c| {
+            if c.alpha() == 0 {
+                return [edge[0], edge[1], edge[2], 0];
+            }
+            let c = c.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,6 +580,51 @@ mod tests {
             assert!(svg_outline(s, 100.0).starts_with('M'));
             assert_eq!(svg_eyes(s, 100.0).matches('M').count(), 2);
         }
+    }
+
+    #[test]
+    fn rasterize_fills_the_middle_and_leaves_corners_clear() {
+        let px = 64;
+        for shape in 0..SHAPES {
+            let a = BroAvatar { shape, color: 4 };
+            let rgba = rasterize(a, false, None, px);
+            assert_eq!(rgba.len(), (px * px * 4) as usize);
+            let at = |x: u32, y: u32| {
+                let i = ((y * px + x) * 4) as usize;
+                [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+            };
+            assert_eq!(at(0, 0)[3], 0, "shape {shape} corner");
+            // Below the eyes, inside every outline.
+            let fill = color(4, false);
+            assert_eq!(
+                at(px / 2, px * 3 / 4 - 4),
+                [fill[0], fill[1], fill[2], 255],
+                "shape {shape}"
+            );
+        }
+        // A ring widens the opaque area past the bare outline.
+        let a = BroAvatar { shape: 0, color: 0 };
+        let opaque = |v: &[u8]| v.chunks(4).filter(|p| p[3] == 255).count();
+        let bare = rasterize(a, false, None, 48);
+        let ringed = rasterize(a, false, Some(([1, 2, 3], 2.0)), 48);
+        assert!(opaque(&ringed) > 0 && opaque(&bare) > 0);
+        assert!(ringed.chunks(4).any(|p| p[..3] == [1, 2, 3] && p[3] == 255));
+    }
+
+    #[test]
+    fn stack_bitmap_puts_the_first_avatar_on_top() {
+        let first = BroAvatar { shape: 9, color: 0 };
+        let second = BroAvatar { shape: 9, color: 4 };
+        let (w, rgba) = rasterize_stack(&[first, second], false, ([9, 9, 9], 2.0), 48, 32);
+        assert_eq!(w, 80);
+        assert_eq!(rgba.len(), (80 * 48 * 4) as usize);
+        // In the overlap (x 32..48), the middle row shows the first one.
+        let at = |x: u32, y: u32| {
+            let i = ((y * w + x) * 4) as usize;
+            [rgba[i], rgba[i + 1], rgba[i + 2]]
+        };
+        assert_eq!(at(40, 24), color(0, false));
+        assert_eq!(at(70, 24), color(4, false));
     }
 
     #[test]
