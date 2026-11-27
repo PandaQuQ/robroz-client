@@ -276,8 +276,11 @@ pub fn eyes(shape: u8) -> Eyes {
     let (y, dx, r) = match shape % SHAPES {
         3 => (0.62, 0.13, r),
         9 => (0.5, 0.14, r),
-        10 => (0.64, 0.1, r),
-        11 => (0.56, 0.075, r * 0.85),
+        // Triangle and star are narrow at the eye line; after the 3px
+        // radius floor on a 32px cell, dx 0.10 / 0.075 made the two
+        // discs almost merge. Spread them, keep the floor.
+        10 => (0.64, 0.14, r),
+        11 => (0.56, 0.13, r * 0.85),
         2 | 7 => (0.44, 0.14, r),
         _ => (0.46, 0.14, r),
     };
@@ -649,6 +652,41 @@ mod tests {
             }
         }
         assert!(n >= 1, "expected pixels in the 3px disc's outer ring");
+    }
+
+    #[test]
+    fn star_and_triangle_eyes_stay_apart_on_a_small_glyph() {
+        let px = 32u32;
+        let fill = color(4, false);
+        let want = eye_color(false);
+        for shape in [10u8, 11] {
+            let e = eyes(shape);
+            let sep = (e.right.0 - e.left.0) * px as f32;
+            assert!(
+                sep >= 2.0 * 3.0 + 2.0,
+                "shape {shape} centres {sep}px apart"
+            );
+            let rgba = rasterize(BroAvatar { shape, color: 4 }, false, None, px);
+            let at = |x: i32, y: i32| {
+                let i = ((y as u32 * px + x as u32) * 4) as usize;
+                [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+            };
+            let mid_x = (px / 2) as i32;
+            let mid_y = (e.left.1 * px as f32).round() as i32;
+            let p = at(mid_x, mid_y);
+            assert_eq!(
+                p,
+                [fill[0], fill[1], fill[2], 255],
+                "shape {shape} midline ({mid_x},{mid_y}) should be fill, not a merged eye"
+            );
+            // Each eye still paints its own disc.
+            for (x, y) in [e.left, e.right] {
+                let cx = (x * px as f32).round() as i32;
+                let cy = (y * px as f32).round() as i32;
+                let p = at(cx, cy);
+                assert_eq!(p, [want[0], want[1], want[2], 255], "shape {shape} eye");
+            }
+        }
     }
 
     #[test]

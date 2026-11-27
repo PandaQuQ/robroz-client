@@ -382,6 +382,10 @@ component AvatarPicker inherits VerticalLayout {
             TouchArea { clicked => { root.pick-shape(i); } }
         }
     }
+    // Layout spacing is 8px on both sides of this 8px spacer, so the
+    // gap between the shape grid and 「颜色」 is 24px. Label-to-content
+    // stays 8px.
+    Rectangle { height: 8px; vertical-stretch: 0; }
     Text { text: Tr.color; color: Brand.text3; font-size: 13px; vertical-stretch: 0; }
     Rectangle {
         property <length> step: (self.width - 5 * AvatarMetrics.swatch-hit) / 4 + AvatarMetrics.swatch-hit;

@@ -263,7 +263,11 @@ pub fn avatar_picker<'a>(t: &Skin, current: BroAvatar) -> Element<'a, Action> {
             line = row![].spacing(gap);
         }
     }
-    grid = grid.push(line);
+    // 12 shapes and 6 columns fill complete rows; don't push an empty
+    // trailing row, or its column spacing adds a phantom 16px gap.
+    if usize::from(SHAPES) % cols != 0 {
+        grid = grid.push(line);
+    }
 
     let swatch = tok::SWATCH;
     let hit = tok::SWATCH_HIT;
@@ -316,7 +320,10 @@ pub fn avatar_picker<'a>(t: &Skin, current: BroAvatar) -> Element<'a, Action> {
     column![
         section_label(t, Key::AvatarShape),
         grid,
-        space::vertical().height(tok::SECTION_GAP - 8.0),
+        // Column spacing (8px) sits on both sides of this spacer, so
+        // SECTION_GAP - 16 makes the group gap 24px. Label-to-content
+        // stays the column's 8px.
+        space::vertical().height(tok::SECTION_GAP - 16.0),
         section_label(t, Key::AvatarColor),
         swatches.wrap(),
     ]
