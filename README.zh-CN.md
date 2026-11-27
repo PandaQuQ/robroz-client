@@ -24,15 +24,23 @@
 适合希望在自己控制的工作区中使用多个 AI 智能体、并由自己批准风险步骤的用户。
 
 <p>
-  <img src="docs/assets/main-zh-light.png" alt="robroz 桌面客户端，浅色：群聊里的状态卡和交付卡" width="49%">
-  <img src="docs/assets/main-zh-dark.png" alt="robroz 桌面客户端，深色：群聊里的状态卡和交付卡" width="49%">
+  <img src="docs/assets/screenshots/main-desktop-zh-light.png" alt="桌面客户端浅色主题：「发布周」群中有已完成的结果、两张待批准的审批卡，以及仍在处理中的任务" width="49%">
+  <img src="docs/assets/screenshots/main-desktop-zh-dark.png" alt="桌面客户端深色主题：「发布周」群中有已完成的结果、两张待批准的审批卡，以及仍在处理中的任务" width="49%">
 </p>
 
-<sub>演示数据</sub>
+<sub>桌面客户端中的「发布周」群，浅色与深色主题。演示数据。</sub>
 
 桌面客户端界面默认是英文。要切换到中文，到设置的「通用」里选择「Language / 语言」。设置从聊天列表底部你的名字那一行进入。`ROBROZ_LANG=en|zh` 只对这一次运行生效，不会写回已保存的选择。保存的 `lang` 文件见 [docs/configuration.md](docs/configuration.md)。
 
 语言那一行下面是 Appearance / 「外观」，打开后是一个列表：System / 「跟随系统」、Light / 「浅色」、Dark / 「深色」。默认是 System，会跟随操作系统实时切换。选择保存在 `lang` 旁边的 `theme` 文件里，一行，值为 `system`、`light` 或 `dark`。
+
+<p>
+  <img src="docs/assets/screenshots/mobile-list-en-dark.png" alt="手机客户端深色主题：会话列表，包括「发布周」、Launch Week，以及与 Cleo、Ben、Ada 的私聊" width="32%">
+  <img src="docs/assets/screenshots/mobile-chat-zh-dark.png" alt="手机客户端深色主题：「发布周」群中有已完成的状态、两张只读审批卡，以及仍在处理中的任务" width="32%">
+  <img src="docs/assets/screenshots/mobile-settings-en-dark.png" alt="手机客户端深色主题：设置页，含 Language、Appearance、MCP 和 Sign out" width="32%">
+</p>
+
+<sub>同一工作区在手机客户端中的样子（深色主题）。手机上的审批卡为只读。演示数据。</sub>
 
 ## 功能
 
