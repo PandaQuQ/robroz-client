@@ -59,6 +59,14 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::HostMcpNotFound => "MCP server not found",
         // 群不存在  [approved, batch 2]
         Key::HostGroupNotFound => "Group not found",
+        // 头像的形状或颜色超出范围  [approved, 最优雅UI姐 avatar errors]
+        Key::HostInvalidAvatar => "Couldn't save the avatar. Try again",
+        // 只有建群的人或管理员能改这个群  [approved, contract-v0.3.0 codes rev 2]
+        Key::HostNotGroupCreator => "Only the creator or an admin can change this group",
+        // 你不在这个群里  [approved, contract-v0.3.0 codes rev 2]
+        Key::HostNotGroupMember => "You're not in this group",
+        // 私聊不能改名或删除  [approved, contract-v0.3.0 codes rev 2]
+        Key::HostGroupIsDm => "DMs can't be renamed or deleted",
         // 只有 stdio 服务器需要批准启动命令  [approved, batch 2]
         Key::HostStdioOnlyApprove => "Only stdio servers need their start command approved",
         // 这个 bro 不存在  [approved, batch 2]
@@ -495,34 +503,72 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::OwnerFallback => "its owner",
         // 只有 {0} 能修改这个 bro。  [approved, status-code i18n; needs UI review]
         Key::BroOnlyOwner => "Only {0} can change this bro.",
-        // 你拒绝了。  [approved, status-code i18n; needs UI review]
-        Key::FailDenied => "You denied this.",
-        // 审批已过期。  [approved, status-code i18n; needs UI review]
-        Key::FailApprovalExpired => "The approval expired.",
-        // 模型没有回复。  [approved, status-code i18n; needs UI review]
-        Key::FailModelNoReply => "The model didn't reply.",
-        // 工具调用次数超过上限。  [approved, status-code i18n; needs UI review]
-        Key::FailToolRoundLimit => "The tool was called too many times.",
-        // 出网次数已达上限。  [approved, status-code i18n; needs UI review]
-        Key::FailOutboundOverQuota => "The outbound request quota was reached.",
-        // 出网请求只能用 GET。  [approved, status-code i18n; needs UI review]
-        Key::FailOutboundNotGet => "Outbound requests can only use GET.",
-        // 没能保存审批状态。  [approved, status-code i18n; needs UI review]
-        Key::FailSaveApprovalState => "Couldn't save the approval state.",
-        // 没能继续已批准的调用。  [approved, status-code i18n; needs UI review]
-        Key::FailResumeApprovedCall => "Couldn't resume the approved call.",
-        // 这次调用在等审批。  [approved, status-code i18n; needs UI review]
-        Key::FailWaitingApproval => "This call is waiting for approval.",
-        // 工具调用失败了。  [approved, status-code i18n; needs UI review]
-        Key::FailToolCall => "The tool call failed.",
-        // 这个工具还需要批准。  [approved, status-code i18n; needs UI review]
-        Key::FailToolNeedsApproval => "This tool still needs approval.",
-        // 没做成。  [approved, status-code i18n; needs UI review]
-        Key::FailOther => "This didn't get done.",
-        // 查看详情  [approved, status-code i18n; needs UI review]
-        Key::FailureDetailShow => "Show details",
-        // 收起详情  [approved, status-code i18n; needs UI review]
-        Key::FailureDetailHide => "Hide details",
+        // 没写出结果  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailNoResult => "Finished with no result",
+        // 你拒绝了 {0}  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailDenied => "you declined {0}",
+        // 你拒绝了这一步  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailDeniedStep => "you declined this step",
+        // 审批过期了  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailApprovalExpired => "the approval expired",
+        // 模型没回  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailModelNoReply => "the model didn't reply",
+        // 模型没回（HTTP {0}）  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailModelNoReplyHttp => "the model didn't reply (HTTP {0})",
+        // 工具调用轮数到上限了  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailToolRoundLimit => "it hit the tool call limit",
+        // 出网请求超额  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailOutboundOverQuota => "too many outbound requests",
+        // 出网请求超额（{0}）  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailOutboundOverQuotaCount => "too many outbound requests ({0})",
+        // 只允许 GET  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailOutboundNotGet => "only GET is allowed",
+        // 只允许 GET，这次用了 {0}  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailOutboundNotGetUsed => "only GET is allowed, this used {0}",
+        // 审批状态没存上  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailSaveApprovalState => "couldn't save the approval state",
+        // 批准后没能接着调用  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailResumeApprovedCall => "couldn't continue the approved call",
+        // 还在等批准  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailWaitingApproval => "still waiting for approval",
+        // 还在等批准：{0}  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailWaitingApprovalTool => "still waiting for approval: {0}",
+        // 工具调用失败  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailToolCall => "a tool call failed",
+        // 批准过的调用又要审批  [approved, contract-v0.3.0 codes rev 2]
+        Key::FailToolNeedsApproval => "the approved call needed approval again",
+        // 出错了  [approved, contract-v0.3.0 codes rev 2]
+        Key::CodeUnknown => "Something went wrong",
+        // 开始干活  [approved, contract-v0.3.0 codes rev 2]
+        Key::ProgressStarted => "Starting",
+        // 在想怎么回  [approved, contract-v0.3.0 codes rev 2]
+        Key::ProgressThinking => "Thinking",
+        // 在沙箱里跑  [approved, contract-v0.3.0 codes rev 2]
+        Key::ProgressInSandbox => "Running in the sandbox",
+        // 在用 {0}  [approved, contract-v0.3.0 codes rev 2]
+        Key::ProgressUsingTool => "Using {0}",
+        // 第 {0}/{1} 步  [approved, contract-v0.3.0 codes rev 2]
+        Key::ProgressRouterStep => "Step {0} of {1}",
+        // 模型和工具还没回，已等 {0} 分钟  [approved, contract-v0.3.0 codes rev 2]
+        Key::ProgressStepTimeout => "No reply from the model or tools for {0} min",
+        // {0} 分钟没有新进度  [approved, contract-v0.3.0 codes rev 2]
+        Key::ProgressStalled => "No progress for {0} min",
+        // 进行中  [approved, contract-v0.3.0 codes rev 2]
+        Key::ProgressUnknown => "In progress",
+        // 符合放行规则  [approved, contract-v0.3.0 codes rev 2]
+        Key::ReasonAllowed => "Allowed by your rules",
+        // 没有放行规则允许这个操作  [approved, contract-v0.3.0 codes rev 2]
+        Key::ReasonNoMatch => "No rule allows this",
+        // 还没设置模型，没法自动审核  [approved, contract-v0.3.0 codes rev 2]
+        Key::ReasonNoModel => "No model set, so auto-review can't run",
+        // 自动审核没成功，需要你批准  [approved, contract-v0.3.0 codes rev 2]
+        Key::ReasonFailed => "Auto-review didn't work. It needs your approval",
+        // 审核放行了，但任务没能接着跑，你来定  [approved, contract-v0.3.0 codes rev 2]
+        Key::ReasonAllowFailed => {
+            "Auto-review allowed it, but the task couldn't continue. Your call"
+        }
+        // 审批已过期  [approved, contract-v0.3.0 codes rev 2]
+        Key::ReasonExpired => "Approval expired",
         // 请求没成功。  [approved, status-code i18n; needs UI review]
         Key::ClientRequestFailed => "The request failed.",
         // 没选上：{0}  [approved, batch 2]

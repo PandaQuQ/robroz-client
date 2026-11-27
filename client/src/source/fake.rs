@@ -212,6 +212,7 @@ impl FakeSource {
                         mcp_server: None,
                         mcp_tool: None,
                         reason: None,
+                        reason_code: None,
                         owner_id: Some(crate::api::FAKE_ME_ID.into()),
                         owner_name: Some(crate::api::FAKE_ME_NAME.into()),
                     }),
@@ -231,6 +232,7 @@ impl FakeSource {
                         mcp_server: None,
                         mcp_tool: None,
                         reason: None,
+                        reason_code: None,
                         owner_id: Some(crate::api::FAKE_ME_ID.into()),
                         owner_name: Some(crate::api::FAKE_ME_NAME.into()),
                     }),
@@ -403,6 +405,7 @@ pub fn fake_chats() -> (Vec<Unread>, Vec<Bro>) {
             unread(TWO, 0, "03"),
         ],
         vec![Bro {
+            avatar: None,
             id: "bot-ada".into(),
             name: "Ada".into(),
             dm_group_id: Some(DM.into()),
@@ -465,6 +468,8 @@ fn status(
     GroupEvent {
         group_id: group.into(),
         event: Event::Status {
+            progress_code: None,
+            progress_params: None,
             id: task.into(),
             task_id: task.into(),
             bot_id: bot_id.into(),

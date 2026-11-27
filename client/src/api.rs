@@ -1079,6 +1079,7 @@ impl CardApi for FakeApi {
         let mut bros = self.bros.lock().expect("fake bros lock");
         let n = bros.len() + 1;
         let bro = Bro {
+            avatar: None,
             id: format!("fake-bro-{n}"),
             name: next_bro_name(bros.iter().map(|b| b.name.as_str())),
             dm_group_id: Some(format!("fake-dm-{n}")),
@@ -1826,6 +1827,7 @@ fn fake_review_event(
 ) -> Event {
     let expires = chrono::Utc::now() + chrono::Duration::seconds(86_400);
     Event::Approval {
+        reason_code: None,
         id: id.to_string(),
         bot_id: SETTINGS_APPROVAL_BOT_ID.into(),
         bot_name: SETTINGS_APPROVAL_BOT_NAME.into(),
@@ -2293,6 +2295,7 @@ mod tests {
     #[test]
     fn fake_say_routes_like_the_host() {
         let bro = |id: &str, name: &str| Bro {
+            avatar: None,
             id: id.into(),
             name: name.into(),
             dm_group_id: Some(format!("dm-{id}")),

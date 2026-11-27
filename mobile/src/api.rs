@@ -157,9 +157,13 @@ impl Conn {
     pub fn events(&self, group_id: &str) -> Result<Vec<(Event, bool)>, ApiError> {
         let path = format!("/api/groups/{group_id}/events");
         let body = self.get(&path)?;
-        let events = Self::decode::<Events>(&body)?.events;
-        let from: Vec<Option<String>> = serde_json::from_str::<serde_json::Value>(&body)
-            .ok()
+        let mut raw = Self::decode::<serde_json::Value>(&body)?;
+        // Unknown codes are logged and dropped so the card still decodes.
+        robroz_ui::cards::codes::strip_unknown_codes(&mut raw);
+        let events = serde_json::from_value::<Events>(raw.clone())
+            .map_err(|e| ApiError(Key::ClientDecodeFailed.fill(&[&e])))?
+            .events;
+        let from: Vec<Option<String>> = Some(raw)
             .and_then(|v| {
                 v.get("events")?.as_array().map(|a| {
                     a.iter()
@@ -378,6 +382,8 @@ mod tests {
     #[test]
     fn rows_put_active_sessions_first() {
         let g = |id: &str| Group {
+            created_by: None,
+            dm: false,
             id: id.into(),
             name: id.into(),
             tenant_id: "t".into(),

@@ -466,6 +466,7 @@ mod tests {
             state: ApprovalState::Pending,
             mcp_server: None,
             mcp_tool: None,
+            reason_code: None,
             reason: None,
             owner_id: None,
             owner_name: None,

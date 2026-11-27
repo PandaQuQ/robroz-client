@@ -254,6 +254,8 @@ mod tests {
 
     fn status(task: &str, state: TaskState) -> Event {
         Event::Status {
+            progress_code: None,
+            progress_params: None,
             id: format!("s-{task}"),
             task_id: task.into(),
             bot_id: "b".into(),

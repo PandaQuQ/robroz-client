@@ -11,6 +11,7 @@ robroz-contract = { workspace = true }
 robroz-card = { path = "../robroz-card" }
 robroz-tokens = { path = "../robroz-tokens" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+serde_json = "1"
 iced = { version = "0.14.0", features = ["canvas"], optional = true }
 
 [features]

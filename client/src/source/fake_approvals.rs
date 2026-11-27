@@ -51,6 +51,7 @@ fn approval(
     GroupEvent {
         group_id: group.into(),
         event: Event::Approval {
+            reason_code: expired.then_some(robroz_contract::ApprovalReasonCode::Expired),
             id: id.into(),
             bot_id: bot.0.into(),
             bot_name: bot.1.into(),
@@ -224,6 +225,7 @@ pub fn approvals_chats() -> (Vec<Unread>, Vec<Bro>) {
             unread(EXPIRED, 0, "19:30"),
         ],
         vec![Bro {
+            avatar: None,
             id: "bot-ada".into(),
             name: "Ada".into(),
             dm_group_id: Some(DM.into()),

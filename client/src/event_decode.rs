@@ -10,7 +10,12 @@ use serde_json::Value;
 
 /// Decode one event. Unknown event *types* still fail (the caller skips
 /// them).
-pub fn parse_event(value: Value) -> Result<(Event, Option<ApprovalExtras>), serde_json::Error> {
+///
+/// A `failureCode` / `progressCode` / `reasonCode` this client does not
+/// know is logged and dropped first, so the card still shows (with the
+/// unknown-code copy) instead of the whole event failing to decode.
+pub fn parse_event(mut value: Value) -> Result<(Event, Option<ApprovalExtras>), serde_json::Error> {
+    robroz_ui::cards::codes::strip_unknown_codes(&mut value);
     let event = serde_json::from_value(value)?;
     Ok((event, None))
 }
@@ -162,5 +167,61 @@ mod tests {
         let card = ApprovalCard::from_event(&event).unwrap();
         assert_eq!(card.owner_id.as_deref(), Some("u1"));
         assert_eq!(card.owner_name.as_deref(), Some("Panda"));
+    }
+
+    #[test]
+    fn unknown_codes_still_decode_and_fall_back() {
+        use robroz_ui::cards::codes::{reason_text_in, FailureLine, ProgressLine};
+        use robroz_ui::i18n::Locale;
+        let (event, _) = ev(
+            r#"{"type":"status","id":"t","taskId":"t","botId":"b","botName":"Ada",
+            "state":"done","label":"完成","createdAt":"2026-11-20T08:00:00Z",
+            "updatedAt":"2026-11-20T08:00:01Z","containerUp":false,
+            "failure":"新的失败","failureCode":"quantum_flux","failureDetail":"raw",
+            "progress":"x","progressCode":"teleporting"}"#,
+        );
+        let Event::Status {
+            failure_code,
+            failure_detail,
+            failure,
+            progress_code,
+            ..
+        } = &event
+        else {
+            panic!("not status");
+        };
+        assert_eq!((*failure_code, failure_detail.as_deref()), (None, None));
+        let line = FailureLine::from_wire_in(Locale::Zh, None, None, failure.as_deref()).unwrap();
+        assert_eq!(line.text, "出错了");
+        assert_eq!(*progress_code, None);
+        let p = ProgressLine::from_wire(None, None, Some("x")).unwrap();
+        assert_eq!(p.text_in(Locale::En), "In progress");
+
+        let (event, _) = ev(&approval_json(
+            "call",
+            r#","reason":"r","reasonCode":"cosmic""#,
+        ));
+        let Event::Approval {
+            reason,
+            reason_code,
+            ..
+        } = &event
+        else {
+            panic!("not approval");
+        };
+        assert_eq!(*reason_code, None);
+        assert_eq!(
+            reason_text_in(Locale::En, *reason_code, reason.as_deref()).as_deref(),
+            Some("Something went wrong")
+        );
+        let (event, _) = ev(&approval_json(
+            "call",
+            r#","reason":"r","reasonCode":"review_no_match""#,
+        ));
+        let card = ApprovalCard::from_event(&event).unwrap();
+        assert_eq!(
+            reason_text_in(Locale::Zh, card.reason_code, card.reason.as_deref()).as_deref(),
+            Some("没有放行规则允许这个操作")
+        );
     }
 }
