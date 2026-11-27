@@ -58,6 +58,16 @@ pub fn appearance(state: TaskState, container_up: bool) -> Appearance {
     }
 }
 
+/// A task blocked on an unanswered approval card (`waitingFor: "approval"`).
+/// Same amber as other blocked states, so the stuck dot uses `status.blocked`
+/// yellow; no takeover button, because the approval card is the only way to act.
+pub fn awaiting_approval() -> Appearance {
+    Appearance {
+        tone: Tone::Amber,
+        action: None,
+    }
+}
+
 pub fn status_line(state: TaskState, container_up: bool) -> &'static str {
     match state {
         TaskState::Queued => "排队",
@@ -149,6 +159,17 @@ mod tests {
                 tone: Tone::Amber,
                 action: Some("去私聊接管")
             }
+        );
+        assert_eq!(
+            awaiting_approval(),
+            Appearance {
+                tone: Tone::Amber,
+                action: None
+            }
+        );
+        assert_eq!(
+            awaiting_approval().tone,
+            appearance(TaskState::Blocked, false).tone
         );
     }
 

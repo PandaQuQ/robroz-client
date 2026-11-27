@@ -24,10 +24,25 @@ use robroz_ui::cards::{ApprovalExtras, Card};
 
 /// One group or DM the client knows: id and display name, from
 /// `GET /api/groups` (or `ROBROZ_GROUPS` when pinned).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GroupTab {
     pub id: String,
     pub name: String,
+    /// A bro DM. Used to hide rename, delete and members.
+    pub dm: bool,
+    /// The user who created this group; `None` for a DM or an older group.
+    pub created_by: Option<String>,
+}
+
+impl GroupTab {
+    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            dm: false,
+            created_by: None,
+        }
+    }
 }
 
 /// One contract event tagged with the group it belongs to.

@@ -81,6 +81,26 @@ export global Tr {
     in property <string> shape;
     in property <string> color;
     in property <string> use-default;
+    in property <string> search-placeholder;
+    in property <string> menu-profile;
+    in property <string> menu-find;
+    in property <string> menu-delete;
+    in property <string> menu-rename;
+    in property <string> delete-confirm;
+    in property <string> profile-edit;
+    in property <string> profile-routines;
+    in property <string> profile-members;
+    in property <string> profile-copy-id;
+    in property <string> profile-copied;
+    in property <string> delete-title;
+    in property <string> delete-body;
+    in property <string> find-title;
+    in property <string> find-placeholder;
+    in property <string> find-empty;
+    in property <string> find-no-results;
+    in property <string> members-title;
+    in property <string> settings-title;
+    in property <string> sign-out;
 }
 
 // Bro avatar sizes from robroz-tokens `base.avatar` (pushed from Rust).
@@ -103,6 +123,37 @@ export global AvatarMetrics {
     in property <float> create-empty-opacity;
 }
 
+// Home list, menus and profile (PR4). Values pushed from `robroz_tokens::home`.
+export global HomeMetrics {
+    in property <length> row: 64px;
+    in property <length> row-face-w: 56px;
+    in property <length> row-avatar: 48px;
+    in property <length> row-name: 16px;
+    in property <length> row-time: 12px;
+    in property <length> row-preview: 14px;
+    in property <length> unread-dot: 8px;
+    in property <length> search: 48px;
+    in property <length> search-lift: 16px;
+    in property <length> float-btn: 40px;
+    in property <length> menu-w: 220px;
+    in property <length> menu-r: 16px;
+    in property <length> menu-gap: 4px;
+    in property <length> menu-pad: 4px;
+    in property <length> menu-divider-gap: 4px;
+    in property <length> more-icon: 16px;
+    in property <length> back-gap: 4px;
+    in property <length> profile-card-gap: 24px;
+    in property <length> profile-side: 16px;
+    in property <length> menu-row: 36px;
+    in property <length> menu-text: 15px;
+    in property <length> profile-avatar: 96px;
+    in property <length> profile-name: 22px;
+    in property <length> profile-name-gap: 12px;
+    in property <length> profile-edit-h: 32px;
+    in property <length> card-r: 16px;
+    in property <length> card-row: 52px;
+}
+
 // One shape cell or colour swatch of the avatar picker.
 export struct PickerCell {
     glyph: image,
@@ -114,6 +165,24 @@ export struct SessionRow {
     id: string,
     name: string,
     unread: int,
+    preview: string,
+    time: string,
+    glyph: image,
+    has-glyph: bool,
+}
+
+export struct FindHit {
+    message-id: string,
+    snippet: string,
+    when: string,
+    author: string,
+}
+
+export struct MemberLine {
+    name: string,
+    detail: string,
+    glyph: image,
+    has-glyph: bool,
 }
 
 // kind: 0 own bubble (right), 1 bro bubble (left), 2 status card (left),
@@ -324,17 +393,50 @@ component Avatar inherits Rectangle {
     }
 }
 
-// Round button with one glyph (`…`, `+`), 32px, surface fill.
+// `‹` as a 16px stroked chevron, centred on its box.
+component Chevron inherits Path {
+    width: HomeMetrics.more-icon;
+    height: HomeMetrics.more-icon;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 10 3 L 5 8 L 10 13";
+    stroke: Brand.ink;
+    stroke-width: 2px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+}
+
+// Round button: `+` text, or a drawn `more` (three dots, 16px) or `back`
+// (chevron, 16px). 32px for the ••• and ‹ buttons, 40px for `+`.
 component RoundButton inherits Rectangle {
     in property <string> glyph;
+    in property <length> size: root.glyph == "+" ? HomeMetrics.float-btn : 32px;
     callback clicked();
-    width: AvatarMetrics.more-button;
-    height: AvatarMetrics.more-button;
+    width: root.size;
+    height: root.size;
     border-radius: self.width / 2;
     background: Brand.surface;
     border-width: 1px;
     border-color: Brand.border;
-    Text { text: root.glyph; color: Brand.ink; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; }
+    if root.glyph == "+": Text { text: "+"; color: Brand.ink; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+    if root.glyph == "more": Rectangle {
+        width: HomeMetrics.more-icon;
+        height: HomeMetrics.more-icon;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        for i in 3: Rectangle {
+            width: 2.6px;
+            height: 2.6px;
+            border-radius: 1.3px;
+            background: Brand.ink;
+            x: i * (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+    }
+    if root.glyph == "back": Chevron {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
     TouchArea { clicked => { root.clicked(); } }
 }
 
@@ -428,6 +530,56 @@ component AvatarPicker inherits VerticalLayout {
     }
 }
 
+// One 36px menu item: text centred vertically, 12px inside the item.
+component MenuRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> danger: false;
+    callback clicked();
+    width: 100%;
+    height: HomeMetrics.menu-row;
+    border-radius: HomeMetrics.menu-r - HomeMetrics.menu-pad;
+    Text {
+        x: 12px;
+        width: parent.width - 24px;
+        height: 100%;
+        text: root.label;
+        color: root.danger ? Brand.danger : Brand.ink;
+        font-size: HomeMetrics.menu-text;
+        vertical-alignment: center;
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+// 1px line with 4px above and 4px below.
+component MenuDivider inherits Rectangle {
+    width: 100%;
+    height: 2 * HomeMetrics.menu-divider-gap + 1px;
+    Rectangle {
+        x: 8px;
+        y: HomeMetrics.menu-divider-gap;
+        width: parent.width - 16px;
+        height: 1px;
+        background: Brand.rule;
+    }
+}
+
+// Popover surface with 4px inner padding. `rows` / `dividers` size it.
+component MenuBox inherits Rectangle {
+    in property <int> rows: 1;
+    in property <int> dividers: 0;
+    width: HomeMetrics.menu-w;
+    height: 2 * HomeMetrics.menu-pad + root.rows * HomeMetrics.menu-row + root.dividers * (2 * HomeMetrics.menu-divider-gap + 1px);
+    border-radius: HomeMetrics.menu-r;
+    background: Brand.surface;
+    border-width: 1px;
+    border-color: Brand.border;
+    VerticalLayout {
+        padding: HomeMetrics.menu-pad;
+        alignment: start;
+        @children
+    }
+}
+
 export component MainWindow inherits Window {
     // 0 connect, 1 sessions, 2 card, 3 settings, 4 create bro, 5 avatar
     in-out property <int> screen: 0;
@@ -464,6 +616,28 @@ export component MainWindow inherits Window {
     in property <float> working-avatars-width;
     // Reconnecting banner, empty when the stream is fine or the outage is brief.
     in property <string> reconnect-banner;
+    in property <int> unread-other;
+    in property <bool> group-menu: false;
+    in property <bool> self-menu: false;
+    in property <bool> can-manage: false;
+    in property <bool> delete-open: false;
+    in property <bool> copied: false;
+    in property <string> group-note;
+    in-out property <string> group-edit;
+    in property <bool> group-editing: false;
+    in property <bool> group-edit-saving: false;
+    in property <int> routines-on: -1;
+    in property <int> member-count: -1;
+    in property <string> me-name;
+    in property <string> me-initial;
+    in-out property <string> home-query;
+    in property <image> profile-avatars;
+    in property <float> profile-avatars-width;
+    in property <int> profile-more;
+    in property <[FindHit]> find-hits;
+    in-out property <string> find-query;
+    in property <bool> find-busy: false;
+    in property <[MemberLine]> members-list;
     // Create-bro (screen 4) and avatar (screen 5) pages.
     in property <image> avatar-preview;
     in property <string> avatar-note;
@@ -498,6 +672,22 @@ export component MainWindow inherits Window {
     callback create-bro();
     callback page-back();
     callback toggle-process(string);
+    callback open-group-menu();
+    callback close-menus();
+    callback open-group-profile();
+    callback open-find();
+    callback find-edited();
+    callback open-members();
+    callback start-edit();
+    callback save-edit();
+    callback copy-id();
+    callback ask-delete();
+    callback cancel-delete();
+    callback confirm-delete();
+    callback open-self-menu();
+    callback sign-out();
+    callback home-search-edited();
+    callback open-hit(string);
 
     changed os-dark => { root.theme-follow-system(); }
 
@@ -508,8 +698,8 @@ export component MainWindow inherits Window {
     min-height: 844px;
 
     VerticalLayout {
-        padding-left: root.screen == 2 ? Metrics.column-margin : 20px;
-        padding-right: root.screen == 2 ? Metrics.column-margin : 20px;
+        padding-left: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 ? HomeMetrics.profile-side : 20px);
+        padding-right: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 ? HomeMetrics.profile-side : 20px);
         padding-top: 20px + root.safe-area-insets.top + root.extra-safe-top;
         padding-bottom: root.screen == 2 ? 0 : (20px + root.safe-area-insets.bottom + root.extra-safe-bottom);
         spacing: 14px;
@@ -560,44 +750,180 @@ export component MainWindow inherits Window {
             }
         }
 
-        if root.screen == 1: VerticalLayout {
-            spacing: 8px;
-            HorizontalLayout {
-                spacing: 8px;
-                Header { title: Tr.title-chats; has-settings: true; settings => { root.open-settings(); } }
-                VerticalLayout {
-                    alignment: center;
-                    RoundButton { glyph: "+"; clicked => { root.open-new-bro(); } }
+        if root.screen == 1: Rectangle {
+            VerticalLayout {
+                spacing: 12px;
+                // `+` over the top-right; no hero avatar.
+                Rectangle {
+                    height: HomeMetrics.float-btn;
+                    RoundButton {
+                        x: parent.width - self.width;
+                        y: 0px;
+                        glyph: "+";
+                        clicked => { root.open-new-bro(); }
+                    }
                 }
-            }
-            if root.sessions.length == 0: Text {
-                text: Tr.empty-chats;
-                color: Brand.muted;
-                wrap: word-wrap;
-            }
-            ListView {
-                for s in root.sessions: Rectangle {
-                    height: 64px;
-                    Rectangle { y: parent.height - 1px; height: 1px; background: Brand.rule; }
+                if root.sessions.length == 0: Text {
+                    text: Tr.empty-chats;
+                    color: Brand.muted;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+                ListView {
+                    vertical-stretch: 1;
+                    for s in root.sessions: Rectangle {
+                        height: HomeMetrics.row;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: stretch;
+                            // 56px face slot: a DM avatar (48px) or up to three
+                            // overlapped 24px group avatars, centred.
+                            VerticalLayout {
+                                alignment: center;
+                                width: HomeMetrics.row-face-w;
+                                if s.has-glyph: Image {
+                                    source: s.glyph;
+                                    width: HomeMetrics.row-face-w;
+                                    height: HomeMetrics.row-avatar;
+                                    image-fit: contain;
+                                }
+                                if !s.has-glyph: HorizontalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: HomeMetrics.row-avatar;
+                                        height: HomeMetrics.row-avatar;
+                                        border-radius: HomeMetrics.row-avatar / 2;
+                                        background: Brand.surface;
+                                        border-width: 1px;
+                                        border-color: Brand.border;
+                                    }
+                                }
+                            }
+                            VerticalLayout {
+                                spacing: 2px;
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: s.name;
+                                        color: Brand.ink;
+                                        font-size: HomeMetrics.row-name;
+                                        font-weight: 700;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                        vertical-alignment: center;
+                                    }
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        alignment: center;
+                                        width: 52px;
+                                        Text {
+                                            text: s.time;
+                                            color: Brand.text3;
+                                            font-size: HomeMetrics.row-time;
+                                            horizontal-alignment: right;
+                                        }
+                                        if s.unread > 0: HorizontalLayout {
+                                            alignment: center;
+                                            Rectangle {
+                                                width: HomeMetrics.unread-dot;
+                                                height: HomeMetrics.unread-dot;
+                                                border-radius: HomeMetrics.unread-dot / 2;
+                                                background: Brand.accent;
+                                            }
+                                        }
+                                    }
+                                }
+                                // No preview: no second line, the name stays centred.
+                                if s.preview != "": Text {
+                                    text: s.preview;
+                                    color: Brand.muted;
+                                    font-size: HomeMetrics.row-preview;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                        TouchArea { clicked => { root.open-session(s.id, s.name); } }
+                    }
+                }
+                // Self row + search capsule, 16px off the bottom (layout
+                // padding already includes the safe area).
+                // The row never changes look when its menu is open: no card.
+                Rectangle {
+                    height: HomeMetrics.card-row;
+                    border-radius: HomeMetrics.menu-r;
                     HorizontalLayout {
-                        alignment: space-between;
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 32px;
+                                height: 32px;
+                                border-radius: 16px;
+                                background: Brand.surface;
+                                border-width: 1px;
+                                border-color: Brand.border;
+                                Text { text: root.me-initial; color: Brand.ink; font-size: 15px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
                         Text {
-                            text: s.name;
+                            text: root.me-name;
                             color: Brand.ink;
-                            font-size: 17px;
+                            font-size: 16px;
                             vertical-alignment: center;
                             overflow: elide;
-                        }
-                        if s.unread > 0: Rectangle {
-                            width: 28px;
-                            height: 28px;
-                            y: (parent.height - self.height) / 2;
-                            border-radius: 14px;
-                            background: Brand.accent;
-                            Text { text: s.unread; color: Brand.on-accent; font-size: 13px; }
+                            horizontal-stretch: 1;
                         }
                     }
-                    TouchArea { clicked => { root.open-session(s.id, s.name); } }
+                    TouchArea { clicked => { root.open-self-menu(); } }
+                }
+                Rectangle {
+                    height: HomeMetrics.search;
+                    border-radius: HomeMetrics.search / 2;
+                    background: Brand.surface;
+                    border-width: 1px;
+                    border-color: Brand.border;
+                    if root.home-query == "": Text {
+                        x: 16px;
+                        width: parent.width - 32px;
+                        height: 100%;
+                        text: Tr.search-placeholder;
+                        color: Brand.muted;
+                        font-size: 15px;
+                        vertical-alignment: center;
+                    }
+                    TextInput {
+                        x: 16px;
+                        width: parent.width - 32px;
+                        height: 100%;
+                        text <=> root.home-query;
+                        color: Brand.ink;
+                        font-size: 15px;
+                        single-line: true;
+                        vertical-alignment: center;
+                        edited => { root.home-search-edited(); }
+                    }
+                }
+                Rectangle { height: HomeMetrics.search-lift; }
+            }
+            if root.self-menu: Rectangle {
+                x: 0px;
+                width: 100%;
+                height: 100%;
+                TouchArea { clicked => { root.close-menus(); } }
+                // 4px above the self row (row, 12px gap, search, 12px gap, lift).
+                MenuBox {
+                    rows: 2;
+                    dividers: 1;
+                    x: 0px;
+                    y: parent.height - HomeMetrics.search-lift - 12px - HomeMetrics.search - 12px - HomeMetrics.card-row - HomeMetrics.menu-gap - self.height;
+                    width: min(HomeMetrics.menu-w, parent.width);
+                    MenuRow { label: Tr.settings-title; clicked => { root.close-menus(); root.open-settings(); } }
+                    MenuDivider { }
+                    MenuRow { label: Tr.sign-out; danger: true; clicked => { root.sign-out(); } }
                 }
             }
         }
@@ -605,10 +931,30 @@ export component MainWindow inherits Window {
         if root.screen == 2: VerticalLayout {
             spacing: 10px;
             width: 100%;
-            Header { has-back: true; back-text: Tr.back; back => { root.back(); } }
             HorizontalLayout {
                 spacing: 8px;
                 height: AvatarMetrics.title-height;
+                Rectangle {
+                    horizontal-stretch: 0;
+                    border-radius: HomeMetrics.float-btn / 2;
+                    background: Brand.paper;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 10px;
+                        spacing: HomeMetrics.back-gap;
+                        VerticalLayout {
+                            alignment: center;
+                            Chevron { }
+                        }
+                        if root.unread-other > 0: Text {
+                            text: root.unread-other > 99 ? "99+" : root.unread-other;
+                            color: Brand.ink;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                    }
+                    TouchArea { clicked => { root.back(); } }
+                }
                 Rectangle {
                     horizontal-stretch: 0;
                     border-radius: self.height / 2;
@@ -645,9 +991,9 @@ export component MainWindow inherits Window {
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                if root.can-edit-avatar: VerticalLayout {
+                VerticalLayout {
                     alignment: center;
-                    RoundButton { glyph: "…"; clicked => { root.open-avatar(); } }
+                    RoundButton { glyph: "more"; clicked => { root.open-group-menu(); } }
                 }
             }
             if root.chat-note != "": Text { text: root.chat-note; color: Brand.muted; wrap: word-wrap; }
@@ -1087,7 +1433,7 @@ export component MainWindow inherits Window {
                 height: 52px;
                 Text { text: Tr.avatar-title; color: Brand.ink; font-size: 20px; font-weight: 700; vertical-alignment: center; }
                 Rectangle { horizontal-stretch: 1; }
-                VerticalLayout { alignment: center; RoundButton { glyph: "‹"; clicked => { root.page-back(); } } }
+                VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.page-back(); } } }
             }
             AvatarPreview { glyph: root.avatar-preview; note: root.avatar-note; }
             Text { text: root.avatar-name; color: Brand.ink; font-size: 16px; font-weight: 700; horizontal-alignment: center; }
@@ -1135,6 +1481,263 @@ export component MainWindow inherits Window {
             Rectangle {
                 height: 160px;
                 AboutSlint { }
+            }
+        }
+
+        if root.screen == 6: VerticalLayout {
+            spacing: 12px;
+            HorizontalLayout {
+                height: HomeMetrics.float-btn;
+                VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.back(); } } }
+                Rectangle { horizontal-stretch: 1; }
+                VerticalLayout { alignment: center; RoundButton { glyph: "more"; clicked => { root.open-group-menu(); } } }
+            }
+            VerticalLayout {
+                spacing: HomeMetrics.profile-name-gap;
+                alignment: center;
+                if root.profile-avatars-width > 0: Image {
+                    source: root.profile-avatars;
+                    width: root.profile-avatars-width * 1px;
+                    height: HomeMetrics.profile-avatar;
+                }
+                if  !root.group-editing: Text {
+                    text: root.chat-title;
+                    color: Brand.ink;
+                    font-size: HomeMetrics.profile-name;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+                if root.group-editing: Rectangle {
+                    height: HomeMetrics.profile-edit-h;
+                    width: 220px;
+                    border-radius: 16px;
+                    background: Brand.surface;
+                    border-width: 1px;
+                    border-color: Brand.border;
+                    TextInput {
+                        x: 12px;
+                        width: parent.width - 24px;
+                        height: 100%;
+                        text <=> root.group-edit;
+                        color: Brand.ink;
+                        font-size: 16px;
+                        single-line: true;
+                        vertical-alignment: center;
+                        accepted => { root.save-edit(); }
+                    }
+                }
+                if root.can-manage &&  !root.group-editing: Rectangle {
+                    height: HomeMetrics.profile-edit-h;
+                    width: 80px;
+                    border-radius: HomeMetrics.profile-edit-h / 2;
+                    background: Brand.surface;
+                    Text { text: Tr.profile-edit; color: Brand.ink; font-size: 13px; }
+                    TouchArea { clicked => { root.start-edit(); } }
+                }
+                if root.can-manage && root.group-editing: Rectangle {
+                    height: HomeMetrics.profile-edit-h;
+                    width: 80px;
+                    border-radius: HomeMetrics.profile-edit-h / 2;
+                    background: Brand.accent;
+                    Text { text: Tr.create; color: Brand.on-accent; font-size: 13px; }
+                    TouchArea { clicked => { if !root.group-edit-saving { root.save-edit(); } } }
+                }
+            }
+            if root.copied: Text {
+                text: Tr.profile-copied;
+                color: Brand.muted;
+                font-size: 13px;
+                horizontal-alignment: center;
+            }
+            if root.group-note != "": Text {
+                text: root.group-note;
+                color: Brand.danger;
+                font-size: 13px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            // Layout spacing is 12px, plus 12px here: 24px from Edit to the card.
+            VerticalLayout {
+                padding-top: HomeMetrics.profile-card-gap - 12px;
+                vertical-stretch: 0;
+                alignment: start;
+            Rectangle {
+                border-radius: HomeMetrics.card-r;
+                background: Brand.surface;
+                VerticalLayout {
+                    if root.routines-on >= 0: Rectangle {
+                        height: HomeMetrics.card-row;
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            Text { text: Tr.profile-routines; color: Brand.ink; font-size: 16px; vertical-alignment: center; horizontal-stretch: 1; }
+                            Text { text: root.routines-on; color: Brand.muted; font-size: 14px; vertical-alignment: center; }
+                        }
+                    }
+                    if root.member-count >= 0 && root.can-manage: Rectangle {
+                        height: HomeMetrics.card-row;
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            Text { text: Tr.profile-members; color: Brand.ink; font-size: 16px; vertical-alignment: center; horizontal-stretch: 1; }
+                            Text { text: root.member-count; color: Brand.muted; font-size: 14px; vertical-alignment: center; }
+                            Text { text: "›"; color: Brand.text3; font-size: 18px; vertical-alignment: center; }
+                        }
+                        TouchArea { clicked => { root.open-members(); } }
+                    }
+                }
+            }
+            }
+            Rectangle { vertical-stretch: 1; }
+        }
+
+        if root.screen == 7: VerticalLayout {
+            spacing: 12px;
+            HorizontalLayout {
+                height: HomeMetrics.float-btn;
+                spacing: 8px;
+                VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.back(); } } }
+                Text { text: Tr.find-title; color: Brand.ink; font-size: 20px; font-weight: 700; vertical-alignment: center; }
+            }
+            Rectangle {
+                height: HomeMetrics.search;
+                border-radius: HomeMetrics.search / 2;
+                background: Brand.surface;
+                border-width: 1px;
+                border-color: Brand.border;
+                if root.find-query == "": Text {
+                    x: 16px; width: parent.width - 32px; height: 100%;
+                    text: Tr.find-placeholder; color: Brand.muted; font-size: 15px; vertical-alignment: center;
+                }
+                TextInput {
+                    x: 16px; width: parent.width - 32px; height: 100%;
+                    text <=> root.find-query; color: Brand.ink; font-size: 15px;
+                    single-line: true; vertical-alignment: center;
+                    edited => { root.find-edited(); }
+                    accepted => { root.find-edited(); }
+                }
+            }
+            if root.find-hits.length == 0: Text {
+                text: root.find-busy ? "" : (root.find-query == "" ? Tr.find-empty : Tr.find-no-results);
+                color: Brand.muted;
+                wrap: word-wrap;
+            }
+            ListView {
+                for h in root.find-hits: Rectangle {
+                    height: 72px;
+                    VerticalLayout {
+                        padding-top: 8px;
+                        padding-bottom: 8px;
+                        spacing: 2px;
+                        HorizontalLayout {
+                            Text { text: h.author; color: Brand.ink; font-size: 14px; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
+                            Text { text: h.when; color: Brand.text3; font-size: 12px; }
+                        }
+                        Text { text: h.snippet; color: Brand.muted; font-size: 14px; overflow: elide; wrap: no-wrap; }
+                    }
+                    TouchArea { clicked => { root.open-hit(h.message-id); } }
+                }
+            }
+        }
+
+        if root.screen == 8: VerticalLayout {
+            spacing: 12px;
+            HorizontalLayout {
+                height: HomeMetrics.float-btn;
+                spacing: 8px;
+                VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.back(); } } }
+                Text { text: Tr.members-title; color: Brand.ink; font-size: 20px; font-weight: 700; vertical-alignment: center; }
+            }
+            ListView {
+                for m in root.members-list: Rectangle {
+                    height: HomeMetrics.card-row;
+                    HorizontalLayout {
+                        spacing: 12px;
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        if m.has-glyph: Image { source: m.glyph; width: 40px; height: 40px; }
+                        if !m.has-glyph: Rectangle {
+                            width: 40px; height: 40px; border-radius: 20px;
+                            background: Brand.surface; border-width: 1px; border-color: Brand.border;
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            alignment: center;
+                            Text { text: m.name; color: Brand.ink; font-size: 16px; overflow: elide; }
+                            if m.detail != "": Text { text: m.detail; color: Brand.text3; font-size: 12px; overflow: elide; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // `•••` popovers: right-aligned to the 32px button, 4px below it. The
+    // header is 40px tall and the button is centred in it, so the popover
+    // starts one header height under the safe-area top padding.
+    if root.group-menu && (root.screen == 2 || root.screen == 6): Rectangle {
+        width: 100%;
+        height: 100%;
+        TouchArea { clicked => { root.close-menus(); } }
+        if root.screen == 2: MenuBox {
+            rows: root.can-manage ? 5 : 2;
+            dividers: root.can-manage ? 1 : 0;
+            x: parent.width - Metrics.column-margin - self.width;
+            y: 20px + root.safe-area-insets.top + root.extra-safe-top + AvatarMetrics.title-height;
+            MenuRow { label: Tr.menu-profile; clicked => { root.open-group-profile(); } }
+            MenuRow { label: Tr.menu-find; clicked => { root.open-find(); } }
+            if root.can-manage: MenuRow { label: Tr.menu-rename; clicked => { root.open-group-profile(); root.start-edit(); } }
+            if root.can-manage: MenuRow { label: Tr.profile-members; clicked => { root.open-group-profile(); root.open-members(); } }
+            if root.can-manage: MenuDivider { }
+            if root.can-manage: MenuRow { label: Tr.menu-delete; danger: true; clicked => { root.ask-delete(); } }
+        }
+        if root.screen == 6: MenuBox {
+            rows: root.can-manage ? 2 : 1;
+            dividers: root.can-manage ? 1 : 0;
+            x: parent.width - HomeMetrics.profile-side - self.width;
+            y: 20px + root.safe-area-insets.top + root.extra-safe-top + HomeMetrics.float-btn;
+            MenuRow { label: Tr.profile-copy-id; clicked => { root.copy-id(); } }
+            if root.can-manage: MenuDivider { }
+            if root.can-manage: MenuRow { label: Tr.menu-delete; danger: true; clicked => { root.ask-delete(); } }
+        }
+    }
+
+    if root.delete-open: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+        TouchArea { clicked => { root.cancel-delete(); } }
+        Rectangle {
+            y: parent.height - self.height;
+            width: 100%;
+            border-top-left-radius: HomeMetrics.card-r;
+            border-top-right-radius: HomeMetrics.card-r;
+            background: Brand.paper;
+            VerticalLayout {
+                padding: 20px;
+                padding-bottom: 20px + root.safe-area-insets.bottom + root.extra-safe-bottom;
+                spacing: 12px;
+                Text { text: Tr.delete-title; color: Brand.ink; font-size: 18px; font-weight: 700; wrap: word-wrap; }
+                Text { text: Tr.delete-body; color: Brand.muted; font-size: 14px; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    Rectangle {
+                        height: 48px;
+                        horizontal-stretch: 1;
+                        border-radius: 10px;
+                        background: Brand.surface;
+                        Text { text: Tr.cancel; color: Brand.ink; font-size: 16px; font-weight: 600; }
+                        TouchArea { clicked => { root.cancel-delete(); } }
+                    }
+                    Rectangle {
+                        height: 48px;
+                        horizontal-stretch: 1;
+                        border-radius: 10px;
+                        background: Brand.danger;
+                        Text { text: Tr.delete-confirm; color: #ffffff; font-size: 16px; font-weight: 600; }
+                        TouchArea { clicked => { root.confirm-delete(); } }
+                    }
+                }
             }
         }
     }

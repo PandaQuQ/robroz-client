@@ -481,8 +481,8 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::InteractAlreadyPicked => "Someone already picked. Refreshing…",
         // 这张卡已经处理过了，正在刷新  [approved, batch 2]
         Key::InteractAlreadyDecided => "This card was already handled. Refreshing…",
-        // 等待 {owner} 审批  [approved, group approval spec]
-        Key::ApprovalWaitingFor => "Waiting for {0}",
+        // 等这个 bro 的主人审批  [approved, UI姐 review]
+        Key::ApprovalWaitingFor => "Waiting for this bro's owner",
         // {0} 于 {1} 批准  [approved, group approval spec]
         Key::ApprovalApprovedBy => "Approved by {0} at {1}",
         // {0} 于 {1} 拒绝  [approved, group approval spec]
@@ -663,6 +663,52 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ConversationsDmHint => "Message {0}…",
         // 昨天  [approved, batch 2]
         Key::ConversationsYesterday => "Yesterday",
+
+        // ---- Home list, group menu and self-row (PR4) ----
+        // PR4 copy  [approved, UI姐 review]
+        Key::HomeSearchPlaceholder => "Search",
+        // PR4 copy  [approved, UI姐 review]
+        Key::GroupMenuProfile => "View profile",
+        // PR4 copy  [approved, UI姐 review]
+        Key::GroupMenuFind => "Find in chat",
+        // 改名  [approved, UI姐 review]
+        Key::GroupMenuRename => "Rename",
+        // 删除群  [approved, UI姐 PR4 review]
+        Key::GroupMenuDelete => "Delete group",
+        // 删除  [approved, UI姐 PR4 review]
+        Key::GroupDeleteConfirm => "Delete",
+        // PR4 copy  [approved, UI姐 review]
+        Key::GroupProfileEdit => "Edit",
+        // 3 个开着 / "3 on"  [UI姐 PR4 spec]
+        // PR4 copy  [approved, UI姐 review]
+        Key::GroupProfileRoutinesOn => "{0} on",
+        // PR4 copy  [approved, UI姐 review]
+        Key::GroupProfileMembers => "Members",
+        // PR4 copy  [approved, UI姐 review]
+        Key::GroupProfileCopyId => "Copy ID",
+        // "Copied"  [UI姐 PR4 spec]
+        // PR4 copy  [approved, UI姐 review]
+        Key::GroupProfileCopied => "Copied",
+        // "Delete {group}?"  [UI姐 PR4 spec]
+        // PR4 copy  [approved, UI姐 review]
+        Key::GroupDeleteTitle => "Delete {0}?",
+        // PR4 copy  [approved, UI姐 review]
+        Key::GroupDeleteBody => "Messages, tasks and routines are deleted, and running tasks are stopped. Bros are kept.",
+        // PR4 copy  [approved, UI姐 review]
+        Key::FindInChatTitle => "Find in chat",
+        // PR4 copy  [approved, UI姐 review]
+        Key::FindInChatPlaceholder => "Search messages",
+        // PR4 copy  [approved, UI姐 review]
+        Key::FindInChatEmpty => "Search this chat",
+        // PR4 copy  [approved, UI姐 review]
+        Key::FindInChatNoResults => "No matching messages",
+        // PR4 copy  [approved, UI姐 review]
+        Key::MembersTitle => "Members",
+        // PR4 copy  [approved, UI姐 review]
+        Key::SettingsTitle => "Settings",
+        // PR4 copy  [approved, UI姐 review]
+        Key::SignOutOnThisDevice => "Sign out on this device",
+
         // 今天  [approved, chat column]
         Key::ChatDateToday => "Today",
         // 昨天  [approved, chat column]
@@ -1075,6 +1121,10 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ProcessWorked => "Worked for {0}",
         // 用了约 {0}  [approved, PR3 process]
         Key::ProcessWorkedAbout => "Worked for ~{0}",
+        // 处理中不到 1 秒  [approved, UI姐 review]
+        Key::ProcessWorkingUnder1 => "Working under 1s",
+        // 用了不到 1 秒  [approved, UI姐 review]
+        Key::ProcessWorkedUnder1 => "Worked for under 1s",
         // {0} 秒  [approved, PR3 process]
         Key::ProcessSecs => "{0}s",
         // {0} 分 {1} 秒  [approved, PR3 process]

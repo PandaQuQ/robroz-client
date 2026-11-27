@@ -161,11 +161,14 @@ impl DeliveryCard {
 }
 
 /// Status line while the task waits on an approval card (`waitingFor:
-/// "approval"`). Grey, no button: the approval card is the only way to act.
+/// "approval"`). Amber like other blocked cards, no button: the approval
+/// card is the only way to act.
 pub const AWAITING_APPROVAL: &str = "等你批准";
 
 /// Blocked on an unanswered approval card (`waitingFor: "approval"`, #57).
-/// `takeover` or an absent field (older host) keeps amber 卡住 + 去私聊接管.
+/// The stuck dot stays amber (`status.blocked`); only the takeover button
+/// is omitted. `takeover` or an absent field (older host) keeps amber 卡住
+/// + 去私聊接管.
 fn awaits_approval(state: TaskState, waiting_for: Option<WaitingFor>) -> bool {
     state == TaskState::Blocked && waiting_for == Some(WaitingFor::Approval)
 }
@@ -844,10 +847,10 @@ fn to_row(event: &Event, extras: Option<&ApprovalExtras>) -> (Key, Row) {
                     robroz_card::appearance(TaskState::Running, false),
                     failure_line(f),
                 ),
-                // Waiting on an approval card: grey, no takeover button.
+                // Waiting on an approval card: amber, no takeover button.
                 // Amber 卡住 + 去私聊接管 stays for real takeovers.
                 None if awaits_approval(*state, *waiting_for) => (
-                    robroz_card::appearance(TaskState::Running, false),
+                    robroz_card::awaiting_approval(),
                     AWAITING_APPROVAL.to_string(),
                 ),
                 None => (
@@ -1694,15 +1697,15 @@ mod tests {
     }
 
     #[test]
-    fn waiting_for_approval_is_grey_without_take_over() {
+    fn waiting_for_approval_is_amber_without_take_over() {
         let _zh = robroz_ui::i18n::scoped(robroz_ui::i18n::Locale::Zh);
         let ev = blocked_waiting(Some(WaitingFor::Approval));
         let mut feed = Feed::default();
         feed.apply(&ev);
         let card = status_cards(&feed)[0];
         assert_eq!(card.status_line, "等你批准");
-        assert_eq!(card.tone, Tone::Gray);
-        assert_eq!(card.palette, expected(TaskState::Running, false).2);
+        assert_eq!(card.tone, Tone::Amber, "blocked yellow, not dead-run grey");
+        assert_eq!(card.palette, expected(TaskState::Blocked, false).2);
         assert_eq!(
             card.action, None,
             "the approval card is the only way to act"

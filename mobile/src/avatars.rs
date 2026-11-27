@@ -256,3 +256,19 @@ mod tests {
         assert_eq!(title_ids(None, &items), vec!["cy", "ada", "bea"]);
     }
 }
+
+/// Up to three group avatars for a home-list row, stacked and overlapped
+/// like the chat title capsule (24px, 8px overlap).
+pub fn group_stack(list: &[BroAvatar], mode: Mode, ring: [u8; 3], scale: f32) -> slint::Image {
+    use robroz_tokens::home as h;
+    let n = list.len().min(3);
+    stack_at(
+        &list[..n],
+        mode,
+        ring,
+        scale,
+        h::GROUP_STACK,
+        h::GROUP_STACK_OVERLAP,
+    )
+    .0
+}

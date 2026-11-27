@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Home list, floating chat top bar, group menu and group profile: the home list has a `+` on top, 64px rows (group avatars stacked like the title capsule, no empty line under a name without preview) with an 8px unread dot, a floating search capsule and a self-row (Settings, and Sign out on this device, which deletes the token stored on this device only). The chat top bar is floating, with a back button that carries the unread count and a ••• menu that opens 4px under the button. View profile, Find in chat, Rename, Members and Delete group talk to the contract-v0.3.0 group APIs from robroz#195. Rename, Members and Delete group are shown together, and only when the chat is not a DM and the user is an admin or created the group; otherwise the entries are omitted. Delete confirms with: "Messages, tasks and routines are deleted, and running tasks are stopped. Bros are kept." / 「聊天记录、任务和例行任务会删掉，正在跑的任务会停掉。bro 不会删。」 `HostNotGroupCreator` and `HostGroupIsDm` use the already-approved copy. iced has no backdrop-blur, so floating buttons use a translucent surface fill.
+
 - Host Docker image and compose example ([#170](https://github.com/PandaQuQ/robroz/pull/170)): `host/Dockerfile` (`debian:bookworm-slim`, Docker CLI, no Node), `deploy/compose.host.yml`, and [docs/docker-host.md](https://github.com/PandaQuQ/robroz/blob/main/docs/docker-host.md). The host binary release is unchanged.
 - Release builds push `ghcr.io/pandaquq/robroz-host:<tag>` next to the runner image ([#171](https://github.com/PandaQuQ/robroz/pull/171)): linux/amd64 only, version tags only, no `latest` tag.
 - Bro owners and owner-only approvals (v0.2 accounts, first part): a `users` table with a bootstrap admin (the env token and no-token loopback act as it), `GET /api/me`, `Bro.ownerUserId`, one DM per (user, bro), `ownerUserId` / `ownerName` on approval cards, and `authorUserId` / `authorName` on `message` events. Approval cards stay in the group they were raised in; the owner's DM gets a new `approval_reminder` event. See [docs/permissions.md](https://github.com/PandaQuQ/robroz/blob/main/docs/permissions.md).
@@ -21,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Client on `contract-v0.3.0`: failure, progress and approval-reason lines are drawn from `failureCode` + `failureDetail`, `progressCode` + `progressParams` and `reasonCode` with the client's own zh/en copy; host text is never shown. Raw details such as `response_not_json` sit on a monospace detail line under the failure (the old "Show details" toggle is gone). Unknown codes show 「出错了」/ "Something went wrong" (progress: 「进行中」/ "In progress") and are logged.
 - `POST /api/approvals/{id}/approve` and `/deny` return 403 `{"code":"approval_forbidden","reason":"not_owner"|"decided"|"expired"}` instead of 409 for an answered or expired card, and for a caller who is not the bro's owner. Renaming a bro, opening its DM or adding it to a group by someone else is 403 `not_bro_owner`. `GET /api/bros` lists the caller's bros. The host no longer writes 「已发到主人私聊」.
+
+### Fixed
+
+- Approval, process and find-in-chat follow-ups from the PR4 review: a non-owner sees "Waiting for this bro's owner" / 「等这个 bro 的主人审批」 (not the owner's account name); a duration under 1s reads "Worked for under 1s" / 「用了不到 1 秒」 (live: "Working under 1s" / 「处理中不到 1 秒」); a task blocked on an approval keeps the `status.blocked` yellow dot; find-in-chat uses the same search capsule as the home list. A truncated sidebar name shows the full name on hover. The sidebar stays 220px.
 
 ## [0.1.1] - 2026-11-25
 

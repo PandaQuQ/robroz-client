@@ -10,12 +10,13 @@ pub mod avatars;
 pub mod card;
 pub mod chat;
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use robroz_card::Tone;
-use robroz_contract::{Bro, BroAvatar, Me};
+use robroz_contract::{Bro, BroAvatar, Group, GroupMembers, GroupSearchHit, Me, Unread};
 use robroz_tokens::{ColorSet, DARK, LIGHT};
 use robroz_ui::avatar;
 use robroz_ui::conversations;
@@ -227,6 +228,35 @@ fn apply_metrics(ui: &MainWindow) {
     am.set_swatch_hit(a::SWATCH_HIT);
     am.set_ring(a::SELECTED_RING);
     am.set_create_empty_opacity(a::CREATE_EMPTY_OPACITY);
+    use robroz_tokens::home as h;
+    let hm = ui.global::<HomeMetrics>();
+    hm.set_row(h::ROW);
+    hm.set_row_face_w(h::ROW_FACE_W);
+    hm.set_row_avatar(h::ROW_AVATAR);
+    hm.set_row_name(h::ROW_NAME);
+    hm.set_row_time(h::ROW_TIME);
+    hm.set_row_preview(h::ROW_PREVIEW);
+    hm.set_unread_dot(h::UNREAD_DOT);
+    hm.set_search(h::SEARCH);
+    hm.set_search_lift(h::SEARCH_LIFT);
+    hm.set_float_btn(h::FLOAT_BTN);
+    hm.set_menu_w(h::MENU_W);
+    hm.set_menu_r(h::MENU_R);
+    hm.set_menu_gap(h::MENU_GAP);
+    hm.set_menu_pad(h::MENU_PAD);
+    hm.set_menu_divider_gap(h::MENU_DIVIDER_GAP);
+    hm.set_more_icon(h::MORE_ICON);
+    hm.set_back_gap(h::BACK_GAP);
+    hm.set_profile_card_gap(h::PROFILE_CARD_GAP);
+    hm.set_profile_side(h::PROFILE_SIDE);
+    hm.set_menu_row(h::MENU_ROW);
+    hm.set_menu_text(h::MENU_TEXT);
+    hm.set_profile_avatar(h::PROFILE_AVATAR);
+    hm.set_profile_name(h::PROFILE_NAME);
+    hm.set_profile_name_gap(h::PROFILE_NAME_GAP);
+    hm.set_profile_edit_h(h::PROFILE_EDIT_H);
+    hm.set_card_r(h::CARD_R);
+    hm.set_card_row(h::CARD_ROW);
 }
 
 /// Open the avatar page for the open DM's bro, owner only.
@@ -318,6 +348,24 @@ fn apply_strings(ui: &MainWindow) {
     tr.set_shape(Key::AvatarShape.as_str().into());
     tr.set_color(Key::AvatarColor.as_str().into());
     tr.set_use_default(Key::AvatarUseDefault.as_str().into());
+    tr.set_search_placeholder(Key::HomeSearchPlaceholder.as_str().into());
+    tr.set_menu_profile(Key::GroupMenuProfile.as_str().into());
+    tr.set_menu_find(Key::GroupMenuFind.as_str().into());
+    tr.set_menu_delete(Key::GroupMenuDelete.as_str().into());
+    tr.set_menu_rename(Key::GroupMenuRename.as_str().into());
+    tr.set_delete_confirm(Key::GroupDeleteConfirm.as_str().into());
+    tr.set_profile_edit(Key::GroupProfileEdit.as_str().into());
+    tr.set_profile_members(Key::GroupProfileMembers.as_str().into());
+    tr.set_profile_copy_id(Key::GroupProfileCopyId.as_str().into());
+    tr.set_profile_copied(Key::GroupProfileCopied.as_str().into());
+    tr.set_delete_body(Key::GroupDeleteBody.as_str().into());
+    tr.set_find_title(Key::FindInChatTitle.as_str().into());
+    tr.set_find_placeholder(Key::FindInChatPlaceholder.as_str().into());
+    tr.set_find_empty(Key::FindInChatEmpty.as_str().into());
+    tr.set_find_no_results(Key::FindInChatNoResults.as_str().into());
+    tr.set_members_title(Key::MembersTitle.as_str().into());
+    tr.set_settings_title(Key::SettingsTitle.as_str().into());
+    tr.set_sign_out(Key::SignOutOnThisDevice.as_str().into());
     ui.set_locale_index(match i18n::locale() {
         Locale::En => 0,
         Locale::Zh => 1,
@@ -391,6 +439,7 @@ fn render_chat(ui: &MainWindow, st: &State) {
     render_working(ui, st);
     render_banner(ui, st);
     render_page(ui, st);
+    apply_chat_chrome(ui, st);
 }
 
 fn render_working(ui: &MainWindow, st: &State) {
@@ -650,6 +699,255 @@ fn set_composer_hint(ui: &MainWindow, name: &str, dm: bool) {
     ui.set_composer_hint(conversations::composer_hint(name, dm).into());
 }
 
+fn current_group<'a>(st: &'a State) -> Option<&'a Group> {
+    st.groups.iter().find(|g| g.id == st.chat_group)
+}
+
+fn close_menus(ui: &MainWindow) {
+    ui.set_group_menu(false);
+    ui.set_self_menu(false);
+}
+
+fn apply_sessions(ui: &MainWindow, st: &State) {
+    let q = st.home_query.trim().to_lowercase();
+    let rows = api::session_rows(&st.groups, &st.unread);
+    let scale = window_scale(ui);
+    let model: Vec<SessionRow> = rows
+        .into_iter()
+        .filter(|(g, _)| q.is_empty() || g.name.to_lowercase().contains(&q))
+        .map(|(g, n)| {
+            let (glyph, has_glyph) = row_glyph(st, &g, scale);
+            SessionRow {
+                id: g.id.clone().into(),
+                name: g.name.clone().into(),
+                unread: n.min(99) as i32,
+                preview: SharedString::default(),
+                time: SharedString::default(),
+                glyph,
+                has_glyph,
+            }
+        })
+        .collect();
+    ui.set_sessions(ModelRc::new(VecModel::from(model)));
+    ui.set_me_name(
+        st.me
+            .as_ref()
+            .map(|m| m.name.clone())
+            .unwrap_or_default()
+            .into(),
+    );
+    ui.set_me_initial(
+        conversations::initial(st.me.as_ref().map(|m| m.name.as_str()).unwrap_or_default()).into(),
+    );
+    ui.set_home_query(st.home_query.clone().into());
+}
+
+fn row_glyph(st: &State, g: &Group, scale: f32) -> (slint::Image, bool) {
+    if let Some(b) = avatars::dm_bro(&st.bros, &g.id) {
+        return (
+            avatars::glyph(
+                avatars::avatar_of(&st.bros, &b.id),
+                st.theme,
+                robroz_tokens::home::ROW_AVATAR,
+                scale,
+            ),
+            true,
+        );
+    }
+    if let Some((faces, _)) = st.group_faces.get(&g.id) {
+        if !faces.is_empty() {
+            return (
+                avatars::group_stack(faces, st.theme, tokens_for(st.theme).window, scale),
+                true,
+            );
+        }
+    }
+    (slint::Image::default(), false)
+}
+
+fn apply_chat_chrome(ui: &MainWindow, st: &State) {
+    let unread_other: u64 = st
+        .unread
+        .iter()
+        .filter(|u| u.group_id != st.chat_group)
+        .map(|u| u.unread)
+        .sum();
+    ui.set_unread_other(unread_other.min(99) as i32);
+    let can = current_group(st).is_some_and(|g| api::can_manage(st.me.as_ref(), g));
+    ui.set_can_manage(can);
+    let name = current_group(st)
+        .map(|g| g.name.as_str())
+        .unwrap_or(st.chat_name.as_str());
+    ui.global::<Tr>()
+        .set_delete_title(Key::GroupDeleteTitle.fill(&[&name]).into());
+    if let Some(n) = st.routines_on.get(&st.chat_group) {
+        ui.set_routines_on(*n as i32);
+        ui.global::<Tr>()
+            .set_profile_routines(Key::GroupProfileRoutinesOn.fill(&[&n.to_string()]).into());
+    } else {
+        ui.set_routines_on(-1);
+    }
+    ui.set_member_count(
+        st.member_count
+            .get(&st.chat_group)
+            .map(|n| *n as i32)
+            .unwrap_or(-1),
+    );
+    ui.set_group_note(st.group_note.clone().unwrap_or_default().into());
+    ui.set_group_edit(st.group_edit.clone().into());
+    ui.set_group_editing(st.group_editing);
+    ui.set_copied(st.copied_until.is_some_and(|u| now_unix() < u));
+    let scale = window_scale(ui);
+    let faces = st
+        .group_faces
+        .get(&st.chat_group)
+        .cloned()
+        .unwrap_or_default();
+    let (img, w) = if faces.0.is_empty() {
+        if let Some(b) = avatars::dm_bro(&st.bros, &st.chat_group) {
+            avatars::stack_at(
+                &[avatars::avatar_of(&st.bros, &b.id)],
+                st.theme,
+                tokens_for(st.theme).surface,
+                scale,
+                robroz_tokens::home::PROFILE_AVATAR,
+                0.0,
+            )
+        } else {
+            (slint::Image::default(), 0.0)
+        }
+    } else {
+        avatars::stack_at(
+            &faces.0,
+            st.theme,
+            tokens_for(st.theme).surface,
+            scale,
+            robroz_tokens::home::PROFILE_AVATAR,
+            robroz_tokens::base::avatar::TITLE_OVERLAP
+                * (robroz_tokens::home::PROFILE_AVATAR / robroz_tokens::base::avatar::TITLE_SIZE),
+        )
+    };
+    ui.set_profile_avatars(img);
+    ui.set_profile_avatars_width(w);
+    ui.set_profile_more(faces.1 as i32);
+}
+
+fn apply_find(ui: &MainWindow, st: &State) {
+    let hits: Vec<FindHit> = st
+        .find_hits
+        .iter()
+        .map(|h| FindHit {
+            message_id: h.message_id.clone().into(),
+            snippet: h.snippet.clone().into(),
+            when: h.created_at.clone().into(),
+            author: h.author_name.clone().unwrap_or_default().into(),
+        })
+        .collect();
+    ui.set_find_hits(ModelRc::new(VecModel::from(hits)));
+    ui.set_find_query(st.find_query.clone().into());
+    ui.set_find_busy(false);
+}
+
+fn apply_members(ui: &MainWindow, st: &State) {
+    let scale = window_scale(ui);
+    let mut rows: Vec<MemberLine> = Vec::new();
+    if let Some(m) = &st.members {
+        for b in &m.bros {
+            rows.push(MemberLine {
+                name: b.name.clone().into(),
+                detail: b.owner_name.clone().unwrap_or_default().into(),
+                glyph: avatars::glyph(
+                    avatars::avatar_of(&st.bros, &b.bot_id),
+                    st.theme,
+                    40.0,
+                    scale,
+                ),
+                has_glyph: true,
+            });
+        }
+        for u in &m.users {
+            rows.push(MemberLine {
+                name: u.name.clone().unwrap_or_else(|| u.user_id.clone()).into(),
+                detail: SharedString::default(),
+                glyph: slint::Image::default(),
+                has_glyph: false,
+            });
+        }
+    }
+    ui.set_members_list(ModelRc::new(VecModel::from(rows)));
+}
+
+fn now_unix() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn store_groups(st: &mut State, groups: Vec<Group>, unread: Vec<Unread>) {
+    st.groups = groups;
+    st.unread = unread;
+}
+
+fn load_group_extras(
+    ui: &MainWindow,
+    state: &Arc<Mutex<State>>,
+    conn: &api::Conn,
+    groups: &[Group],
+) {
+    for g in groups.iter().filter(|g| !g.dm) {
+        let conn = conn.clone();
+        let id = g.id.clone();
+        let weak = ui.as_weak();
+        let state = state.clone();
+        std::thread::spawn(move || {
+            let members = conn.group_members(&id).ok();
+            let schedules = conn.schedules(&id).ok();
+            let _ = slint::invoke_from_event_loop(move || {
+                let ui = weak.unwrap();
+                let mut st = state.lock().unwrap();
+                if let Some(m) = members {
+                    let mut faces: Vec<BroAvatar> = m
+                        .bros
+                        .iter()
+                        .map(|b| avatars::avatar_of(&st.bros, &b.bot_id))
+                        .collect();
+                    let more = faces.len().saturating_sub(4);
+                    faces.truncate(4);
+                    st.member_count.insert(id.clone(), m.bros.len() as u64);
+                    st.group_faces.insert(id.clone(), (faces, more));
+                    if st.chat_group == id && ui.get_screen() == 8 {
+                        st.members = Some(m);
+                        apply_members(&ui, &st);
+                    }
+                }
+                if let Some(s) = schedules {
+                    let on = s.iter().filter(|e| !e.paused).count() as u64;
+                    st.routines_on.insert(id.clone(), on);
+                }
+                apply_sessions(&ui, &st);
+                apply_chat_chrome(&ui, &st);
+            });
+        });
+    }
+}
+
+fn copy_to_clipboard(text: &str) {
+    let _ = std::process::Command::new("xclip")
+        .args(["-selection", "clipboard"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut c| {
+            use std::io::Write;
+            if let Some(stdin) = c.stdin.as_mut() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            c.wait()
+        });
+    let _ = std::process::Command::new("wl-copy").arg(text).status();
+}
+
 #[derive(Default)]
 struct State {
     conn: Option<api::Conn>,
@@ -681,6 +979,19 @@ struct State {
     creating: bool,
     /// Continuous poll/stream failure start, for the reconnecting banner.
     poll_fail_since: Option<i64>,
+    groups: Vec<Group>,
+    unread: Vec<Unread>,
+    home_query: String,
+    group_faces: HashMap<String, (Vec<BroAvatar>, usize)>,
+    routines_on: HashMap<String, u64>,
+    member_count: HashMap<String, u64>,
+    members: Option<GroupMembers>,
+    find_query: String,
+    find_hits: Vec<GroupSearchHit>,
+    group_note: Option<String>,
+    group_edit: String,
+    group_editing: bool,
+    copied_until: Option<i64>,
 }
 
 /// Desktop-only shot hook: pre-fill screens from a fixture host when
@@ -717,19 +1028,13 @@ fn prepare_shot(ui: &MainWindow, state: &Arc<Mutex<State>>, shot: &str) {
                 .iter()
                 .map(|(g, _)| (g.id.clone(), g.name.clone()))
                 .collect();
-            ui.set_sessions(ModelRc::new(VecModel::from(
-                rows.into_iter()
-                    .map(|(g, n)| SessionRow {
-                        id: g.id.into(),
-                        name: g.name.into(),
-                        unread: n.min(99) as i32,
-                    })
-                    .collect::<Vec<_>>(),
-            )));
             let mut st = state.lock().unwrap();
             st.conn = Some(conn.clone());
             st.bros = conn.bros().unwrap_or_default();
             st.me = conn.me().ok();
+            store_groups(&mut st, groups.clone(), unread);
+            apply_sessions(ui, &st);
+            load_group_extras(ui, state, &conn, &groups);
             if !token.is_empty() && shot != "connect-401" {
                 st.token_saved = Some(token);
                 st.token_dirty = false;
@@ -965,10 +1270,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let weak = ui.as_weak();
             let state = state.clone();
             std::thread::spawn(move || {
-                let result = conn.groups().and_then(|groups| {
-                    // The unread counts only decorate the list.
+                let result = conn.groups().map(|groups| {
                     let unread = conn.unread().unwrap_or_default();
-                    Ok(api::session_rows(&groups, &unread))
+                    (groups, unread)
                 });
                 // Avatars and who owns which bro; an older host has neither.
                 let bros = conn.bros().unwrap_or_default();
@@ -977,28 +1281,22 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     let ui = weak.unwrap();
                     ui.set_busy(false);
                     match result {
-                        Ok(rows) => {
-                            let rows: Vec<SessionRow> = rows
-                                .into_iter()
-                                .map(|(g, n)| SessionRow {
-                                    id: g.id.into(),
-                                    name: g.name.into(),
-                                    unread: n.min(99) as i32,
-                                })
-                                .collect();
-                            ui.set_sessions(ModelRc::new(VecModel::from(rows)));
+                        Ok((groups, unread)) => {
                             {
                                 let mut st = state.lock().unwrap();
-                                st.conn = Some(conn);
+                                st.conn = Some(conn.clone());
                                 st.bros = bros;
                                 st.me = me;
+                                store_groups(&mut st, groups.clone(), unread);
                                 if !token.is_empty() {
                                     st.token_from_env = from_env;
                                     st.token_saved = Some(token);
                                     st.token_dirty = false;
                                     apply_token_field(&ui, &st);
                                 }
+                                apply_sessions(&ui, &st);
                             }
+                            load_group_extras(&ui, &state, &conn, &groups);
                             ui.set_screen(1);
                         }
                         Err(e) => apply_connect_error(&ui, &e.0, from_env),
@@ -1019,12 +1317,17 @@ pub fn run() -> Result<(), slint::PlatformError> {
             ui.set_chat(ModelRc::new(VecModel::from(Vec::<ChatRow>::new())));
             ui.set_chat_title(name.clone());
             ui.set_chat_note("…".into());
+            close_menus(&ui);
+            ui.set_delete_open(false);
             ui.set_screen(2);
             {
                 let mut st = state.lock().unwrap();
                 st.chat.clear();
                 st.chat_group = id.to_string();
+                st.group_editing = false;
+                st.group_note = None;
                 render_title(&ui, &st);
+                apply_chat_chrome(&ui, &st);
             }
             let weak = ui.as_weak();
             let state = state.clone();
@@ -1077,12 +1380,23 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         move || {
             let ui = weak.unwrap();
-            let to = if ui.get_screen() == 3 {
-                state.lock().unwrap().before_settings
-            } else {
-                1
+            close_menus(&ui);
+            ui.set_delete_open(false);
+            let screen = ui.get_screen();
+            let to = match screen {
+                3 => state.lock().unwrap().before_settings,
+                6 | 7 => 2,
+                8 => 6,
+                _ => 1,
             };
             ui.set_screen(to);
+            if to == 2 || to == 6 {
+                let st = state.lock().unwrap();
+                apply_chat_chrome(&ui, &st);
+                if to == 6 {
+                    apply_members(&ui, &st);
+                }
+            }
         }
     });
 
@@ -1282,15 +1596,19 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     match result {
                         Ok(bro) => {
                             if let Some(rows) = rows {
-                                ui.set_sessions(ModelRc::new(VecModel::from(
-                                    rows.into_iter()
-                                        .map(|(g, n)| SessionRow {
-                                            id: g.id.into(),
-                                            name: g.name.into(),
-                                            unread: n.min(99) as i32,
-                                        })
-                                        .collect::<Vec<_>>(),
-                                )));
+                                let groups: Vec<Group> =
+                                    rows.iter().map(|(g, _)| g.clone()).collect();
+                                let unread: Vec<Unread> = rows
+                                    .iter()
+                                    .map(|(g, n)| Unread {
+                                        group_id: g.id.clone(),
+                                        read_at: None,
+                                        unread: *n,
+                                        last_activity_at: None,
+                                    })
+                                    .collect();
+                                store_groups(&mut st, groups, unread);
+                                apply_sessions(&ui, &st);
                             }
                             let dm = bro.dm_group_id.clone();
                             let name = bro.name.clone();
@@ -1347,6 +1665,282 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
 
+    ui.on_open_group_menu({
+        let weak = ui.as_weak();
+        move || {
+            let ui = weak.unwrap();
+            ui.set_self_menu(false);
+            ui.set_group_menu(true);
+        }
+    });
+    ui.on_close_menus({
+        let weak = ui.as_weak();
+        move || close_menus(&weak.unwrap())
+    });
+    ui.on_open_group_profile({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            close_menus(&ui);
+            let st = state.lock().unwrap();
+            let owned_dm = avatars::dm_bro(&st.bros, &st.chat_group)
+                .is_some_and(|b| avatars::owns(st.me.as_ref(), b));
+            drop(st);
+            if owned_dm {
+                open_avatar(&ui, &state);
+                return;
+            }
+            {
+                let st = state.lock().unwrap();
+                apply_chat_chrome(&ui, &st);
+            }
+            ui.set_screen(6);
+        }
+    });
+    ui.on_open_find({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            close_menus(&ui);
+            {
+                let mut st = state.lock().unwrap();
+                st.find_query.clear();
+                st.find_hits.clear();
+                apply_find(&ui, &st);
+            }
+            ui.set_screen(7);
+        }
+    });
+    ui.on_find_edited({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            let q = ui.get_find_query().to_string();
+            let Some(conn) = state.lock().unwrap().conn.clone() else {
+                return;
+            };
+            let id = state.lock().unwrap().chat_group.clone();
+            if q.trim().is_empty() {
+                let mut st = state.lock().unwrap();
+                st.find_query = q;
+                st.find_hits.clear();
+                apply_find(&ui, &st);
+                return;
+            }
+            ui.set_find_busy(true);
+            let weak = ui.as_weak();
+            let state = state.clone();
+            std::thread::spawn(move || {
+                let result = conn.search_group(&id, &q);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let ui = weak.unwrap();
+                    let mut st = state.lock().unwrap();
+                    st.find_query = q;
+                    st.find_hits = result.map(|s| s.results).unwrap_or_default();
+                    apply_find(&ui, &st);
+                });
+            });
+        }
+    });
+    ui.on_open_members({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            close_menus(&ui);
+            let Some(conn) = state.lock().unwrap().conn.clone() else {
+                return;
+            };
+            let id = state.lock().unwrap().chat_group.clone();
+            ui.set_screen(8);
+            let weak = ui.as_weak();
+            let state = state.clone();
+            std::thread::spawn(move || {
+                let result = conn.group_members(&id);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let ui = weak.unwrap();
+                    let mut st = state.lock().unwrap();
+                    st.members = result.ok();
+                    apply_members(&ui, &st);
+                });
+            });
+        }
+    });
+    ui.on_start_edit({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            st.group_edit = current_group(&st)
+                .map(|g| g.name.clone())
+                .unwrap_or_else(|| st.chat_name.clone());
+            st.group_editing = true;
+            st.group_note = None;
+            apply_chat_chrome(&ui, &st);
+        }
+    });
+    ui.on_save_edit({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            let name = ui.get_group_edit().to_string();
+            let Some(conn) = state.lock().unwrap().conn.clone() else {
+                return;
+            };
+            let id = state.lock().unwrap().chat_group.clone();
+            ui.set_group_edit_saving(true);
+            let weak = ui.as_weak();
+            let state = state.clone();
+            std::thread::spawn(move || {
+                let result = conn.rename_group(&id, &name);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let ui = weak.unwrap();
+                    ui.set_group_edit_saving(false);
+                    let mut st = state.lock().unwrap();
+                    match result {
+                        Ok(g) => {
+                            if let Some(old) = st.groups.iter_mut().find(|x| x.id == g.id) {
+                                *old = g.clone();
+                            }
+                            st.chat_name = g.name.clone();
+                            st.group_editing = false;
+                            st.group_note = None;
+                            ui.set_chat_title(g.name.into());
+                            apply_sessions(&ui, &st);
+                            apply_chat_chrome(&ui, &st);
+                        }
+                        Err(e) => {
+                            st.group_note = Some(e.0);
+                            apply_chat_chrome(&ui, &st);
+                        }
+                    }
+                });
+            });
+        }
+    });
+    ui.on_copy_id({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            close_menus(&ui);
+            let id = state.lock().unwrap().chat_group.clone();
+            copy_to_clipboard(&id);
+            let mut st = state.lock().unwrap();
+            st.copied_until = Some(now_unix() + 2);
+            apply_chat_chrome(&ui, &st);
+        }
+    });
+    ui.on_ask_delete({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            close_menus(&ui);
+            let st = state.lock().unwrap();
+            apply_chat_chrome(&ui, &st);
+            ui.set_delete_open(true);
+        }
+    });
+    ui.on_cancel_delete({
+        let weak = ui.as_weak();
+        move || weak.unwrap().set_delete_open(false)
+    });
+    ui.on_confirm_delete({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            let Some(conn) = state.lock().unwrap().conn.clone() else {
+                return;
+            };
+            let id = state.lock().unwrap().chat_group.clone();
+            let weak = ui.as_weak();
+            let state = state.clone();
+            std::thread::spawn(move || {
+                let result = conn.delete_group(&id);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let ui = weak.unwrap();
+                    let mut st = state.lock().unwrap();
+                    match result {
+                        Ok(()) => {
+                            st.groups.retain(|g| g.id != id);
+                            st.unread.retain(|u| u.group_id != id);
+                            st.chat_group.clear();
+                            st.chat.clear();
+                            ui.set_delete_open(false);
+                            apply_sessions(&ui, &st);
+                            ui.set_screen(1);
+                        }
+                        Err(e) => {
+                            st.group_note = Some(e.0);
+                            ui.set_delete_open(false);
+                            apply_chat_chrome(&ui, &st);
+                        }
+                    }
+                });
+            });
+        }
+    });
+    ui.on_open_self_menu({
+        let weak = ui.as_weak();
+        move || {
+            let ui = weak.unwrap();
+            ui.set_group_menu(false);
+            ui.set_self_menu(true);
+        }
+    });
+    ui.on_sign_out({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            close_menus(&ui);
+            let mut st = state.lock().unwrap();
+            if !st.token_from_env {
+                st.token_saved = None;
+            }
+            st.token_dirty = false;
+            st.conn = None;
+            st.groups.clear();
+            st.unread.clear();
+            st.bros.clear();
+            st.me = None;
+            st.chat.clear();
+            st.chat_group.clear();
+            apply_sessions(&ui, &st);
+            apply_token_field(&ui, &st);
+            drop(st);
+            ui.set_error_title("".into());
+            ui.set_error("".into());
+            ui.set_sessions(ModelRc::new(VecModel::from(Vec::<SessionRow>::new())));
+            ui.set_screen(0);
+        }
+    });
+    ui.on_home_search_edited({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            st.home_query = ui.get_home_query().to_string();
+            apply_sessions(&ui, &st);
+        }
+    });
+    ui.on_open_hit({
+        let weak = ui.as_weak();
+        move |_id| {
+            // Jump-to-message is not wired yet; close find and return to the chat.
+            let ui = weak.unwrap();
+            ui.set_screen(2);
+        }
+    });
+
     let clock = slint::Timer::default();
     clock.start(
         slint::TimerMode::Repeated,
@@ -1356,10 +1950,17 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let state = state.clone();
             move || {
                 let Some(ui) = weak.upgrade() else { return };
+                if ui.get_screen() != 2 && ui.get_screen() != 6 {
+                    return;
+                }
+                let mut st = state.lock().unwrap();
+                if st.copied_until.is_some_and(|u| now_unix() >= u) {
+                    st.copied_until = None;
+                    apply_chat_chrome(&ui, &st);
+                }
                 if ui.get_screen() != 2 {
                     return;
                 }
-                let st = state.lock().unwrap();
                 let now = robroz_ui::process::now_unix();
                 let ticking = st.poll_fail_since.is_some()
                     || st.chat.iter().any(|item| {
