@@ -63,6 +63,7 @@ fn approval(state: ApprovalState, bot: &str) -> Card {
         mcp_server: None,
         mcp_tool: None,
         reason: None,
+        reason_code: None,
         owner_id: None,
         owner_name: None,
     })

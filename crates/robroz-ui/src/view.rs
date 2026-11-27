@@ -1550,14 +1550,13 @@ fn approval_what<'a>(
             .push(gap(t.metrics.head_gap))
             .push(path_chip(t, path, inner));
     }
-    if let Some(reason) = card.reason.as_deref() {
-        if reason != review_rules::APPROVAL_EXPIRED_REASON {
-            col = col.push(gap(t.metrics.head_gap)).push(
-                text(review_rules::blocked_reason_line(reason))
-                    .size(t.type_.foot)
-                    .color(color(t.palette.text2)),
-            );
-        }
+    if let Some(shown) = crate::cards::codes::reason_text(card.reason_code, card.reason.as_deref())
+    {
+        col = col.push(gap(t.metrics.head_gap)).push(
+            text(review_rules::blocked_reason_line(&shown))
+                .size(t.type_.foot)
+                .color(color(t.palette.text2)),
+        );
     }
     col
 }
@@ -3558,8 +3557,8 @@ fn conversation_row<'a>(
             },
             body
         ]
-            .spacing(ROW_GAP)
-            .align_y(Alignment::Center),
+        .spacing(ROW_GAP)
+        .align_y(Alignment::Center),
     )
     .width(Fill)
     .padding(Padding::from([6.0, ROW_PAD_H]))
@@ -3780,7 +3779,11 @@ pub fn chat_header<'a>(
             if dm {
                 inner = inner.push(tag(t, Key::ViewDmTag.as_str(), t.palette.text2));
             }
-            let left = if bros.avatars.is_empty() { 14.0 } else { tok::TITLE_PAD };
+            let left = if bros.avatars.is_empty() {
+                14.0
+            } else {
+                tok::TITLE_PAD
+            };
             bar = bar.push(
                 container(inner)
                     .height(Length::Fixed(tok::TITLE_HEIGHT))

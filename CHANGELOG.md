@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Client on `contract-v0.3.0`: failure, progress and approval-reason lines are drawn from `failureCode` + `failureDetail`, `progressCode` + `progressParams` and `reasonCode` with the client's own zh/en copy; host text is never shown. Raw details such as `response_not_json` sit on a monospace detail line under the failure (the old "Show details" toggle is gone). Unknown codes show 「出错了」/ "Something went wrong" (progress: 「进行中」/ "In progress") and are logged.
 - `POST /api/approvals/{id}/approve` and `/deny` return 403 `{"code":"approval_forbidden","reason":"not_owner"|"decided"|"expired"}` instead of 409 for an answered or expired card, and for a caller who is not the bro's owner. Renaming a bro, opening its DM or adding it to a group by someone else is 403 `not_bro_owner`. `GET /api/bros` lists the caller's bros. The host no longer writes 「已发到主人私聊」.
 
 ## [0.1.1] - 2026-11-25

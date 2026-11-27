@@ -5,7 +5,9 @@
 
 use iced::mouse;
 use iced::widget::canvas::{self, Frame, Geometry, Path, Program, Stroke};
-use iced::widget::{button, canvas as canvas_widget, column, container, row, space, text, text_input};
+use iced::widget::{
+    button, canvas as canvas_widget, column, container, row, space, text, text_input,
+};
 use iced::{
     Alignment, Border, Color, Element, Fill, Length, Padding, Point, Rectangle, Renderer,
     Shadow as IcedShadow, Theme as IcedTheme,
@@ -156,11 +158,15 @@ fn round_button_style(t: Skin) -> impl Fn(&IcedTheme, button::Status) -> button:
 pub fn round_button<'a>(t: &Skin, glyph: &'static str, on: Action) -> Element<'a, Action> {
     let s = tok::MORE_BUTTON;
     button(
-        container(text(glyph).size(t.type_.row_name).color(color(t.palette.text)))
-            .width(Length::Fixed(s))
-            .height(Length::Fixed(s))
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center),
+        container(
+            text(glyph)
+                .size(t.type_.row_name)
+                .color(color(t.palette.text)),
+        )
+        .width(Length::Fixed(s))
+        .height(Length::Fixed(s))
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center),
     )
     .padding(0)
     .width(Length::Fixed(s))
@@ -259,7 +265,10 @@ pub fn avatar_picker<'a>(t: &Skin, current: BroAvatar) -> Element<'a, Action> {
         let b = button(
             container(bro_avatar(
                 t,
-                BroAvatar::new(s, current.color),
+                BroAvatar {
+                    shape: s,
+                    color: current.color,
+                },
                 tok::SHAPE_GLYPH,
             ))
             .width(Fill)
@@ -459,7 +468,11 @@ pub fn create_bro_page<'a>(
         .style(secondary_style(*t))
         .on_press(Action::AvatarPageClose);
     let body = column![
-        page_head(t, Key::ConversationsNewBro.as_str().to_string(), cancel.into()),
+        page_head(
+            t,
+            Key::ConversationsNewBro.as_str().to_string(),
+            cancel.into()
+        ),
         container(avatar_preview(t, a)).width(Fill).center_x(Fill),
         preview_note(t, note),
         input,

@@ -302,15 +302,9 @@ pub fn svg_outline(shape: u8, size: f32) -> String {
             Seg::Move(x, y) => format!("M {} {} ", p(x), p(y)),
             Seg::Line(x, y) => format!("L {} {} ", p(x), p(y)),
             Seg::Quad(cx, cy, x, y) => format!("Q {} {} {} {} ", p(cx), p(cy), p(x), p(y)),
-            Seg::Cubic(a, b, c, d, x, y) => format!(
-                "C {} {} {} {} {} {} ",
-                p(a),
-                p(b),
-                p(c),
-                p(d),
-                p(x),
-                p(y)
-            ),
+            Seg::Cubic(a, b, c, d, x, y) => {
+                format!("C {} {} {} {} {} {} ", p(a), p(b), p(c), p(d), p(x), p(y))
+            }
             Seg::Close => "Z ".to_string(),
         };
         s.push_str(&part);

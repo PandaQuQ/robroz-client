@@ -169,6 +169,9 @@ pub struct ApprovalCard {
     /// Why a blocked action was stopped, or the expiry reason. Absent on
     /// older cards. Compared to [`review_rules::APPROVAL_EXPIRED_REASON`].
     pub reason: Option<String>,
+    /// v0.3: the code form of `reason`. The drawn line comes from
+    /// [`codes::reason_text`], never from `reason` (except `review_model`).
+    pub reason_code: Option<robroz_contract::ApprovalReasonCode>,
     /// v0.2: the bro's owner, the only person who may decide this card
     /// (`ownerUserId`). `None` from an older host or on a settings card.
     pub owner_id: Option<String>,
@@ -234,6 +237,7 @@ impl ApprovalCard {
             mcp_server,
             mcp_tool,
             reason,
+            reason_code,
             expires_at,
             owner_user_id,
             owner_name,
@@ -243,7 +247,7 @@ impl ApprovalCard {
             return None;
         };
         let reason = reason.clone();
-        let expired = reason.as_deref() == Some(review_rules::APPROVAL_EXPIRED_REASON);
+        let expired = codes::reason_is_expired(*reason_code, reason.as_deref());
         let at = answered_at
             .as_deref()
             .or(expires_at.as_deref())
@@ -280,6 +284,7 @@ impl ApprovalCard {
             mcp_server: mcp_server.clone(),
             mcp_tool: mcp_tool.clone(),
             reason,
+            reason_code: *reason_code,
             owner_id: owner_user_id.clone(),
             owner_name: owner_name.clone(),
         })
@@ -376,6 +381,7 @@ mod tests {
     fn answered_by_shows_me_other_or_nobody() {
         let _zh = crate::i18n::scoped(crate::i18n::Locale::Zh);
         let event = |decision, by: Option<&str>| Event::Approval {
+            reason_code: None,
             id: "a1".into(),
             bot_id: "bot-doc".into(),
             bot_name: "文档哥".into(),
@@ -490,6 +496,7 @@ mod tests {
 
     fn call_event(summary: &str, server: Option<&str>, tool: Option<&str>) -> Event {
         Event::Approval {
+            reason_code: None,
             id: "a-call".into(),
             bot_id: "bot-doc".into(),
             bot_name: "文档哥".into(),
@@ -555,6 +562,7 @@ mod tests {
 
     fn approval_event() -> Event {
         Event::Approval {
+            reason_code: None,
             id: "a-exp".into(),
             bot_id: "bot-doc".into(),
             bot_name: "文档哥".into(),
@@ -637,6 +645,7 @@ mod tests {
     fn unknown_action_is_a_generic_card() {
         let _zh = crate::i18n::scoped(crate::i18n::Locale::Zh);
         let event = Event::Approval {
+            reason_code: None,
             id: "a-future".into(),
             bot_id: "bot-doc".into(),
             bot_name: "文档哥".into(),
