@@ -1,4 +1,4 @@
-import { ListView, AboutSlint, ScrollView, Palette } from "std-widgets.slint";
+import { ListView, ScrollView, Palette } from "std-widgets.slint";
 
 // Colours are pushed from Rust (`robroz_tokens` / `Skin`). Nothing here
 // restates a hex value. Status card fill/text still come from robroz-card.
@@ -1607,11 +1607,6 @@ export component MainWindow inherits Window {
                         font-size: SettingsMetrics.version;
                         horizontal-alignment: center;
                     }
-                    // The Slint attribution slot, at the very bottom of Settings.
-                    Rectangle {
-                        height: 160px;
-                        AboutSlint { }
-                    }
                 }
             }
         }
@@ -1876,40 +1871,43 @@ export component MainWindow inherits Window {
                             Text { text: r.name; color: Brand.ink; font-size: McpMetrics.row-name; font-weight: 600; overflow: elide; }
                             Text { text: r.sub; color: Brand.text3; font-size: McpMetrics.row-sub; overflow: elide; }
                         }
-                        if r.connected: VerticalLayout {
-                            alignment: center;
-                            HorizontalLayout {
-                                spacing: 6px;
-                                alignment: center;
+                        // Dot vertically centred with the label; the group is
+                        // right-aligned to the same edge as the Connect capsule.
+                        if r.connected: HorizontalLayout {
+                            spacing: 6px;
+                            alignment: end;
+                            vertical-stretch: 0;
+                            horizontal-stretch: 0;
+                            height: McpMetrics.connect-h;
+                            Rectangle {
+                                width: McpMetrics.connected-dot;
+                                height: McpMetrics.connected-dot;
+                                y: (parent.height - self.height) / 2;
+                                border-radius: self.height / 2;
+                                background: Brand.done;
                                 vertical-stretch: 0;
-                                Rectangle {
-                                    width: McpMetrics.connected-dot;
-                                    height: McpMetrics.connected-dot;
-                                    border-radius: self.height / 2;
-                                    background: Brand.done;
-                                    vertical-stretch: 0;
-                                }
-                                Text {
-                                    text: Tr.mcp-connected;
-                                    color: Brand.muted;
-                                    font-size: McpMetrics.capsule-text;
-                                    vertical-alignment: center;
-                                    vertical-stretch: 0;
-                                }
+                                horizontal-stretch: 0;
+                            }
+                            Text {
+                                text: Tr.mcp-connected;
+                                color: Brand.muted;
+                                font-size: McpMetrics.capsule-text;
+                                vertical-alignment: center;
+                                vertical-stretch: 0;
+                                horizontal-stretch: 0;
                             }
                         }
-                        if !r.connected: VerticalLayout {
-                            alignment: center;
-                            Rectangle {
-                                height: McpMetrics.connect-h;
-                                width: connect-label.preferred-width + 2 * McpMetrics.capsule-pad;
-                                border-radius: self.height / 2;
-                                background: Brand.surface;
-                                border-width: 1px;
-                                border-color: Brand.border;
-                                connect-label := Text { text: Tr.mcp-connect; color: Brand.ink; font-size: McpMetrics.capsule-text; font-weight: 600; }
-                                TouchArea { clicked => { if !root.mcp-busy { root.mcp-connect-server(r.id); } } }
-                            }
+                        if !r.connected: Rectangle {
+                            height: McpMetrics.connect-h;
+                            width: connect-label.preferred-width + 2 * McpMetrics.capsule-pad;
+                            vertical-stretch: 0;
+                            horizontal-stretch: 0;
+                            border-radius: self.height / 2;
+                            background: Brand.surface;
+                            border-width: 1px;
+                            border-color: Brand.border;
+                            connect-label := Text { text: Tr.mcp-connect; color: Brand.ink; font-size: McpMetrics.capsule-text; font-weight: 600; }
+                            TouchArea { clicked => { if !root.mcp-busy { root.mcp-connect-server(r.id); } } }
                         }
                     }
                 }

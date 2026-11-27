@@ -2854,6 +2854,55 @@ pub fn skills_panel<'a>(
 
 // ---------- MCP page ----------
 
+/// Count and Add for the Settings title row (right of ‹ MCP), so they
+/// do not sit on a second, empty-left row. Phone: count only; no Add.
+pub fn mcp_title_trailing<'a>(t: &Skin, book: &'a McpBook) -> Element<'a, Action> {
+    mcp_title_actions(t, book)
+}
+
+fn mcp_title_actions<'a>(t: &Skin, book: &'a McpBook) -> Element<'a, Action> {
+    let mut actions = row![]
+        .spacing(t.controls.button_gap)
+        .align_y(Alignment::Center);
+    let connected = book.connected_count();
+    if connected > 0 {
+        actions = actions.push(
+            text(mcp::connected_count_text(connected))
+                .size(robroz_tokens::mcp::COUNT_TEXT)
+                .color(color(t.palette.text2)),
+        );
+    }
+    // Phone: no add / edit / disconnect / delete (desktop only).
+    if book.form.is_none() && !t.narrow {
+        actions = actions.push(btn(
+            t,
+            mcp::ADD.into(),
+            Look::Secondary,
+            Leading::None,
+            (!book.busy).then_some(Action::McpAddOpen),
+        ));
+    }
+    actions.into()
+}
+
+fn mcp_title_row<'a>(t: &Skin, book: &'a McpBook, titled: bool) -> Element<'a, Action> {
+    let mut head = if titled {
+        row![text(mcp::TITLE)
+            .size(t.type_.list_title)
+            .font(bold())
+            .color(color(t.palette.text))]
+        .spacing(t.controls.button_gap)
+        .align_y(Alignment::Center)
+    } else {
+        row![]
+            .spacing(t.controls.button_gap)
+            .align_y(Alignment::Center)
+    };
+    head = head.push(space::horizontal());
+    head = head.push(mcp_title_actions(t, book));
+    head.into()
+}
+
 /// The MCP page: a list of servers, each with Connect or a Connected
 /// status, plus a form to add or edit one, a tool list, and per-group toggles.
 ///
@@ -2869,46 +2918,16 @@ pub fn mcp_panel<'a>(
 ) -> Element<'a, Action> {
     let m = t.metrics;
     let busy = book.busy;
-    // Phone: no add / edit / disconnect (desktop only).
-    let desktop = !t.narrow;
-    let mut head = if titled {
-        row![text(mcp::TITLE)
-            .size(t.type_.list_title)
-            .font(bold())
-            .color(color(t.palette.text))]
-        .spacing(t.controls.button_gap)
-        .align_y(Alignment::Center)
-    } else {
-        row![]
-            .spacing(t.controls.button_gap)
-            .align_y(Alignment::Center)
-    };
-    head = head.push(space::horizontal());
-    let connected = book.connected_count();
     let filter = book.active_filter();
-    if connected > 0 {
-        head = head.push(
-            text(mcp::connected_count_text(connected))
-                .size(robroz_tokens::mcp::COUNT_TEXT)
-                .color(color(t.palette.text2)),
-        );
-    }
-    if book.form.is_none() && desktop {
-        head = head.push(btn(
-            t,
-            mcp::ADD.into(),
-            Look::Secondary,
-            Leading::None,
-            (!busy).then_some(Action::McpAddOpen),
-        ));
-    }
-    let show_head = titled || connected > 0 || (book.form.is_none() && desktop);
-    let mut col = if show_head {
+    // When `titled` is false, the Settings chrome already shows the title
+    // and `mcp_title_trailing` (count + Add) on that same row.
+    let mut col = if titled {
         column![
-            container(head)
+            container(mcp_title_row(t, book, true))
                 .height(Length::Fixed(m.panel_head_height))
                 .padding(Padding::from([0.0, m.row_pad_h]))
-                .align_y(Alignment::Center),
+                .align_y(Alignment::Center)
+                .width(Fill),
             divider(t, 0.0),
         ]
     } else {
@@ -3500,7 +3519,8 @@ fn mcp_row<'a>(
     .height(Length::Fixed(robroz_tokens::mcp::ROW))
     .width(Fill);
 
-    let mut col = column![top].spacing(m.dot_gap + 2.0);
+    // 16px between the tool list, the group list, and the action buttons.
+    let mut col = column![top].spacing(16.0);
     if open {
         if book.command_prompt_for(&server.id).is_some() {
             col = col.push(mcp_command_prompt(t, book, server, busy));
@@ -3510,42 +3530,43 @@ fn mcp_row<'a>(
         if !book.chats.is_empty() {
             col = col.push(mcp_group_toggles(t, book, &server.id, busy));
         }
-        if asking {
-            col = col.push(
-                column![
-                    text(mcp::DELETE_ASK)
-                        .size(t.type_.foot)
-                        .color(color(t.palette.text2)),
-                    row![
-                        btn(
-                            t,
-                            mcp::DELETE.into(),
-                            Look::Primary,
-                            Leading::None,
-                            (!busy).then_some(Action::McpDeleteConfirm),
-                        ),
-                        btn(
-                            t,
-                            mcp::CANCEL.into(),
-                            Look::Secondary,
-                            Leading::None,
-                            Some(Action::McpDeleteCancel),
-                        ),
+        // Phone is read-only: no add / edit / disconnect / delete, so no
+        // action row and no delete confirm (no dead or greyed controls).
+        if !t.narrow {
+            if asking {
+                col = col.push(
+                    column![
+                        text(mcp::DELETE_ASK)
+                            .size(t.type_.foot)
+                            .color(color(t.palette.text2)),
+                        row![
+                            btn(
+                                t,
+                                mcp::DELETE.into(),
+                                Look::Primary,
+                                Leading::None,
+                                (!busy).then_some(Action::McpDeleteConfirm),
+                            ),
+                            btn(
+                                t,
+                                mcp::CANCEL.into(),
+                                Look::Secondary,
+                                Leading::None,
+                                Some(Action::McpDeleteCancel),
+                            ),
+                        ]
+                        .spacing(t.controls.button_gap),
                     ]
-                    .spacing(t.controls.button_gap),
-                ]
-                .spacing(m.dot_gap),
-            );
-        } else {
-            let mut actions = row![];
-            if !t.narrow {
-                actions = actions.push(btn(
+                    .spacing(m.dot_gap),
+                );
+            } else {
+                let mut actions = row![btn(
                     t,
                     mcp::EDIT.into(),
                     Look::Secondary,
                     Leading::None,
                     (!busy).then_some(Action::McpEdit { id: id.clone() }),
-                ));
+                )];
                 if mcp::is_connected(server) {
                     actions = actions.push(btn(
                         t,
@@ -3555,12 +3576,12 @@ fn mcp_row<'a>(
                         (!busy).then(|| Action::McpToggleEnabled { id: id.clone() }),
                     ));
                 }
+                actions = actions.push(mcp_delete_button(
+                    t,
+                    (!busy).then_some(Action::McpDeleteAsk { id: id.clone() }),
+                ));
+                col = col.push(actions.spacing(t.controls.button_gap));
             }
-            actions = actions.push(mcp_delete_button(
-                t,
-                (!busy).then_some(Action::McpDeleteAsk { id: id.clone() }),
-            ));
-            col = col.push(actions.spacing(t.controls.button_gap));
         }
     }
     if let Some(note) = book.note_for(&server.id) {
@@ -6021,6 +6042,7 @@ fn settings_frame<'a, M: 'a>(
     back: Option<Action>,
     body: Element<'a, M>,
     ui: fn(Action) -> M,
+    trailing: Option<Element<'a, M>>,
 ) -> Element<'a, M> {
     use robroz_tokens::settings as st;
     let mut bar = row![].spacing(12).align_y(Alignment::Center);
@@ -6033,8 +6055,13 @@ fn settings_frame<'a, M: 'a>(
             .font(bold())
             .color(color(t.palette.text)),
     );
+    bar = bar.push(space::horizontal());
+    if let Some(extra) = trailing {
+        bar = bar.push(extra);
+    }
     let inner = column![
         container(bar)
+            .width(Fill)
             .height(Length::Fixed(robroz_tokens::home::FLOAT_BTN + 16.0))
             .align_y(Alignment::Center),
         body,
@@ -6104,7 +6131,7 @@ pub fn settings_page<'a>(t: &Skin, p: SettingsPage) -> Element<'a, Action> {
                 .align_x(Alignment::Center),
         );
     }
-    settings_frame(t, p.title, p.back, col.into(), std::convert::identity)
+    settings_frame(t, p.title, p.back, col.into(), std::convert::identity, None)
 }
 
 /// A Settings choice page (Language, Appearance): one card, the active
@@ -6141,6 +6168,7 @@ pub fn settings_choice_page<'a>(
         Some(Action::SettingsBack),
         settings_card(t, rows),
         std::convert::identity,
+        None,
     )
 }
 
@@ -6153,5 +6181,18 @@ pub fn settings_sub_page<'a, M: 'a>(
     body: Element<'a, M>,
     ui: fn(Action) -> M,
 ) -> Element<'a, M> {
-    settings_frame(*t, title, Some(back), body, ui)
+    settings_sub_page_with(t, title, back, body, None, ui)
+}
+
+/// Like [`settings_sub_page`], with optional trailing widgets on the
+/// right of the title row (MCP puts the connected count and Add there).
+pub fn settings_sub_page_with<'a, M: 'a>(
+    t: &Skin,
+    title: String,
+    back: Action,
+    body: Element<'a, M>,
+    trailing: Option<Element<'a, M>>,
+    ui: fn(Action) -> M,
+) -> Element<'a, M> {
+    settings_frame(*t, title, Some(back), body, ui, trailing)
 }

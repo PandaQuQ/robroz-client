@@ -4045,12 +4045,13 @@ impl App {
             );
         }
         if self.page == Page::Mcp {
-            return view::settings_sub_page(
+            return view::settings_sub_page_with(
                 t,
                 robroz_ui::cards::mcp::TITLE.into(),
                 self.settings_sub_back(),
                 view::mcp_panel(t, &self.mcp, now_unix(), self.content_width(t), false)
                     .map(Message::Ui),
+                Some(view::mcp_title_trailing(t, &self.mcp).map(Message::Ui)),
                 Message::Ui,
             );
         }
