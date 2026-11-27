@@ -13,6 +13,7 @@
 
 use robroz_contract::{
     ApprovalReasonCode, CardStatusCode, DeliveryBadge, FailureCode, ProgressCode, ProgressParams,
+    TaskState,
 };
 use serde_json::Value;
 
@@ -91,6 +92,18 @@ pub fn status_text(code: CardStatusCode) -> String {
         CardStatusCode::Done => Key::CardDone.into(),
         CardStatusCode::NoResult => Key::HostNoResult.into(),
     }
+}
+
+/// The status word for a task `state` when the host sent no `statusCode`.
+/// `running` without a live container is [`CardStatusCode::NoResult`].
+pub fn status_text_from_state(state: TaskState, container_up: bool) -> String {
+    status_text(match state {
+        TaskState::Queued => CardStatusCode::Queued,
+        TaskState::Running if container_up => CardStatusCode::Running,
+        TaskState::Running => CardStatusCode::NoResult,
+        TaskState::Done => CardStatusCode::Done,
+        TaskState::Blocked => CardStatusCode::Blocked,
+    })
 }
 
 /// The corner badge for a delivery `badge`.
@@ -859,5 +872,39 @@ mod tests {
         let _g = scoped(Locale::Zh);
         assert_eq!(status_text(CardStatusCode::Running), "进行中");
         assert_eq!(badge_text(DeliveryBadge::Briefing), "简报");
+    }
+
+    #[test]
+    fn status_text_from_state_matches_status_code_and_follows_locale() {
+        use crate::i18n::{scoped, Locale};
+        use robroz_contract::TaskState;
+        assert_eq!(
+            status_text_from_state(TaskState::Queued, false),
+            status_text(CardStatusCode::Queued)
+        );
+        assert_eq!(
+            status_text_from_state(TaskState::Running, true),
+            status_text(CardStatusCode::Running)
+        );
+        assert_eq!(
+            status_text_from_state(TaskState::Running, false),
+            status_text(CardStatusCode::NoResult)
+        );
+        assert_eq!(
+            status_text_from_state(TaskState::Done, false),
+            status_text(CardStatusCode::Done)
+        );
+        assert_eq!(
+            status_text_from_state(TaskState::Blocked, false),
+            status_text(CardStatusCode::Blocked)
+        );
+        {
+            let _en = scoped(Locale::En);
+            assert_eq!(status_text_from_state(TaskState::Done, false), "Done");
+            assert_eq!(status_text_from_state(TaskState::Running, true), "Running");
+        }
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(status_text_from_state(TaskState::Done, false), "完成");
+        assert_eq!(status_text_from_state(TaskState::Running, true), "进行中");
     }
 }

@@ -97,14 +97,19 @@ impl StatusCard {
 
 impl StatusCard {
     /// The status or failure line in the active locale.
+    ///
+    /// Task status words come from `statusCode` or, when the host omitted
+    /// it, from `state` via i18n. The host `label` is not shown for a
+    /// known state. A task waiting on an approval uses the awaiting copy,
+    /// even if the host also sent `statusCode: blocked`.
     pub fn shown_line(&self) -> String {
         if let Some(line) = self.failure_display() {
             return line.text;
         }
-        if let Some(code) = self.status_code {
-            return codes::status_text(code);
+        if awaits_approval(self.state, self.waiting_for) {
+            return Text::ClientAwaitingApproval.into();
         }
-        display(&self.status_line).into_owned()
+        status_shown(self.status_code, self.state, self.container_up)
     }
 
     /// Raw detail line under the failure (monospace, muted, selectable).
@@ -302,7 +307,7 @@ fn failure_shown(code: Option<FailureCode>, detail: Option<&str>, legacy: Option
 fn status_shown(code: Option<CardStatusCode>, state: TaskState, container_up: bool) -> String {
     match code {
         Some(code) => codes::status_text(code),
-        None => display(robroz_card::status_line(state, container_up)).into_owned(),
+        None => codes::status_text_from_state(state, container_up),
     }
 }
 
@@ -2663,5 +2668,69 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert!(matches!(items[0].0, Row::Status(_)));
         assert_eq!(items[0].1.sender.name(), "Ada");
+    }
+    #[test]
+    fn shown_line_uses_state_i18n_not_the_host_label() {
+        use robroz_contract::CardStatusCode;
+        use robroz_ui::i18n::{scoped, Locale};
+
+        let mut ev = status("t1", "Ada", TaskState::Done, false);
+        if let Event::Status {
+            label, status_code, ..
+        } = &mut ev
+        {
+            *label = "完成".into();
+            *status_code = None;
+        }
+        let mut feed = Feed::default();
+        feed.apply(&ev);
+        let card = status_cards(&feed)[0];
+        {
+            let _en = scoped(Locale::En);
+            assert_eq!(card.shown_line(), "Done");
+        }
+        {
+            let _zh = scoped(Locale::Zh);
+            assert_eq!(card.shown_line(), "完成");
+        }
+
+        // A host label that is not the usual copy still yields the state word.
+        if let Event::Status {
+            label, status_code, ..
+        } = &mut ev
+        {
+            *label = "某某状态".into();
+            *status_code = Some(CardStatusCode::Done);
+        }
+        feed = Feed::default();
+        feed.apply(&ev);
+        let card = status_cards(&feed)[0];
+        let _en = scoped(Locale::En);
+        assert_eq!(card.shown_line(), "Done");
+    }
+
+    #[test]
+    fn shown_line_prefers_awaiting_copy_over_blocked_status_code() {
+        use robroz_contract::CardStatusCode;
+        use robroz_ui::i18n::{scoped, Locale};
+
+        let mut ev = blocked_waiting(Some(WaitingFor::Approval));
+        if let Event::Status {
+            status_code, label, ..
+        } = &mut ev
+        {
+            *status_code = Some(CardStatusCode::Blocked);
+            *label = "卡住".into();
+        }
+        let mut feed = Feed::default();
+        feed.apply(&ev);
+        let card = status_cards(&feed)[0];
+        {
+            let _en = scoped(Locale::En);
+            assert_eq!(card.shown_line(), "Needs your approval");
+            assert_ne!(card.shown_line(), "Stuck");
+        }
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(card.shown_line(), "等你批准");
     }
 }
