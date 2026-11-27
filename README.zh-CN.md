@@ -97,7 +97,7 @@ cargo run -p robroz-client -- --fake   # 不连宿主机，只看界面
 
 ## 状态
 
-最新发布是预发布版，见 [Releases](https://github.com/PandaQuQ/robroz/releases)（v0.1.1 及以前都从宿主机仓库发布）。`main` 是 v0.2 的开发分支。
+这个仓库还没有发过版，请从源码构建（见[快速开始](#快速开始)）。v0.1.1 及以前从[宿主机仓库](https://github.com/PandaQuQ/robroz/releases)发布。`main` 对应 [v0.2.0 宿主机](https://github.com/PandaQuQ/robroz/releases/tag/v0.2.0)和 `contract-v0.3.1`。
 
 ## 开发
 
