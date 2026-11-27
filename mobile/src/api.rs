@@ -14,8 +14,9 @@ use std::fmt;
 use std::time::Duration;
 
 use robroz_contract::{
-    Bro, BroAvatar, Bros, CreateBro, ErrorBody, Event, Events, Group, Groups, Me, PatchBro, Unread,
-    Unreads, FORBIDDEN_NOT_BRO_OWNER,
+    Bro, BroAvatar, Bros, CreateBro, ErrorBody, Event, Events, Group, GroupMembers, GroupSearch,
+    Groups, Me, PatchBro, RenameGroup, ScheduleEntry, Schedules, Unread, Unreads, UserRole,
+    FORBIDDEN_NOT_BRO_OWNER, GROUP_SEARCH_DEFAULT_LIMIT,
 };
 use robroz_ui::i18n::{host_text, Key};
 
@@ -131,6 +132,13 @@ impl Conn {
                 }
                 req.call()
             }
+            ("DELETE", _) => {
+                let mut req = self.agent.delete(&url);
+                if let Some(a) = &auth {
+                    req = req.header("Authorization", a);
+                }
+                req.call()
+            }
             (_, body) => {
                 let mut req = if method == "PATCH" {
                     self.agent.patch(&url)
@@ -162,6 +170,9 @@ impl Conn {
             code: code.clone(),
             message: ApiError(message),
         };
+        if let Some(key) = code.as_deref().and_then(copy_for_code) {
+            return Err(failure(key.as_str().to_string()));
+        }
         // Same as the desktop client: a 401 is always the approved token
         // line, never the host body (which might echo the token).
         if status == 401 {
@@ -260,6 +271,82 @@ impl Conn {
             })
             .collect())
     }
+
+    /// `PATCH /api/groups/{id}` with `{ "name": ... }`.
+    pub fn rename_group(&self, id: &str, name: &str) -> Result<Group, ApiError> {
+        let body = serde_json::to_string(&RenameGroup {
+            name: name.trim().to_string(),
+        })
+        .expect("serialize rename group");
+        Self::decode(
+            &self
+                .send("PATCH", &format!("/api/groups/{id}"), Some(body))
+                .map_err(|e| e.message)?,
+        )
+    }
+
+    /// `DELETE /api/groups/{id}`.
+    pub fn delete_group(&self, id: &str) -> Result<(), ApiError> {
+        self.send("DELETE", &format!("/api/groups/{id}"), None)
+            .map(|_| ())
+            .map_err(|e| e.message)
+    }
+
+    /// `GET /api/groups/{id}/members`.
+    pub fn group_members(&self, id: &str) -> Result<GroupMembers, ApiError> {
+        Self::decode(&self.get(&format!("/api/groups/{id}/members"))?)
+    }
+
+    /// `GET /api/groups/{id}/search?q=&limit=`.
+    pub fn search_group(&self, id: &str, q: &str) -> Result<GroupSearch, ApiError> {
+        let path = format!(
+            "/api/groups/{id}/search?q={}&limit={GROUP_SEARCH_DEFAULT_LIMIT}",
+            query_escape(q)
+        );
+        Self::decode(&self.get(&path)?)
+    }
+
+    /// `GET /api/groups/{id}/schedules`.
+    pub fn schedules(&self, id: &str) -> Result<Vec<ScheduleEntry>, ApiError> {
+        Ok(
+            Self::decode::<Schedules>(&self.get(&format!("/api/groups/{id}/schedules"))?)?
+                .schedules,
+        )
+    }
+}
+
+/// Approved copy for group error codes (same keys as the desktop client).
+fn copy_for_code(code: &str) -> Option<Key> {
+    Some(match code {
+        "not_group_creator" => Key::HostNotGroupCreator,
+        "group_is_dm" => Key::HostGroupIsDm,
+        "not_group_member" => Key::HostNotGroupMember,
+        _ => return None,
+    })
+}
+
+fn query_escape(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.as_bytes() {
+        match *b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Rename / delete / members: not a DM, and this user is admin or created it.
+pub fn can_manage(me: Option<&Me>, group: &Group) -> bool {
+    if group.dm {
+        return false;
+    }
+    let Some(me) = me else {
+        return false;
+    };
+    me.role == UserRole::Admin || group.created_by.as_deref() == Some(me.id.as_str())
 }
 
 /// A non-2xx with its status and error `code`.
@@ -567,5 +654,39 @@ mod tests {
         let rows = session_rows(&[g("a"), g("b"), g("c")], &[u("c", 2), u("a", 0)]);
         let ids: Vec<_> = rows.iter().map(|(g, n)| (g.id.as_str(), *n)).collect();
         assert_eq!(ids, [("c", 2), ("a", 0), ("b", 0)]);
+    }
+
+    #[test]
+    fn can_manage_hides_on_a_dm_and_shows_for_creator_or_admin() {
+        let group = |dm: bool, created: Option<&str>| Group {
+            created_by: created.map(str::to_string),
+            dm,
+            id: "g1".into(),
+            name: "g1".into(),
+            tenant_id: "t".into(),
+        };
+        let me = |admin: bool| Me {
+            id: "u1".into(),
+            name: "Panda".into(),
+            role: if admin {
+                UserRole::Admin
+            } else {
+                UserRole::Member
+            },
+        };
+        let member = me(false);
+        assert!(
+            !can_manage(Some(&member), &group(true, Some("u1"))),
+            "DMs never show manage entries"
+        );
+        assert!(can_manage(Some(&member), &group(false, Some("u1"))));
+        assert!(!can_manage(Some(&member), &group(false, Some("other"))));
+        let admin = me(true);
+        assert!(can_manage(Some(&admin), &group(false, Some("other"))));
+        assert!(
+            can_manage(Some(&admin), &group(false, None)),
+            "old groups: admin only"
+        );
+        assert!(!can_manage(Some(&member), &group(false, None)));
     }
 }

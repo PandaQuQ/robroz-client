@@ -16,7 +16,10 @@ pub mod avatar;
 pub mod avatar_view;
 pub mod cards;
 pub mod conversations;
+pub mod home;
 pub mod i18n;
+#[cfg(feature = "gui")]
+pub mod icons;
 pub mod process;
 pub mod runs;
 pub mod theme;

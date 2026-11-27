@@ -28,10 +28,7 @@ const LIN_ID: &str = "u-lin";
 const LIN_NAME: &str = "Lin";
 
 fn tab(id: &str, name: &str) -> GroupTab {
-    GroupTab {
-        id: id.into(),
-        name: name.into(),
-    }
+    GroupTab::new(id, name)
 }
 
 fn ts(hm: &str) -> String {

@@ -256,3 +256,40 @@ mod tests {
         assert_eq!(title_ids(None, &items), vec!["cy", "ada", "bea"]);
     }
 }
+
+/// A 2×2 of up to four 28px avatars for a home-list group row. `more` is
+/// kept for the caller to show "+N"; this image is just the four tiles.
+pub fn group_tile(list: &[BroAvatar], mode: Mode, scale: f32) -> slint::Image {
+    use robroz_tokens::home as h;
+    let scale = scale.max(1.0);
+    let cell = h::GROUP_TILE;
+    let gap = 2.0;
+    let size = cell * 2.0 + gap;
+    let out_px = (size * scale).round().max(1.0) as u32;
+    let cell_px = (cell * scale).round().max(1.0) as u32;
+    let gap_px = (gap * scale).round() as u32;
+    let mut buf = vec![0u8; (out_px * out_px * 4) as usize];
+    let offsets = [
+        (0u32, 0u32),
+        (cell_px + gap_px, 0),
+        (0, cell_px + gap_px),
+        (cell_px + gap_px, cell_px + gap_px),
+    ];
+    for (a, (ox, oy)) in list.iter().copied().take(4).zip(offsets) {
+        let rgba = avatar::rasterize(a, mode == Mode::Dark, None, cell_px);
+        for y in 0..cell_px {
+            for x in 0..cell_px {
+                let dx = ox + x;
+                let dy = oy + y;
+                if dx >= out_px || dy >= out_px {
+                    continue;
+                }
+                let si = ((y * cell_px + x) * 4) as usize;
+                let di = ((dy * out_px + dx) * 4) as usize;
+                buf[di..di + 4].copy_from_slice(&rgba[si..si + 4]);
+            }
+        }
+    }
+    let pix = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&buf, out_px, out_px);
+    slint::Image::from_rgba8(pix)
+}

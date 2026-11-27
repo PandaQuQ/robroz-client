@@ -663,6 +663,48 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ConversationsDmHint => "Message {0}…",
         // 昨天  [approved, batch 2]
         Key::ConversationsYesterday => "Yesterday",
+
+        // ---- Home list, group menu and self-row (PR4) ----
+        // Needs UI review.
+        Key::HomeSearchPlaceholder => "Search",
+        // Needs UI review.
+        Key::GroupMenuProfile => "View profile",
+        // Needs UI review.
+        Key::GroupMenuFind => "Find in chat",
+        // Needs UI review.
+        Key::GroupMenuDelete => "Delete",
+        // Needs UI review.
+        Key::GroupProfileEdit => "Edit",
+        // 3 个开着 / "3 on"  [UI姐 PR4 spec]
+        // Needs UI review.
+        Key::GroupProfileRoutinesOn => "{0} on",
+        // Needs UI review.
+        Key::GroupProfileMembers => "Members",
+        // Needs UI review.
+        Key::GroupProfileCopyId => "Copy ID",
+        // "Copied"  [UI姐 PR4 spec]
+        // Needs UI review.
+        Key::GroupProfileCopied => "Copied",
+        // "Delete {group}?"  [UI姐 PR4 spec]
+        // Needs UI review.
+        Key::GroupDeleteTitle => "Delete {0}?",
+        // Needs UI review.
+        Key::GroupDeleteBody => "Messages, tasks and routines are deleted, and running tasks are stopped. Bros are kept.",
+        // Needs UI review.
+        Key::FindInChatTitle => "Find in chat",
+        // Needs UI review.
+        Key::FindInChatPlaceholder => "Search messages",
+        // Needs UI review.
+        Key::FindInChatEmpty => "Type to search this chat.",
+        // Needs UI review.
+        Key::FindInChatNoResults => "No messages matched.",
+        // Needs UI review.
+        Key::MembersTitle => "Members",
+        // Needs UI review.
+        Key::SettingsTitle => "Settings",
+        // Needs UI review.
+        Key::SignOutOnThisDevice => "Sign out on this device",
+
         // 今天  [approved, chat column]
         Key::ChatDateToday => "Today",
         // 昨天  [approved, chat column]

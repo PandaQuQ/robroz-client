@@ -7,7 +7,8 @@
 use chrono::Local;
 use iced::widget::text::{LineHeight, Wrapping};
 use iced::widget::{
-    button, canvas, column, container, hover, pick_list, row, space, text, text_input, Space,
+    button, canvas, column, container, hover, mouse_area, pick_list, row, scrollable, space, text,
+    text_input, Space,
 };
 use iced::{
     font, Alignment, Background, Border, Color, Element, Fill, Font, Length, Padding, Pixels,
@@ -105,6 +106,38 @@ pub enum Action {
     AvatarReset,
     /// Narrow screens: back from a chat to the list.
     BackToList,
+    /// Chat title `…`: open or close the group / DM menu.
+    GroupMenuOpen,
+    GroupMenuClose,
+    GroupProfileOpen,
+    GroupProfileClose,
+    FindInChatOpen,
+    FindInChatClose,
+    FindInChatEdit {
+        text: String,
+    },
+    FindInChatSubmit,
+    /// Group profile: rename the group (not a bro).
+    GroupEditStart,
+    GroupEdit {
+        text: String,
+    },
+    GroupEditSave,
+    GroupEditCancel,
+    GroupDeleteAsk,
+    GroupDeleteConfirm,
+    GroupDeleteCancel,
+    GroupCopyId,
+    MembersOpen,
+    MembersClose,
+    SelfMenuOpen,
+    SelfMenuClose,
+    OpenSettings,
+    OpenRoutines,
+    SignOut,
+    HomeSearchEdit {
+        text: String,
+    },
     /// Composer text changed.
     ComposerEdit {
         text: String,
@@ -3437,6 +3470,26 @@ fn avatar_size(t: &Skin) -> f32 {
     t.controls.touch_target.max(t.controls.button_h) + 4.0
 }
 
+fn avatar_at<'a, M: 'a>(t: &Skin, name: &str, size: f32) -> Element<'a, M> {
+    let t = *t;
+    container(
+        text(conversations::initial(name))
+            .size((size * 0.4).max(11.0))
+            .font(bold())
+            .color(color(t.palette.text2)),
+    )
+    .width(Length::Fixed(size))
+    .height(Length::Fixed(size))
+    .align_x(Alignment::Center)
+    .align_y(Alignment::Center)
+    .style(move |_| container::Style {
+        background: Some(color(t.palette.sunken).into()),
+        border: Border::default().rounded(size / 2.0),
+        ..container::Style::default()
+    })
+    .into()
+}
+
 /// Unread badge width estimate, reserved beside the preview.
 const BADGE_W: f32 = 30.0;
 /// Time column width estimate (`10月7日`, `昨天`, `23:59`).
@@ -3447,6 +3500,7 @@ const ROW_PAD_H: f32 = 8.0;
 const ROW_GAP: f32 = 10.0;
 
 /// Unread badge: accent pill with the count (no separate red token yet).
+#[allow(dead_code)]
 fn unread_badge<'a, M: 'a>(t: &Skin, label: String) -> Element<'a, M> {
     let (bg, fg) = (t.palette.accent, t.palette.on_accent);
     container(text(label).size(t.type_.tag).font(bold()).color(color(fg)))
@@ -3496,6 +3550,87 @@ fn units_in(t: &Skin, px: f32, size: f32) -> usize {
     (px / (size * t.type_.unit_width)).max(4.0) as usize
 }
 
+fn unread_dot<'a, M: 'a>(t: &Skin) -> Element<'a, M> {
+    use robroz_tokens::home as h;
+    let d = h::UNREAD_DOT;
+    let accent = t.palette.accent;
+    container(
+        Space::new()
+            .width(Length::Fixed(d))
+            .height(Length::Fixed(d)),
+    )
+    .style(move |_| container::Style {
+        background: Some(color(accent).into()),
+        border: Border::default().rounded(d / 2.0),
+        ..container::Style::default()
+    })
+    .into()
+}
+
+fn group_tile<'a>(
+    t: &Skin,
+    avatars: &'a [crate::avatar::BroAvatar],
+    more: usize,
+) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
+    let t = *t;
+    let cell = h::GROUP_TILE;
+    let gap = 2.0;
+    let mut cells: Vec<Element<'a, Action>> = Vec::new();
+    let show = avatars.len().min(if more > 0 { 3 } else { 4 });
+    for a in avatars.iter().take(show) {
+        cells.push(crate::avatar_view::bro_avatar(&t, *a, cell));
+    }
+    if more > 0 {
+        let label = format!("+{more}");
+        cells.push(
+            container(
+                text(label)
+                    .size(11.0)
+                    .color(color(t.palette.text2))
+                    .center(),
+            )
+            .width(Length::Fixed(cell))
+            .height(Length::Fixed(cell))
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .style(move |_| {
+                let bg = t.palette.sunken;
+                container::Style {
+                    background: Some(color(bg).into()),
+                    border: Border::default().rounded(cell / 2.0),
+                    ..container::Style::default()
+                }
+            })
+            .into(),
+        );
+    }
+    while cells.len() < 4 && cells.len() != 1 && avatars.len() > 1 {
+        cells.push(
+            Space::new()
+                .width(Length::Fixed(cell))
+                .height(Length::Fixed(cell))
+                .into(),
+        );
+    }
+    if cells.len() == 1 {
+        return cells.remove(0);
+    }
+    let mut top = row![].spacing(gap);
+    let mut bot = row![].spacing(gap);
+    for (i, c) in cells.into_iter().enumerate() {
+        if i < 2 {
+            top = top.push(c);
+        } else {
+            bot = bot.push(c);
+        }
+    }
+    column![top, bot]
+        .spacing(gap)
+        .width(Length::Fixed(cell * 2.0 + gap))
+        .into()
+}
+
 fn conversation_row<'a>(
     t: &Skin,
     c: &'a Conversation,
@@ -3503,72 +3638,75 @@ fn conversation_row<'a>(
     now: i64,
     width: f32,
 ) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
     let time = c
         .last_at
         .as_deref()
         .map(|at| conversations::list_time(at, now, &Local))
         .unwrap_or_default();
-    let badge = conversations::badge(c.unread);
-    // Text column: row minus padding, avatar and gap.
-    let body_w = width - 2.0 * ROW_PAD_H - ROW_GAP - avatar_size(t);
-    let name = conversations::fit(&c.name, units_in(t, body_w - TIME_W, t.type_.row_name));
-    let preview_w = body_w - if badge.is_some() { BADGE_W } else { 0.0 };
+    let face: Element<'a, Action> = if !c.dm && !c.group_avatars.is_empty() {
+        group_tile(t, &c.group_avatars, c.group_avatar_more)
+    } else {
+        match c.bro_avatar {
+            Some(a) => crate::avatar_view::bro_avatar(t, a, h::ROW_AVATAR),
+            None => avatar_at(t, &c.name, h::ROW_AVATAR),
+        }
+    };
+    let tile_w = if !c.dm && c.group_avatars.len() > 1 {
+        h::GROUP_TILE * 2.0 + 2.0
+    } else {
+        h::ROW_AVATAR
+    };
+    let body_w = width - 16.0 - 10.0 - tile_w;
+    let name = conversations::fit(&c.name, units_in(t, body_w - TIME_W, h::ROW_NAME));
     let preview = conversations::fit(
         c.preview.as_deref().unwrap_or_default(),
-        units_in(t, preview_w, t.type_.foot),
+        units_in(t, body_w, h::ROW_PREVIEW),
     );
+    let mut time_col = column![text(time)
+        .size(h::ROW_TIME)
+        .wrapping(Wrapping::None)
+        .color(color(t.palette.text3))]
+    .spacing(4)
+    .align_x(Alignment::End);
+    if c.unread > 0 {
+        time_col = time_col.push(unread_dot(t));
+    }
     let top = row![
         container(
             text(name)
-                .size(t.type_.row_name)
+                .size(h::ROW_NAME)
                 .font(bold())
                 .wrapping(Wrapping::None)
                 .color(color(t.palette.text)),
         )
         .width(Fill)
         .clip(true),
-        text(time)
-            .size(t.type_.row_time)
-            .wrapping(Wrapping::None)
-            .color(color(t.palette.text3)),
+        time_col,
     ]
     .spacing(6)
-    .align_y(Alignment::Center);
-    let mut bottom = row![container(
+    .align_y(Alignment::Start);
+    let bottom = container(
         text(preview)
-            .size(t.type_.foot)
+            .size(h::ROW_PREVIEW)
             .wrapping(Wrapping::None)
-            .color(color(t.palette.text2))
+            .color(color(t.palette.text2)),
     )
     .width(Fill)
-    .clip(true)]
-    .spacing(6)
-    .align_y(Alignment::Center);
-    if let Some(b) = badge {
-        bottom = bottom.push(unread_badge(t, b));
-    }
+    .clip(true);
     let body = column![top, bottom].spacing(2).width(Fill).clip(true);
-    let content: Element<'a, Action> = container(
-        row![
-            match c.bro_avatar {
-                Some(a) => crate::avatar_view::bro_avatar(t, a, avatar_size(t)),
-                None => avatar(t, &c.name),
-            },
-            body
-        ]
-        .spacing(ROW_GAP)
-        .align_y(Alignment::Center),
-    )
-    .width(Fill)
-    .padding(Padding::from([6.0, ROW_PAD_H]))
-    .into();
-    // The open chat gets an accent bar drawn inside the left padding, so
-    // it takes no layout space and every row's avatar lines up flush.
+    let content: Element<'a, Action> =
+        container(row![face, body].spacing(10.0).align_y(Alignment::Center))
+            .width(Fill)
+            .height(Length::Fixed(h::ROW))
+            .padding(Padding::from([0.0, 8.0]))
+            .align_y(Alignment::Center)
+            .into();
     let inner: Element<'a, Action> = if selected {
         let accent = t.palette.accent;
         let bar = container(Space::new())
             .width(Length::Fixed(SELECTED_BAR))
-            .height(Length::Fixed(avatar_size(t) - 8.0))
+            .height(Length::Fixed(h::ROW_AVATAR - 8.0))
             .style(move |_| container::Style {
                 background: Some(color(accent).into()),
                 border: Border::default().rounded(SELECTED_BAR / 2.0),
@@ -3598,57 +3736,371 @@ fn conversation_row<'a>(
         .into()
 }
 
-/// The IM list: heading with 「引入一个 bro」, then every group and DM,
-/// newest first. `width` is the list's own width (for fitting previews).
-/// Empty: 「还没有 bro，引入第一个」 and the same button.
-pub fn conversation_list<'a>(
-    t: &Skin,
-    list: &'a Conversations,
-    selected: Option<&str>,
-    now: i64,
-    width: f32,
-) -> Element<'a, Action> {
-    let h = t.controls.touch_target.max(t.controls.button_h);
-    let new_bro = || {
-        button(
-            text(conversations::NEW_BRO)
-                .size(t.type_.foot)
-                .height(Fill)
-                .align_y(Alignment::Center),
-        )
-        .height(Length::Fixed(h))
-        .padding(Padding::from([0.0, 10.0]))
-        .style(nav_button_style(*t, false))
-        .on_press(Action::NewBro)
-    };
-    let head = row![
-        text(conversations::TITLE)
-            .size(t.type_.list_title)
-            .font(bold())
-            .color(color(t.palette.text)),
-        space::horizontal(),
-        new_bro(),
-    ]
-    .align_y(Alignment::Center);
-    let mut col = column![head].spacing(2);
-    if list.is_empty() {
-        col = col.push(gap(12.0)).push(
-            text(conversations::EMPTY_HINT)
-                .size(t.type_.empty_hint)
-                .color(color(t.palette.text2)),
-        );
-        return col.into();
+/// The featured bro at the top of the home list.
+#[derive(Debug, Clone, Copy)]
+pub struct MainBro<'a> {
+    pub name: &'a str,
+    pub avatar: crate::avatar::BroAvatar,
+}
+
+/// Inputs for the v0.2 home list (sidebar or narrow full-screen).
+pub struct HomeList<'a> {
+    pub list: &'a Conversations,
+    pub selected: Option<&'a str>,
+    pub now: i64,
+    pub width: f32,
+    pub query: &'a str,
+    pub main_bro: Option<MainBro<'a>>,
+    pub me_name: Option<&'a str>,
+    pub self_menu: bool,
+    pub scale: f32,
+}
+
+fn translucent(rgb: crate::theme::Rgb, a: f32) -> Color {
+    let mut c = color(rgb);
+    c.a = a;
+    c
+}
+
+fn float_button_style(t: Skin) -> impl Fn(&IcedTheme, button::Status) -> button::Style {
+    move |_, status| {
+        let a = match status {
+            button::Status::Hovered | button::Status::Pressed => 0.94,
+            _ => 0.82,
+        };
+        button::Style {
+            background: Some(Background::Color(translucent(t.palette.surface, a))),
+            text_color: color(t.palette.text),
+            border: Border {
+                color: color(t.palette.border2),
+                width: 1.0,
+                radius: (robroz_tokens::home::FLOAT_BTN / 2.0).into(),
+            },
+            ..button::Style::default()
+        }
     }
-    for c in list.rows() {
-        col = col.push(conversation_row(
-            t,
-            c,
-            selected == Some(c.group_id.as_str()),
-            now,
-            width,
+}
+
+fn plus_button(t: &Skin) -> Element<'static, Action> {
+    use robroz_tokens::home as h;
+    button(
+        text("+")
+            .size(22.0)
+            .height(Fill)
+            .width(Fill)
+            .center()
+            .color(color(t.palette.text)),
+    )
+    .width(Length::Fixed(h::FLOAT_BTN))
+    .height(Length::Fixed(h::FLOAT_BTN))
+    .padding(0)
+    .style(float_button_style(*t))
+    .on_press(Action::NewBro)
+    .into()
+}
+
+fn main_bro_header<'a>(t: &Skin, bro: MainBro<'a>) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
+    let face = crate::avatar_view::bro_avatar(t, bro.avatar, h::MAIN_BRO);
+    let label = text(bro.name)
+        .size(h::MAIN_BRO_NAME)
+        .color(color(t.palette.text2));
+    let hero = column![face, label].spacing(8).align_x(Alignment::Center);
+    iced::widget::stack![
+        container(hero).width(Fill).center_x(Fill).padding(Padding {
+            top: 8.0,
+            bottom: 12.0,
+            ..Padding::ZERO
+        }),
+        container(plus_button(t))
+            .width(Fill)
+            .align_x(Alignment::End)
+            .padding(Padding {
+                top: 8.0,
+                right: 8.0,
+                ..Padding::ZERO
+            }),
+    ]
+    .into()
+}
+
+fn search_capsule<'a>(t: &Skin, query: &'a str) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
+    let t = *t;
+    let input = text_input(Key::HomeSearchPlaceholder.as_str(), query)
+        .size(t.type_.body)
+        .padding(Padding::from([0.0, 16.0]))
+        .on_input(|text| Action::HomeSearchEdit { text });
+    container(input)
+        .width(Fill)
+        .height(Length::Fixed(h::SEARCH))
+        .align_y(Alignment::Center)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(translucent(t.palette.surface, 0.92))),
+            border: Border {
+                color: color(t.palette.border2),
+                width: 1.0,
+                radius: (h::SEARCH / 2.0).into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+fn self_row<'a>(t: &Skin, name: &'a str, open: bool, scale: f32) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
+    let row_el = row![
+        avatar_at(t, name, 32.0),
+        text(name.to_string())
+            .size(h::ROW_NAME)
+            .color(color(t.palette.text))
+            .width(Fill),
+        text("›").size(18.0).color(color(t.palette.text3)),
+    ]
+    .spacing(12)
+    .align_y(Alignment::Center);
+    let btn = button(row_el)
+        .width(Fill)
+        .height(Length::Fixed(h::CARD_ROW))
+        .padding(Padding::from([0.0, 12.0]))
+        .style(conversation_row_style(*t, open))
+        .on_press(if open {
+            Action::SelfMenuClose
+        } else {
+            Action::SelfMenuOpen
+        });
+    if open {
+        column![btn, self_menu_popover(t, scale)]
+            .spacing(h::MENU_GAP)
+            .into()
+    } else {
+        btn.into()
+    }
+}
+
+fn menu_row<'a>(
+    t: &Skin,
+    glyph: crate::icons::Glyph,
+    label: String,
+    danger: bool,
+    scale: f32,
+    on: Action,
+) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
+    let t = *t;
+    let ink = if danger {
+        crate::theme::DANGER
+    } else {
+        t.palette.text
+    };
+    let body = row![
+        crate::icons::icon(glyph, ink, h::MENU_ICON, scale),
+        text(label).size(h::MENU_TEXT).color(color(ink)),
+    ]
+    .spacing(h::MENU_ICON_GAP)
+    .align_y(Alignment::Center);
+    button(body)
+        .width(Fill)
+        .height(Length::Fixed(h::MENU_ROW))
+        .padding(Padding::from([0.0, 12.0]))
+        .style(move |_, status| {
+            let bg = if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                Some(Background::Color(color(t.palette.control_hover)))
+            } else {
+                None
+            };
+            button::Style {
+                background: bg,
+                text_color: color(ink),
+                border: Border::default(),
+                ..button::Style::default()
+            }
+        })
+        .on_press(on)
+        .into()
+}
+
+fn popover_box<'a>(t: &Skin, rows: Vec<Element<'a, Action>>) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
+    let t = *t;
+    let mut col = column![].width(Length::Fixed(h::MENU_W));
+    for r in rows {
+        col = col.push(r);
+    }
+    container(col)
+        .width(Length::Fixed(h::MENU_W))
+        .style(move |_| container::Style {
+            background: Some(color(t.palette.surface).into()),
+            border: Border {
+                color: color(t.palette.border2),
+                width: 1.0,
+                radius: h::MENU_R.into(),
+            },
+            shadow: IcedShadow {
+                color: Color {
+                    a: 0.16,
+                    ..color(t.palette.text)
+                },
+                offset: Vector::new(0.0, 4.0),
+                blur_radius: 16.0,
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+fn self_menu_popover<'a>(t: &Skin, scale: f32) -> Element<'a, Action> {
+    let t = *t;
+    let rows = vec![
+        menu_row(
+            &t,
+            crate::icons::Glyph::Settings,
+            Key::SettingsTitle.into(),
+            false,
+            scale,
+            Action::OpenSettings,
+        ),
+        container(Space::new().height(Length::Fixed(1.0)))
+            .width(Fill)
+            .style(move |_| container::Style {
+                background: Some(color(t.palette.divider).into()),
+                ..container::Style::default()
+            })
+            .into(),
+        menu_row(
+            &t,
+            crate::icons::Glyph::SignOut,
+            Key::SignOutOnThisDevice.into(),
+            true,
+            scale,
+            Action::SignOut,
+        ),
+    ];
+    container(popover_box(&t, rows))
+        .width(Fill)
+        .align_x(Alignment::End)
+        .into()
+}
+
+/// Group / DM `…` menu. `can_manage` shows Delete (last, red, with a
+/// divider above). Find in chat is always present: the search API exists
+/// in contract-v0.3.0.
+pub fn group_menu_popover<'a>(t: &Skin, can_manage: bool, scale: f32) -> Element<'a, Action> {
+    let t = *t;
+    let mut rows = vec![
+        menu_row(
+            &t,
+            crate::icons::Glyph::Profile,
+            Key::GroupMenuProfile.into(),
+            false,
+            scale,
+            Action::GroupProfileOpen,
+        ),
+        menu_row(
+            &t,
+            crate::icons::Glyph::Search,
+            Key::GroupMenuFind.into(),
+            false,
+            scale,
+            Action::FindInChatOpen,
+        ),
+    ];
+    if can_manage {
+        rows.push(
+            container(Space::new().height(Length::Fixed(1.0)))
+                .width(Fill)
+                .padding(Padding {
+                    left: 12.0,
+                    right: 12.0,
+                    ..Padding::ZERO
+                })
+                .style(move |_| container::Style {
+                    background: Some(color(t.palette.divider).into()),
+                    ..container::Style::default()
+                })
+                .into(),
+        );
+        rows.push(menu_row(
+            &t,
+            crate::icons::Glyph::Delete,
+            Key::GroupMenuDelete.into(),
+            true,
+            scale,
+            Action::GroupDeleteAsk,
         ));
     }
-    col.into()
+    popover_box(&t, rows)
+}
+
+/// The IM list: featured bro, 72px rows, a floating search capsule and
+/// the self-row (Settings / sign out). `width` fits the preview line.
+pub fn conversation_list<'a>(t: &Skin, home: HomeList<'a>) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
+    let mut rows = column![].spacing(0);
+    if let Some(bro) = home.main_bro {
+        rows = rows.push(main_bro_header(t, bro));
+    } else {
+        rows = rows.push(
+            container(plus_button(t))
+                .width(Fill)
+                .align_x(Alignment::End)
+                .padding(8.0),
+        );
+    }
+    let shown = home.list.matching(home.query);
+    if home.list.is_empty() {
+        rows = rows.push(
+            container(
+                text(conversations::EMPTY_HINT)
+                    .size(t.type_.empty_hint)
+                    .color(color(t.palette.text2)),
+            )
+            .padding(12.0),
+        );
+    } else if shown.is_empty() {
+        rows = rows.push(
+            container(
+                text(Key::FindInChatNoResults)
+                    .size(t.type_.empty_hint)
+                    .color(color(t.palette.text2)),
+            )
+            .padding(12.0),
+        );
+    } else {
+        for c in shown {
+            rows = rows.push(conversation_row(
+                t,
+                c,
+                home.selected == Some(c.group_id.as_str()),
+                home.now,
+                home.width,
+            ));
+        }
+    }
+    // Room to scroll the last row above the floating capsule and self-row.
+    rows = rows.push(Space::new().height(h::SEARCH + h::SEARCH_LIFT + h::CARD_ROW + 12.0));
+    let list = scrollable(rows).height(Fill).width(Fill);
+    let mut footer = column![].spacing(8);
+    if let Some(name) = home.me_name {
+        footer = footer.push(self_row(t, name, home.self_menu, home.scale));
+    }
+    footer = footer.push(search_capsule(t, home.query));
+    let footer = container(footer).width(Fill).padding(Padding {
+        bottom: h::SEARCH_LIFT,
+        left: 12.0,
+        right: 12.0,
+        top: 0.0,
+    });
+    iced::widget::stack![
+        list,
+        container(footer)
+            .width(Fill)
+            .height(Fill)
+            .align_y(Alignment::End)
+    ]
+    .width(Fill)
+    .height(Fill)
+    .into()
 }
 
 // ---------- Chat page ----------
@@ -3671,7 +4123,11 @@ pub const RENAME_INPUT: &str = "robroz-rename-bro";
 /// the bar itself is an opaque `window` fill so scrolled messages cannot
 /// draw through it.
 pub fn chat_header_height(t: &Skin) -> f32 {
-    t.controls.touch_target.max(t.controls.button_h) + 12.0
+    t.controls
+        .touch_target
+        .max(t.controls.button_h)
+        .max(robroz_tokens::home::FLOAT_BTN)
+        + 12.0
 }
 
 /// Who is in the title capsule: up to three avatars, then `+N`.
@@ -3679,40 +4135,56 @@ pub fn chat_header_height(t: &Skin) -> f32 {
 pub struct HeaderBros<'a> {
     pub avatars: &'a [crate::avatar::BroAvatar],
     pub more: usize,
-    /// You own this DM's bro: show the round `…` (its avatar page).
+    /// You own this DM's bro: View profile opens its avatar page.
     pub can_edit: bool,
 }
 
-/// Top of the chat page: a floating capsule with the stacked bro avatars
+/// Top of the chat page: a floating bar with the stacked bro avatars
 /// (24px, 8px overlap, at most three then `+N`), the group or bro name
-/// and `私聊` for a DM; on the right a round `…` when there is something
-/// behind it (your own bro's avatar page). `back` adds 「‹」 for narrow
-/// screens, where the chat covers the list. With `rename` (bro DMs) the
-/// name is a button that turns into an input: Enter or 保存 saves (保存 is
-/// off while the name is empty or unchanged), Esc or 取消 cancels.
+/// and `私聊` for a DM; on the right a round `…` that opens the group
+/// menu. `back` adds 「‹」 and the unread count from other chats, for
+/// narrow screens. There is no divider under the bar.
 pub fn chat_header<'a>(
     t: &Skin,
     name: &str,
     dm: bool,
     back: bool,
+    unread: u64,
     rename: Option<HeaderRename<'_>>,
     bros: HeaderBros<'_>,
 ) -> Element<'a, Action> {
     use robroz_tokens::base::avatar as tok;
-    let h = t.controls.touch_target.max(t.controls.button_h);
+    use robroz_tokens::home as h;
+    let hbtn = h::FLOAT_BTN;
     let mut bar = row![].spacing(8).align_y(Alignment::Center);
     if back {
-        bar = bar.push(
-            button(
-                text(Key::ViewBackToChats)
-                    .size(t.type_.row_name)
+        let mut back_label = row![text("‹")
+            .size(22.0)
+            .height(Fill)
+            .align_y(Alignment::Center)
+            .color(color(t.palette.text))]
+        .spacing(4)
+        .align_y(Alignment::Center);
+        if unread > 0 {
+            let n = if unread > 99 {
+                "99+".into()
+            } else {
+                unread.to_string()
+            };
+            back_label = back_label.push(
+                text(n)
+                    .size(12.0)
+                    .color(color(t.palette.text2))
                     .height(Fill)
                     .align_y(Alignment::Center),
-            )
-            .height(Length::Fixed(h))
-            .padding(Padding::from([0.0, 8.0]))
-            .style(nav_button_style(*t, false))
-            .on_press(Action::BackToList),
+            );
+        }
+        bar = bar.push(
+            button(back_label)
+                .height(Length::Fixed(hbtn))
+                .padding(Padding::from([0.0, 10.0]))
+                .style(float_button_style(*t))
+                .on_press(Action::BackToList),
         );
     }
     let title = || {
@@ -3804,13 +4276,11 @@ pub fn chat_header<'a>(
                     .style(crate::avatar_view::capsule_style(*t)),
             );
             bar = bar.push(space::horizontal());
-            if bros.can_edit {
-                bar = bar.push(crate::avatar_view::round_button(
-                    t,
-                    "…",
-                    Action::AvatarPageOpen,
-                ));
-            }
+            bar = bar.push(crate::avatar_view::round_button(
+                t,
+                "…",
+                Action::GroupMenuOpen,
+            ));
         }
     }
     let mut col = column![container(bar)
@@ -3819,7 +4289,7 @@ pub fn chat_header<'a>(
         .align_y(Alignment::Center)]
     .spacing(0);
     if let Some(note) = rename.and_then(|r| r.note) {
-        col = col.push(container(footnote(t, note.to_string())).padding(Padding {
+        col = col.push(container(footnote(&t, note.to_string())).padding(Padding {
             bottom: 6.0,
             ..Padding::ZERO
         }));
@@ -3830,6 +4300,7 @@ pub fn chat_header<'a>(
         .padding(Padding::from([0.0, t.metrics.stream_padding]))
         .style(move |_| container::Style {
             background: Some(color(bg).into()),
+            border: Border::default(),
             ..container::Style::default()
         })
         .into()
@@ -4597,4 +5068,575 @@ pub fn review_rules_panel<'a>(t: &Skin, page: &'a review_rules::Page) -> Element
     }
     col = col.push(container(body_col).padding(pad));
     container(col).width(Fill).style(card_style(*t)).into()
+}
+
+/// Data for the group profile page.
+pub struct GroupProfile<'a> {
+    pub name: &'a str,
+    pub avatars: &'a [crate::avatar::BroAvatar],
+    pub more: usize,
+    pub can_manage: bool,
+    pub routines_on: Option<u64>,
+    pub members: Option<u64>,
+    pub edit: Option<&'a str>,
+    pub saving: bool,
+    pub note: Option<&'a str>,
+    pub copied: bool,
+    pub menu_open: bool,
+    pub scale: f32,
+}
+
+fn profile_card_row<'a>(
+    t: &Skin,
+    glyph: crate::icons::Glyph,
+    title: String,
+    value: String,
+    scale: f32,
+    on: Option<Action>,
+) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
+    let body = row![
+        crate::icons::icon(glyph, t.palette.text, h::CARD_ICON, scale),
+        text(title)
+            .size(t.type_.body)
+            .color(color(t.palette.text))
+            .width(Fill),
+        text(value).size(t.type_.body).color(color(t.palette.text2)),
+        text("›").size(18.0).color(color(t.palette.text3)),
+    ]
+    .spacing(12)
+    .align_y(Alignment::Center);
+    let mut b = button(body)
+        .width(Fill)
+        .height(Length::Fixed(h::CARD_ROW))
+        .padding(Padding::from([0.0, 16.0]))
+        .style(conversation_row_style(*t, false));
+    if let Some(on) = on {
+        b = b.on_press(on);
+    }
+    b.into()
+}
+
+fn profile_more_menu<'a>(t: &Skin, can_manage: bool, scale: f32) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
+    let t = *t;
+    let mut rows = vec![menu_row(
+        &t,
+        crate::icons::Glyph::Copy,
+        Key::GroupProfileCopyId.into(),
+        false,
+        scale,
+        Action::GroupCopyId,
+    )];
+    if can_manage {
+        rows.push(
+            container(Space::new().height(Length::Fixed(1.0)))
+                .width(Fill)
+                .padding(Padding {
+                    left: 12.0,
+                    right: 12.0,
+                    ..Padding::ZERO
+                })
+                .style(move |_| container::Style {
+                    background: Some(color(t.palette.divider).into()),
+                    ..container::Style::default()
+                })
+                .into(),
+        );
+        rows.push(menu_row(
+            &t,
+            crate::icons::Glyph::Delete,
+            Key::GroupMenuDelete.into(),
+            true,
+            scale,
+            Action::GroupDeleteAsk,
+        ));
+    }
+    container(popover_box(&t, rows))
+        .width(Fill)
+        .padding(Padding {
+            top: h::MENU_GAP,
+            right: t.metrics.stream_padding,
+            ..Padding::ZERO
+        })
+        .align_x(Alignment::End)
+        .into()
+}
+
+/// Group profile: 96px stacked avatars, name, Edit, Routines / Members
+/// card, and a top-right `…` with Copy ID and Delete.
+pub fn group_profile_page<'a>(t: &Skin, p: GroupProfile<'a>) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
+    let t = *t;
+    let back = crate::avatar_view::round_button(&t, "‹", Action::GroupProfileClose);
+    let more = crate::avatar_view::round_button(&t, "…", Action::GroupMenuOpen);
+    let bar = container(row![back, space::horizontal(), more].align_y(Alignment::Center))
+        .width(Fill)
+        .padding(Padding::from([8.0, t.metrics.stream_padding]));
+    let face = if p.avatars.is_empty() {
+        avatar_at(&t, p.name, h::PROFILE_AVATAR)
+    } else {
+        crate::avatar_view::avatar_stack_at(
+            &t,
+            p.avatars,
+            p.more,
+            t.palette.window,
+            h::PROFILE_AVATAR,
+            h::PROFILE_AVATAR * 8.0 / 24.0,
+        )
+    };
+    let mut col = column![bar]
+        .spacing(0)
+        .align_x(Alignment::Center)
+        .width(Fill);
+    col = col.push(container(face).padding(Padding {
+        top: 12.0,
+        ..Padding::ZERO
+    }));
+    col = col.push(
+        container(
+            text(p.name.to_string())
+                .size(h::PROFILE_NAME)
+                .font(bold())
+                .color(color(t.palette.text)),
+        )
+        .padding(Padding {
+            top: h::PROFILE_NAME_GAP,
+            ..Padding::ZERO
+        }),
+    );
+    if let Some(draft) = p.edit {
+        let mut input = text_input(conversations::RENAME_PLACEHOLDER.as_str(), draft)
+            .size(t.type_.body)
+            .padding(Padding::from([6.0, 12.0]));
+        if !p.saving {
+            input = input
+                .on_input(|text| Action::GroupEdit { text })
+                .on_submit(Action::GroupEditSave);
+        }
+        let changed = !draft.trim().is_empty() && draft.trim() != p.name.trim();
+        col = col.push(
+            container(
+                row![
+                    container(input).width(Fill),
+                    btn(
+                        &t,
+                        Key::ViewRenameSave.into(),
+                        Look::Primary,
+                        Leading::None,
+                        (!p.saving && changed).then_some(Action::GroupEditSave),
+                    ),
+                    btn(
+                        &t,
+                        Key::ViewRenameCancel.into(),
+                        Look::Secondary,
+                        Leading::None,
+                        (!p.saving).then_some(Action::GroupEditCancel),
+                    ),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .width(Length::Fixed(360.0))
+            .padding(Padding {
+                top: h::PROFILE_EDIT_GAP,
+                ..Padding::ZERO
+            }),
+        );
+    } else if p.can_manage {
+        col = col.push(
+            container(
+                button(
+                    text(Key::GroupProfileEdit)
+                        .size(t.type_.foot)
+                        .height(Fill)
+                        .align_y(Alignment::Center)
+                        .color(color(t.palette.text)),
+                )
+                .height(Length::Fixed(h::PROFILE_EDIT_H))
+                .padding(Padding::from([0.0, 14.0]))
+                .style(float_button_style(t))
+                .on_press(Action::GroupEditStart),
+            )
+            .padding(Padding {
+                top: h::PROFILE_EDIT_GAP,
+                ..Padding::ZERO
+            }),
+        );
+    }
+    if let Some(note) = p.note {
+        col = col.push(container(footnote(&t, note.to_string())).padding(Padding {
+            top: 8.0,
+            ..Padding::ZERO
+        }));
+    }
+    if p.copied {
+        col = col.push(
+            container(
+                text(Key::GroupProfileCopied)
+                    .size(t.type_.foot)
+                    .color(color(t.palette.text2)),
+            )
+            .padding(8.0),
+        );
+    }
+    let mut card = column![];
+    if let Some(n) = p.routines_on {
+        card = card.push(profile_card_row(
+            &t,
+            crate::icons::Glyph::Routines,
+            Key::RoutinesTitle.into(),
+            Key::GroupProfileRoutinesOn.fill(&[&n]),
+            p.scale,
+            Some(Action::OpenRoutines),
+        ));
+    }
+    if p.can_manage {
+        if let Some(n) = p.members {
+            card = card.push(profile_card_row(
+                &t,
+                crate::icons::Glyph::Members,
+                Key::GroupProfileMembers.into(),
+                n.to_string(),
+                p.scale,
+                Some(Action::MembersOpen),
+            ));
+        }
+    }
+    col = col.push(
+        container(card)
+            .width(Fill)
+            .padding(Padding {
+                top: 24.0,
+                left: t.metrics.stream_padding,
+                right: t.metrics.stream_padding,
+                bottom: 16.0,
+            })
+            .style(move |_| container::Style {
+                background: Some(color(t.palette.surface).into()),
+                border: Border {
+                    color: color(t.palette.border2),
+                    width: 1.0,
+                    radius: h::CARD_R.into(),
+                },
+                ..container::Style::default()
+            }),
+    );
+    let page = scrollable(col).height(Fill).width(Fill);
+    if p.menu_open {
+        iced::widget::stack![
+            page,
+            menu_dismiss_layer(),
+            profile_more_menu(&t, p.can_manage, p.scale)
+        ]
+        .width(Fill)
+        .height(Fill)
+        .into()
+    } else {
+        page.into()
+    }
+}
+
+fn menu_dismiss_layer<'a>() -> Element<'a, Action> {
+    mouse_area(container(Space::new()).width(Fill).height(Fill))
+        .on_press(Action::GroupMenuClose)
+        .into()
+}
+
+/// Click-outside layer for the chat `…` menu; no scrim.
+pub fn group_menu_overlay<'a>(
+    t: &Skin,
+    can_manage: bool,
+    scale: f32,
+    header_h: f32,
+    pad: f32,
+) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
+    let menu = container(group_menu_popover(t, can_manage, scale))
+        .width(Fill)
+        .height(Fill)
+        .align_x(Alignment::End)
+        .align_y(Alignment::Start)
+        .padding(Padding {
+            top: header_h + h::MENU_GAP,
+            right: pad,
+            ..Padding::ZERO
+        });
+    iced::widget::stack![menu_dismiss_layer(), menu]
+        .width(Fill)
+        .height(Fill)
+        .into()
+}
+
+/// Desktop-centred delete confirmation, 400px wide. Cancel is on the
+/// left; Delete is red and not the default focus.
+pub fn delete_group_dialog<'a>(t: &Skin, name: &str) -> Element<'a, Action> {
+    use robroz_tokens::home as h;
+    let t = *t;
+    let body = column![
+        text(Key::GroupDeleteTitle.fill(&[&name]))
+            .size(t.type_.list_title)
+            .font(bold())
+            .color(color(t.palette.text)),
+        text(Key::GroupDeleteBody)
+            .size(t.type_.body)
+            .color(color(t.palette.text2)),
+        row![
+            container(btn(
+                &t,
+                Key::ViewRenameCancel.into(),
+                Look::Secondary,
+                Leading::None,
+                Some(Action::GroupDeleteCancel),
+            ))
+            .width(Fill),
+            container(btn(
+                &t,
+                Key::GroupMenuDelete.into(),
+                Look::Danger,
+                Leading::None,
+                Some(Action::GroupDeleteConfirm),
+            ))
+            .width(Fill),
+        ]
+        .spacing(12),
+    ]
+    .spacing(16)
+    .width(Length::Fixed(h::DIALOG_W));
+    let card = container(body)
+        .padding(24.0)
+        .style(move |_| container::Style {
+            background: Some(color(t.palette.surface).into()),
+            border: Border {
+                color: color(t.palette.border2),
+                width: 1.0,
+                radius: 16.0.into(),
+            },
+            shadow: IcedShadow {
+                color: Color {
+                    a: 0.20,
+                    ..color(t.palette.text)
+                },
+                offset: Vector::new(0.0, 8.0),
+                blur_radius: 24.0,
+            },
+            ..container::Style::default()
+        });
+    let dim = Color {
+        a: 0.32,
+        ..color(t.palette.text)
+    };
+    iced::widget::stack![
+        mouse_area(
+            container(Space::new())
+                .width(Fill)
+                .height(Fill)
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(dim)),
+                    ..container::Style::default()
+                })
+        )
+        .on_press(Action::GroupDeleteCancel),
+        container(card).width(Fill).height(Fill).center(Fill)
+    ]
+    .width(Fill)
+    .height(Fill)
+    .into()
+}
+
+pub fn find_in_chat_page<'a>(
+    t: &Skin,
+    query: &'a str,
+    hits: &'a [robroz_contract::GroupSearchHit],
+    busy: bool,
+    now: i64,
+) -> Element<'a, Action> {
+    let back = crate::avatar_view::round_button(t, "‹", Action::FindInChatClose);
+    let title = text(Key::FindInChatTitle)
+        .size(t.type_.list_title)
+        .font(bold())
+        .color(color(t.palette.text));
+    let bar = container(row![back, title].spacing(12).align_y(Alignment::Center))
+        .width(Fill)
+        .padding(Padding::from([8.0, t.metrics.stream_padding]));
+    let mut input = text_input(Key::FindInChatPlaceholder.as_str(), query)
+        .size(t.type_.body)
+        .padding(Padding::from([10.0, 14.0]))
+        .on_submit(Action::FindInChatSubmit);
+    if !busy {
+        input = input.on_input(|text| Action::FindInChatEdit { text });
+    }
+    let mut col = column![
+        bar,
+        container(input).padding(Padding::from([0.0, t.metrics.stream_padding]))
+    ]
+    .spacing(12)
+    .width(Fill);
+    if query.trim().is_empty() {
+        col = col.push(
+            container(
+                text(Key::FindInChatEmpty)
+                    .size(t.type_.body)
+                    .color(color(t.palette.text2)),
+            )
+            .padding(t.metrics.stream_padding),
+        );
+    } else if !busy && hits.is_empty() {
+        col = col.push(
+            container(
+                text(Key::FindInChatNoResults)
+                    .size(t.type_.body)
+                    .color(color(t.palette.text2)),
+            )
+            .padding(t.metrics.stream_padding),
+        );
+    } else {
+        for h in hits.iter() {
+            let when = conversations::list_time(&h.created_at, now, &Local);
+            let who = h.author_name.as_deref().unwrap_or("");
+            let head = row![
+                text(who.to_string())
+                    .size(t.type_.foot)
+                    .font(bold())
+                    .color(color(t.palette.text)),
+                space::horizontal(),
+                text(when).size(t.type_.foot).color(color(t.palette.text3)),
+            ]
+            .align_y(Alignment::Center);
+            col = col.push(
+                container(
+                    column![
+                        head,
+                        text(h.snippet.clone())
+                            .size(t.type_.body)
+                            .color(color(t.palette.text2)),
+                    ]
+                    .spacing(4),
+                )
+                .width(Fill)
+                .padding(Padding::from([10.0, t.metrics.stream_padding])),
+            );
+        }
+    }
+    scrollable(col).height(Fill).width(Fill).into()
+}
+
+pub fn members_page<'a, F>(
+    t: &Skin,
+    members: Option<&'a robroz_contract::GroupMembers>,
+    mut avatar_of: F,
+    scale: f32,
+) -> Element<'a, Action>
+where
+    F: FnMut(&str) -> crate::avatar::BroAvatar,
+{
+    let _ = scale;
+    let back = crate::avatar_view::round_button(t, "‹", Action::MembersClose);
+    let title = text(Key::MembersTitle)
+        .size(t.type_.list_title)
+        .font(bold())
+        .color(color(t.palette.text));
+    let mut col = column![
+        container(row![back, title].spacing(12).align_y(Alignment::Center))
+            .padding(Padding::from([8.0, t.metrics.stream_padding]))
+    ]
+    .spacing(0)
+    .width(Fill);
+    let Some(members) = members else {
+        return scrollable(col).height(Fill).width(Fill).into();
+    };
+    for b in &members.bros {
+        let face = crate::avatar_view::bro_avatar(t, avatar_of(&b.bot_id), 40.0);
+        let mut body =
+            column![text(b.name.clone()).size(16.0).color(color(t.palette.text))].spacing(2);
+        if let Some(d) = b.owner_name.as_deref() {
+            body = body.push(text(d.to_string()).size(12.0).color(color(t.palette.text3)));
+        }
+        col = col.push(
+            container(row![face, body].spacing(12).align_y(Alignment::Center))
+                .width(Fill)
+                .padding(Padding::from([10.0, t.metrics.stream_padding])),
+        );
+    }
+    for u in &members.users {
+        let name = u.name.clone().unwrap_or_else(|| u.user_id.clone());
+        let face = avatar_at(t, &name, 40.0);
+        col = col.push(
+            container(
+                row![face, text(name).size(16.0).color(color(t.palette.text)),]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding(Padding::from([10.0, t.metrics.stream_padding])),
+        );
+    }
+    scrollable(col).height(Fill).width(Fill).into()
+}
+
+/// A thin Settings landing: the existing destinations, reached from the
+/// self-row. Visual redesign is PR5.
+pub fn settings_landing<'a, F, I>(t: &Skin, rows: I) -> Element<'a, F>
+where
+    F: Clone + 'a,
+    I: IntoIterator<Item = (&'static str, F)>,
+{
+    use robroz_tokens::home as h;
+    let t = *t;
+    let title = container(
+        text(Key::SettingsTitle)
+            .size(22.0)
+            .font(bold())
+            .color(color(t.palette.text)),
+    )
+    .padding(Padding::from([16.0, 16.0]));
+    let mut card = column![];
+    for (i, (label, msg)) in rows.into_iter().enumerate() {
+        if i > 0 {
+            card = card.push(
+                container(Space::new().height(Length::Fixed(1.0)))
+                    .width(Fill)
+                    .style(move |_| container::Style {
+                        background: Some(color(t.palette.divider).into()),
+                        ..container::Style::default()
+                    }),
+            );
+        }
+        card = card.push(
+            button(
+                row![
+                    text(label)
+                        .size(t.type_.body)
+                        .color(color(t.palette.text))
+                        .width(Fill),
+                    text("›").size(18.0).color(color(t.palette.text3)),
+                ]
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .height(Length::Fixed(h::CARD_ROW))
+            .padding(Padding::from([0.0, 16.0]))
+            .style(conversation_row_style(t, false))
+            .on_press(msg),
+        );
+    }
+    let card = container(card)
+        .width(Fill)
+        .style(move |_| container::Style {
+            background: Some(color(t.palette.surface).into()),
+            border: Border {
+                color: color(t.palette.border2),
+                width: 1.0,
+                radius: h::CARD_R.into(),
+            },
+            ..container::Style::default()
+        });
+    scrollable(
+        column![title, container(card).padding(Padding::from([0.0, 16.0]))]
+            .spacing(8)
+            .width(Fill),
+    )
+    .height(Fill)
+    .width(Fill)
+    .into()
 }

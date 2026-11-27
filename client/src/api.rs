@@ -20,11 +20,12 @@ use std::sync::Mutex;
 use robroz_contract::{
     next_bro_name, parse_skill_slug, route_mention, Answer, AnswerChoice, ApprovalAction,
     ApprovalDecision, Bro, BroAvatar, Bros, CreateBro, CreateMemory, CreateReviewRule, CreateSkill,
-    Event, McpCommandNotApproved, McpServer, McpServers, McpTestResult, McpTool, McpTools,
-    Memories, Memory, MemoryKind, MemorySource, MemoryStatus, Message, MessageKind, PatchBro,
-    RenameBro, ReviewRuleCreated, ReviewRules, Said, Say, ScheduleEntry, Schedules, Skill, Skills,
-    Task, TaskState, Unread, Unreads, UpdateMemory, UpdateSchedule, UpdateSkill,
-    MCP_COMMAND_NOT_APPROVED, SETTINGS_APPROVAL_BOT_ID, SETTINGS_APPROVAL_BOT_NAME,
+    Event, Group, GroupMembers, GroupSearch, McpCommandNotApproved, McpServer, McpServers,
+    McpTestResult, McpTool, McpTools, Memories, Memory, MemoryKind, MemorySource, MemoryStatus,
+    Message, MessageKind, PatchBro, RenameBro, RenameGroup, ReviewRuleCreated, ReviewRules, Said,
+    Say, ScheduleEntry, Schedules, Skill, Skills, Task, TaskState, Unread, Unreads, UpdateMemory,
+    UpdateSchedule, UpdateSkill, GROUP_SEARCH_DEFAULT_LIMIT, MCP_COMMAND_NOT_APPROVED,
+    SETTINGS_APPROVAL_BOT_ID, SETTINGS_APPROVAL_BOT_NAME,
 };
 use robroz_contract::{
     ApprovalForbidden, ApprovalForbiddenReason, Me, APPROVAL_FORBIDDEN, FORBIDDEN_NOT_BRO_OWNER,
@@ -132,6 +133,21 @@ pub mod paths {
         let verb = if approve { "approve" } else { "deny" };
         format!("/api/approvals/{id}/{verb}")
     }
+    /// robroz#195: rename (`PATCH`) or delete (`DELETE`) a group.
+    pub fn group(id: &str) -> String {
+        format!("/api/groups/{id}")
+    }
+    /// robroz#195: bros and users in a group.
+    pub fn group_members(id: &str) -> String {
+        format!("/api/groups/{id}/members")
+    }
+    /// robroz#195: find messages in a group.
+    pub fn group_search(id: &str, q: &str, limit: usize) -> String {
+        format!(
+            "/api/groups/{id}/search?q={}&limit={limit}",
+            super::query_escape(q)
+        )
+    }
     /// robroz#76: read (GET) or change (PUT) the search config.
     pub const SEARCH_SETTINGS: &str = "/api/settings/search";
     /// robroz#76: try the effective config once.
@@ -152,6 +168,19 @@ pub mod paths {
     pub fn send_draft(id: &str) -> String {
         format!("/api/cards/{id}/send")
     }
+}
+
+fn query_escape(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.as_bytes() {
+        match *b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// Request bodies, kept as pure functions so their shape is tested.
@@ -338,6 +367,9 @@ fn copy_for_code(code: &str) -> String {
         "resume_needs_approval" => Text::HostResumeNeedsApproval,
         "resume_no_intent" => Text::HostResumeNoIntent,
         "resume_marker_failed" => Text::HostResumeMarkerFailed,
+        "not_group_creator" => Text::HostNotGroupCreator,
+        "group_is_dm" => Text::HostGroupIsDm,
+        "not_group_member" => Text::HostNotGroupMember,
         _ => Text::ClientRequestFailed,
     };
     key.into()
@@ -451,6 +483,14 @@ pub trait CardApi: Send + Sync {
     fn send_draft(&self, id: &str) -> Result<(), ApiError>;
     fn schedules(&self, group_id: &str) -> Result<Vec<ScheduleEntry>, ApiError>;
     fn set_paused(&self, id: &str, paused: bool) -> Result<ScheduleEntry, ApiError>;
+    /// robroz#195: rename a group. 403 `not_group_creator` or `group_is_dm`.
+    fn rename_group(&self, id: &str, name: &str) -> Result<Group, ApiError>;
+    /// robroz#195: delete a group and its messages, tasks and routines.
+    fn delete_group(&self, id: &str) -> Result<(), ApiError>;
+    /// robroz#195: bros and users connected to the group.
+    fn group_members(&self, id: &str) -> Result<GroupMembers, ApiError>;
+    /// robroz#195: search messages in the group, best match first.
+    fn search_group(&self, id: &str, q: &str, limit: usize) -> Result<GroupSearch, ApiError>;
     /// 记忆 page: kept and pending memories, newest first (robroz#62).
     fn memories(&self) -> Result<Vec<Memory>, ApiError>;
     /// The person writes one down; the host keeps it at once.
@@ -1018,6 +1058,26 @@ impl CardApi for HttpApi {
     fn test_model(&self) -> Result<(bool, Option<String>), ApiError> {
         let r: ModelTestResult = decode(&self.post(paths::MODEL_TEST, None)?)?;
         Ok((r.ok, r.error))
+    }
+
+    fn rename_group(&self, id: &str, name: &str) -> Result<Group, ApiError> {
+        let body = serde_json::to_string(&RenameGroup {
+            name: name.trim().to_string(),
+        })
+        .expect("serialize rename group");
+        decode(&self.patch(&paths::group(id), body)?)
+    }
+
+    fn delete_group(&self, id: &str) -> Result<(), ApiError> {
+        self.delete(&paths::group(id)).map(|_| ())
+    }
+
+    fn group_members(&self, id: &str) -> Result<GroupMembers, ApiError> {
+        decode(&self.get(&paths::group_members(id))?)
+    }
+
+    fn search_group(&self, id: &str, q: &str, limit: usize) -> Result<GroupSearch, ApiError> {
+        decode(&self.get(&paths::group_search(id, q, limit))?)
     }
 }
 
@@ -1762,6 +1822,61 @@ impl CardApi for FakeApi {
             (true, None)
         } else {
             (false, Some(model_page::NOT_SET.into()))
+        })
+    }
+
+    fn rename_group(&self, id: &str, name: &str) -> Result<Group, ApiError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(ApiError::BadRequest(Text::HostNeedName.into()));
+        }
+        Ok(Group {
+            id: id.to_string(),
+            name: name.to_string(),
+            tenant_id: "fake".into(),
+            created_by: Some(FAKE_ME_ID.into()),
+            dm: false,
+        })
+    }
+
+    fn delete_group(&self, _id: &str) -> Result<(), ApiError> {
+        Ok(())
+    }
+
+    fn group_members(&self, id: &str) -> Result<GroupMembers, ApiError> {
+        let bros = self.bros.lock().expect("fake bros lock");
+        let listed: Vec<_> = bros
+            .iter()
+            .take(3)
+            .map(|b| robroz_contract::GroupMemberBro {
+                bot_id: b.id.clone(),
+                name: b.name.clone(),
+                owner_user_id: b.owner_user_id.clone(),
+                owner_name: Some(FAKE_ME_NAME.into()),
+            })
+            .collect();
+        let bro_ids = bros
+            .iter()
+            .filter(|b| b.owner_user_id.as_deref() == Some(FAKE_ME_ID))
+            .map(|b| b.id.clone())
+            .collect();
+        Ok(GroupMembers {
+            group_id: id.to_string(),
+            created_by: Some(FAKE_ME_ID.into()),
+            bros: listed,
+            users: vec![robroz_contract::GroupMemberUser {
+                user_id: FAKE_ME_ID.into(),
+                name: Some(FAKE_ME_NAME.into()),
+                creator: true,
+                bro_ids,
+            }],
+        })
+    }
+
+    fn search_group(&self, _id: &str, q: &str, _limit: usize) -> Result<GroupSearch, ApiError> {
+        let _ = q;
+        Ok(GroupSearch {
+            results: Vec::new(),
         })
     }
 }

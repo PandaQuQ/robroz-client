@@ -14,12 +14,22 @@ pub enum HostState {
     Unreachable,
     /// The host listed the groups at least once.
     Answered,
+    /// The person signed out on this device: show the connection form,
+    /// do not retry the previous token, and do not show a host-error headline.
+    SignedOut,
 }
 
 impl HostState {
     /// `loaded`: the host listed the groups at least once. `load_failed`:
     /// the latest attempt at that first listing failed.
     pub fn of(loaded: bool, load_failed: bool) -> Self {
+        Self::of_session(loaded, load_failed, false)
+    }
+
+    pub fn of_session(loaded: bool, load_failed: bool, signed_out: bool) -> Self {
+        if signed_out {
+            return Self::SignedOut;
+        }
         match (loaded, load_failed) {
             (true, _) => Self::Answered,
             (false, true) => Self::Unreachable,
@@ -58,7 +68,7 @@ impl HostState {
     /// in the sidebar, which is hidden here). The control is the same
     /// one as on the Model page.
     pub fn shows_language_row(self) -> bool {
-        self == Self::Unreachable
+        matches!(self, Self::Unreachable | Self::SignedOut)
     }
 }
 
@@ -132,6 +142,16 @@ mod tests {
             assert!(!up.shows_language_row());
             assert!(!up.retries());
         }
+    }
+
+    #[test]
+    fn sign_out_shows_the_form_without_retry() {
+        let out = HostState::of_session(true, false, true);
+        assert_eq!(out, HostState::SignedOut);
+        assert!(!out.shows_sidebar());
+        assert_eq!(out.notice(None), None);
+        assert!(out.shows_language_row());
+        assert!(!out.retries());
     }
 
     #[test]

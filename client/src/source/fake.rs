@@ -383,10 +383,7 @@ impl EventSource for FakeSource {
 }
 
 fn group(id: &str, name: &str) -> GroupTab {
-    GroupTab {
-        id: id.into(),
-        name: name.into(),
-    }
+    GroupTab::new(id, name)
 }
 
 fn at(seq: &str) -> String {

@@ -49,6 +49,12 @@ pub struct Conversation {
     /// A DM's bro avatar (stored or id default); `None` for groups and for
     /// a DM whose bro is not known yet.
     pub bro_avatar: Option<crate::avatar::BroAvatar>,
+    /// Bros in a group, in add order, for the 2×2 tile (at most four).
+    pub group_avatars: Vec<crate::avatar::BroAvatar>,
+    /// Extra bros past the four shown in the tile.
+    pub group_avatar_more: usize,
+    /// The user who created this group; `None` for a DM or an older group.
+    pub created_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -132,6 +138,55 @@ impl Conversations {
         if let Some(c) = self.rows.iter_mut().find(|c| c.group_id == group_id) {
             c.unread = 0;
         }
+    }
+
+    /// Creator and DM flag from `GET /api/groups`.
+    pub fn set_flags(&mut self, group_id: &str, dm: bool, created_by: Option<String>) {
+        let c = self.slot(group_id);
+        c.dm = c.dm || dm;
+        if created_by.is_some() {
+            c.created_by = created_by;
+        }
+    }
+
+    /// Bros drawn in a group's 2×2 tile.
+    pub fn set_group_avatars(
+        &mut self,
+        group_id: &str,
+        avatars: Vec<crate::avatar::BroAvatar>,
+        more: usize,
+    ) {
+        if let Some(c) = self.rows.iter_mut().find(|c| c.group_id == group_id) {
+            c.group_avatars = avatars;
+            c.group_avatar_more = more;
+        }
+    }
+
+    /// Drop a chat after the host deleted it.
+    pub fn remove(&mut self, group_id: &str) {
+        self.rows.retain(|c| c.group_id != group_id);
+    }
+
+    /// Unread across every chat.
+    pub fn total_unread(&self) -> u64 {
+        self.rows.iter().map(|c| c.unread).sum()
+    }
+
+    /// Unread across every chat except `group_id` (the open one).
+    pub fn unread_except(&self, group_id: Option<&str>) -> u64 {
+        self.rows
+            .iter()
+            .filter(|c| Some(c.group_id.as_str()) != group_id)
+            .map(|c| c.unread)
+            .sum()
+    }
+
+    /// Rows whose name or preview matches the home search capsule.
+    pub fn matching(&self, query: &str) -> Vec<&Conversation> {
+        self.rows
+            .iter()
+            .filter(|c| crate::home::row_matches(&c.name, c.preview.as_deref(), query))
+            .collect()
     }
 
     /// Newest first; chats with no activity last, in the order they came.
@@ -324,5 +379,21 @@ mod tests {
         // Local zone decides the day: 23:00 UTC is tomorrow 07:00 at +8.
         let tz8 = FixedOffset::east_opt(8 * 3600).unwrap();
         assert_eq!(list_time("2026-11-19T23:00:00Z", now, &tz8), "07:00");
+    }
+
+    #[test]
+    fn unread_totals_and_search_and_remove() {
+        let mut c = Conversations::default();
+        c.upsert("g1", "官网", false);
+        c.upsert("dm1", "Ada", true);
+        c.apply_unread("g1", 2, None);
+        c.apply_unread("dm1", 3, None);
+        assert_eq!(c.total_unread(), 5);
+        assert_eq!(c.unread_except(Some("g1")), 3);
+        assert_eq!(c.matching("ada").len(), 1);
+        assert_eq!(c.matching("网").len(), 1);
+        c.remove("g1");
+        assert_eq!(c.total_unread(), 3);
+        assert!(c.get("g1").is_none());
     }
 }

@@ -287,6 +287,14 @@ enum Page {
     NewBro,
     /// Your own bro's avatar (`…` in its DM).
     BroAvatar,
+    /// Group profile (from the chat `…` menu).
+    GroupProfile,
+    /// Find in this chat.
+    FindInChat,
+    /// Members of the open group.
+    Members,
+    /// Settings landing (self-row). Visual redesign is PR5.
+    Settings,
 }
 
 #[derive(Debug, Clone)]
@@ -429,6 +437,21 @@ enum Message {
     BrosLoaded(Result<Vec<Bro>, ApiError>),
     /// `GET /api/me`: who this client is (an older host has no such route).
     MeLoaded(Result<Me, ApiError>),
+    GroupRenamed(Result<robroz_contract::Group, ApiError>),
+    GroupDeleted {
+        id: String,
+        result: Result<(), ApiError>,
+    },
+    GroupMembersLoaded {
+        id: String,
+        result: Result<robroz_contract::GroupMembers, ApiError>,
+    },
+    GroupSearchLoaded(Result<robroz_contract::GroupSearch, ApiError>),
+    GroupSchedulesLoaded {
+        id: String,
+        result: Result<Vec<robroz_contract::ScheduleEntry>, ApiError>,
+    },
+    CopiedExpired,
     /// The reminder row's jump: the group is open, scroll to the card.
     JumpTo(String),
     /// The card's 300 ms accent stroke is over.
@@ -539,6 +562,25 @@ struct App {
     renaming: bool,
     /// Last rename error: `(dm group, note)`.
     rename_note: Option<(String, String)>,
+    /// Home list search capsule.
+    home_query: String,
+    group_menu: bool,
+    self_menu: bool,
+    /// Group being confirmed for deletion.
+    group_delete: Option<String>,
+    /// Draft name while editing a group on the profile page.
+    group_edit: Option<String>,
+    group_edit_saving: bool,
+    group_note: Option<String>,
+    copied_until: Option<i64>,
+    find_query: String,
+    find_hits: Vec<robroz_contract::GroupSearchHit>,
+    find_busy: bool,
+    members: Option<robroz_contract::GroupMembers>,
+    routines_on: HashMap<String, u64>,
+    member_count: HashMap<String, u64>,
+    /// Local sign-out: connection form, no auto-retry.
+    signed_out: bool,
     origin: String,
     interval: Duration,
     groups: Vec<GroupTab>,
@@ -713,6 +755,21 @@ impl App {
             rename: None,
             renaming: false,
             rename_note: None,
+            home_query: String::new(),
+            group_menu: false,
+            self_menu: false,
+            group_delete: None,
+            group_edit: None,
+            group_edit_saving: false,
+            group_note: None,
+            copied_until: None,
+            find_query: String::new(),
+            find_hits: Vec::new(),
+            find_busy: false,
+            members: None,
+            routines_on: HashMap::new(),
+            member_count: HashMap::new(),
+            signed_out: false,
             origin,
             interval,
             groups: Vec::new(),
@@ -774,7 +831,7 @@ impl App {
 
     /// Whether the host has answered the first group listing.
     fn host_state(&self) -> HostState {
-        HostState::of(self.loaded, self.load_failed)
+        HostState::of_session(self.loaded, self.load_failed, self.signed_out)
     }
 
     /// The scheme to draw with: the chosen one, or the system's.
@@ -827,10 +884,16 @@ impl App {
 
     /// Make a group known everywhere: list, conversation rows, source.
     fn learn_group(&mut self, tab: GroupTab, dm: bool) -> Task<Message> {
-        self.convs.upsert(&tab.id, &tab.name, dm);
+        self.convs.upsert(&tab.id, &tab.name, dm || tab.dm);
+        self.convs
+            .set_flags(&tab.id, dm || tab.dm, tab.created_by.clone());
         match self.groups.iter_mut().find(|g| g.id == tab.id) {
             Some(g) => {
                 g.name = tab.name;
+                g.dm = g.dm || dm || tab.dm;
+                if tab.created_by.is_some() {
+                    g.created_by = tab.created_by;
+                }
                 Task::none()
             }
             None => {
@@ -847,6 +910,109 @@ impl App {
     /// The avatar to draw for bro `id`: stored, else the id default.
     fn avatar_of(&self, id: &str) -> BroAvatar {
         avatar_for(&self.bros, id)
+    }
+
+    fn can_manage(&self, group_id: &str) -> bool {
+        let tab = self.groups.iter().find(|g| g.id == group_id);
+        let conv = self.convs.get(group_id);
+        let dm = tab
+            .map(|g| g.dm)
+            .or_else(|| conv.map(|c| c.dm))
+            .unwrap_or(false);
+        let created = tab
+            .and_then(|g| g.created_by.as_deref())
+            .or_else(|| conv.and_then(|c| c.created_by.as_deref()));
+        robroz_ui::home::can_manage(
+            dm,
+            created,
+            self.me.as_ref().map(|m| m.id.as_str()),
+            self.me.as_ref().map(|m| m.role),
+        )
+    }
+
+    fn main_bro(&self) -> Option<view::MainBro<'_>> {
+        let bro = self
+            .bros
+            .iter()
+            .find(|b| self.owns(b))
+            .or_else(|| self.bros.first())?;
+        Some(view::MainBro {
+            name: &bro.name,
+            avatar: avatar::resolve(bro.avatar, &bro.id),
+        })
+    }
+
+    fn close_menus(&mut self) {
+        self.group_menu = false;
+        self.self_menu = false;
+    }
+
+    fn load_group_members(&self, id: String) -> Task<Message> {
+        let gid = id.clone();
+        Task::perform(
+            call(&self.api, move |api| api.group_members(&id)),
+            move |result| Message::GroupMembersLoaded { id: gid, result },
+        )
+    }
+
+    fn load_group_schedules(&self, id: String) -> Task<Message> {
+        let gid = id.clone();
+        Task::perform(
+            call(&self.api, move |api| api.schedules(&id)),
+            move |result| Message::GroupSchedulesLoaded { id: gid, result },
+        )
+    }
+
+    fn sign_out_local(&mut self) -> Task<Message> {
+        let host = self.conn_form.host_for_save();
+        // Env tokens cannot be deleted; the session still ends.
+        let _ = crate::conn::save(&host, crate::conn::TokenEdit::Clear);
+        self.signed_out = true;
+        self.loaded = false;
+        self.load_failed = false;
+        self.error = None;
+        self.conn = None;
+        self.stream_up = false;
+        self.stream_fail_since = None;
+        self.me = None;
+        self.groups.clear();
+        self.convs = Conversations::default();
+        self.feeds.clear();
+        self.selected = None;
+        self.bros.clear();
+        self.page = Page::Group;
+        self.narrow_open = false;
+        self.close_menus();
+        self.group_delete = None;
+        self.group_edit = None;
+        self.members = None;
+        self.conn_form.reload();
+        Task::none()
+    }
+
+    fn apply_members(&mut self, id: &str, members: robroz_contract::GroupMembers) {
+        self.member_count
+            .insert(id.to_string(), members.bros.len() as u64);
+        let mut avatars: Vec<BroAvatar> = Vec::new();
+        for b in &members.bros {
+            avatars.push(self.avatar_of(&b.bot_id));
+        }
+        let more = avatars.len().saturating_sub(4);
+        avatars.truncate(4);
+        self.convs.set_group_avatars(id, avatars, more);
+        if members.created_by.is_some() {
+            self.convs.set_flags(id, false, members.created_by.clone());
+            if let Some(g) = self.groups.iter_mut().find(|g| g.id == id) {
+                if members.created_by.is_some() {
+                    g.created_by = members.created_by.clone();
+                }
+            }
+        }
+        if self.page == Page::Members && self.selected.as_deref() == Some(id) {
+            self.members = Some(members);
+        } else if self.page == Page::GroupProfile && self.selected.as_deref() == Some(id) {
+            self.members = Some(members);
+        }
     }
 
     /// You own this bro (`ownerUserId` == `GET /api/me` id). Unknown
@@ -872,6 +1038,7 @@ impl App {
             .collect();
         for (g, a) in pairs {
             self.convs.set_avatar(&g, a);
+            self.convs.set_group_avatars(&g, vec![a], 0);
         }
     }
 
@@ -1905,6 +2072,13 @@ impl App {
             Action::OpenChat { group } => self.open_chat(group),
             Action::BackToList => {
                 self.narrow_open = false;
+                self.close_menus();
+                if matches!(
+                    self.page,
+                    Page::GroupProfile | Page::FindInChat | Page::Members | Page::Settings
+                ) {
+                    self.page = Page::Group;
+                }
                 Task::none()
             }
             Action::ComposerEdit { text } => {
@@ -2010,6 +2184,184 @@ impl App {
                 }))
             }
             Action::AvatarReset => self.save_avatar(None),
+            Action::GroupMenuOpen => {
+                self.group_menu = true;
+                self.self_menu = false;
+                Task::none()
+            }
+            Action::GroupMenuClose => {
+                self.group_menu = false;
+                Task::none()
+            }
+            Action::GroupProfileOpen => {
+                self.group_menu = false;
+                let Some(id) = self.selected.clone() else {
+                    return Task::none();
+                };
+                if self.dm_bro(&id).is_some_and(|b| self.owns(b)) {
+                    return self.on_action(Action::AvatarPageOpen);
+                }
+                self.page = Page::GroupProfile;
+                self.narrow_open = true;
+                self.group_edit = None;
+                self.group_note = None;
+                Task::batch([
+                    self.load_group_members(id.clone()),
+                    self.load_group_schedules(id),
+                ])
+            }
+            Action::GroupProfileClose => {
+                self.page = Page::Group;
+                self.group_menu = false;
+                self.group_edit = None;
+                Task::none()
+            }
+            Action::FindInChatOpen => {
+                self.group_menu = false;
+                self.page = Page::FindInChat;
+                self.narrow_open = true;
+                self.find_query.clear();
+                self.find_hits.clear();
+                self.find_busy = false;
+                Task::none()
+            }
+            Action::FindInChatClose => {
+                self.page = Page::Group;
+                self.find_hits.clear();
+                Task::none()
+            }
+            Action::FindInChatEdit { text } => {
+                self.find_query = text;
+                Task::none()
+            }
+            Action::FindInChatSubmit => {
+                let Some(id) = self.selected.clone() else {
+                    return Task::none();
+                };
+                let q = self.find_query.trim().to_string();
+                if q.is_empty() {
+                    return Task::none();
+                }
+                self.find_busy = true;
+                Task::perform(
+                    call(&self.api, move |api| {
+                        api.search_group(&id, &q, robroz_contract::GROUP_SEARCH_DEFAULT_LIMIT)
+                    }),
+                    Message::GroupSearchLoaded,
+                )
+            }
+            Action::GroupEditStart => {
+                if let Some(id) = self.selected.as_deref() {
+                    let name = self
+                        .convs
+                        .get(id)
+                        .map(|c| c.name.clone())
+                        .unwrap_or_else(|| id.to_string());
+                    self.group_edit = Some(name);
+                    self.group_note = None;
+                }
+                Task::none()
+            }
+            Action::GroupEdit { text } => {
+                if !self.group_edit_saving {
+                    self.group_edit = Some(text);
+                    self.group_note = None;
+                }
+                Task::none()
+            }
+            Action::GroupEditCancel => {
+                if !self.group_edit_saving {
+                    self.group_edit = None;
+                    self.group_note = None;
+                }
+                Task::none()
+            }
+            Action::GroupEditSave => {
+                let Some(id) = self.selected.clone() else {
+                    return Task::none();
+                };
+                let Some(name) = self
+                    .group_edit
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                else {
+                    return Task::none();
+                };
+                self.group_edit_saving = true;
+                Task::perform(
+                    call(&self.api, move |api| api.rename_group(&id, &name)),
+                    Message::GroupRenamed,
+                )
+            }
+            Action::GroupDeleteAsk => {
+                self.group_menu = false;
+                self.group_delete = self.selected.clone();
+                Task::none()
+            }
+            Action::GroupDeleteCancel => {
+                self.group_delete = None;
+                Task::none()
+            }
+            Action::GroupDeleteConfirm => {
+                let Some(id) = self.group_delete.clone() else {
+                    return Task::none();
+                };
+                let delete_id = id.clone();
+                Task::perform(
+                    call(&self.api, move |api| api.delete_group(&delete_id)),
+                    move |result| Message::GroupDeleted { id, result },
+                )
+            }
+            Action::GroupCopyId => {
+                let Some(id) = self.selected.clone() else {
+                    return Task::none();
+                };
+                self.copied_until = Some(now_unix() + 2);
+                iced::clipboard::write(id)
+            }
+            Action::MembersOpen => {
+                let Some(id) = self.selected.clone() else {
+                    return Task::none();
+                };
+                self.page = Page::Members;
+                self.narrow_open = true;
+                self.load_group_members(id)
+            }
+            Action::MembersClose => {
+                self.page = Page::GroupProfile;
+                Task::none()
+            }
+            Action::SelfMenuOpen => {
+                self.self_menu = true;
+                self.group_menu = false;
+                Task::none()
+            }
+            Action::SelfMenuClose => {
+                self.self_menu = false;
+                Task::none()
+            }
+            Action::OpenSettings => {
+                self.self_menu = false;
+                self.page = Page::Settings;
+                self.narrow_open = true;
+                Task::none()
+            }
+            Action::OpenRoutines => {
+                self.group_menu = false;
+                self.page = Page::Routines;
+                self.narrow_open = true;
+                self.load_routines()
+            }
+            Action::SignOut => {
+                self.self_menu = false;
+                self.sign_out_local()
+            }
+            Action::HomeSearchEdit { text } => {
+                self.home_query = text;
+                Task::none()
+            }
             Action::TogglePause { id } => {
                 let Some(wanted) = self.routines.toggle(&id) else {
                     return Task::none();
@@ -2359,6 +2711,62 @@ impl App {
                 self.me = result.ok();
                 return self.page_knob();
             }
+            Message::GroupRenamed(result) => {
+                self.group_edit_saving = false;
+                match result {
+                    Ok(g) => {
+                        self.group_edit = None;
+                        self.group_note = None;
+                        return self.learn_group(
+                            GroupTab {
+                                id: g.id,
+                                name: g.name,
+                                dm: g.dm,
+                                created_by: g.created_by,
+                            },
+                            g.dm,
+                        );
+                    }
+                    Err(err) => self.group_note = Some(err.reason()),
+                }
+            }
+            Message::GroupDeleted { id, result } => {
+                self.group_delete = None;
+                match result {
+                    Ok(()) => {
+                        self.convs.remove(&id);
+                        self.groups.retain(|g| g.id != id);
+                        self.feeds.remove(&id);
+                        if self.selected.as_deref() == Some(id.as_str()) {
+                            self.selected = None;
+                            self.page = Page::Group;
+                            self.narrow_open = false;
+                        }
+                    }
+                    Err(err) => self.group_note = Some(err.reason()),
+                }
+            }
+            Message::GroupMembersLoaded { id, result } => {
+                if let Ok(members) = result {
+                    self.apply_members(&id, members);
+                }
+            }
+            Message::GroupSearchLoaded(result) => {
+                self.find_busy = false;
+                match result {
+                    Ok(s) => self.find_hits = s.results,
+                    Err(err) => self.group_note = Some(err.reason()),
+                }
+            }
+            Message::GroupSchedulesLoaded { id, result } => {
+                if let Ok(list) = result {
+                    let on = list.iter().filter(|s| !s.paused).count() as u64;
+                    self.routines_on.insert(id, on);
+                }
+            }
+            Message::CopiedExpired => {
+                self.copied_until = None;
+            }
             Message::JumpTo(card) => {
                 self.ui.entry(card.clone()).or_default().flash = true;
                 let off = card.clone();
@@ -2384,7 +2792,14 @@ impl App {
                     // on the selected DM (screenshots).
                     let mut tasks: Vec<_> = bros
                         .into_iter()
-                        .filter_map(|b| b.dm_group_id.map(|id| GroupTab { id, name: b.name }))
+                        .filter_map(|b| {
+                            b.dm_group_id.map(|id| GroupTab {
+                                id,
+                                name: b.name,
+                                dm: true,
+                                created_by: None,
+                            })
+                        })
                         .map(|tab| self.learn_group(tab, true))
                         .collect();
                     if let Some(draft) = std::env::var("ROBROZ_RENAME").ok().filter(|_| self.fake) {
@@ -2417,6 +2832,8 @@ impl App {
                             GroupTab {
                                 id: dm.clone(),
                                 name: bro.name.clone(),
+                                dm: true,
+                                created_by: None,
                             },
                             true,
                         );
@@ -2487,6 +2904,8 @@ impl App {
                             GroupTab {
                                 id: bro.dm_group_id.unwrap_or(group),
                                 name: bro.name,
+                                dm: true,
+                                created_by: None,
                             },
                             true,
                         );
@@ -2543,7 +2962,11 @@ impl App {
                 }
             },
             Message::Tick => return self.poll(),
-            Message::Clock => {}
+            Message::Clock => {
+                if self.copied_until.is_some_and(|u| now_unix() >= u) {
+                    self.copied_until = None;
+                }
+            }
             Message::ToggleProcess(task_id) => {
                 if let Some(id) = self.selected.clone() {
                     if let Some(feed) = self.feeds.get_mut(&id) {
@@ -2968,7 +3391,17 @@ impl App {
         // While the host has never answered, the main pane already shows
         // why, so the footer drops the raw "Can't reach the host … io: …
         // (os error …)" line and disappears.
-        if self.host_state() == HostState::Unreachable {
+        let main = if let Some(id) = self.group_delete.as_deref() {
+            let name = self.convs.get(id).map(|c| c.name.as_str()).unwrap_or(id);
+            let dialog = view::delete_group_dialog(&t, name).map(Message::Ui);
+            Element::from(iced::widget::stack![main, dialog].width(Fill).height(Fill))
+        } else {
+            main
+        };
+        if matches!(
+            self.host_state(),
+            HostState::Unreachable | HostState::SignedOut
+        ) {
             return container(main).style(view::page_style(t)).into();
         }
         let status = match &self.error {
@@ -2995,6 +3428,9 @@ impl App {
     }
 
     fn needs_clock(&self) -> bool {
+        if self.copied_until.is_some() {
+            return true;
+        }
         if self.stream_fail_since.is_some() {
             return true;
         }
@@ -3150,11 +3586,13 @@ impl App {
     /// desktop client opens the first one.
     fn apply_loaded_groups(&mut self, groups: Vec<GroupTab>) -> Task<Message> {
         for g in &groups {
-            self.convs.upsert(&g.id, &g.name, false);
+            self.convs.upsert(&g.id, &g.name, g.dm);
+            self.convs.set_flags(&g.id, g.dm, g.created_by.clone());
         }
         self.groups = groups;
         self.loaded = true;
         self.load_failed = false;
+        self.signed_out = false;
         self.error = None;
         let mut tasks = vec![
             self.poll(),
@@ -3162,6 +3600,10 @@ impl App {
             self.load_bros(),
             self.load_me(),
         ];
+        for g in self.groups.iter().filter(|g| !g.dm) {
+            tasks.push(self.load_group_members(g.id.clone()));
+            tasks.push(self.load_group_schedules(g.id.clone()));
+        }
         let wanted = std::env::var("ROBROZ_OPEN")
             .ok()
             .filter(|g| self.fake && self.groups.iter().any(|x| &x.id == g));
@@ -3223,82 +3665,27 @@ impl App {
             Length::Fixed(w) => w,
             _ => self.width,
         } - 16.0;
-        let list =
-            view::conversation_list(t, &self.convs, selected, now_unix(), list_w).map(Message::Ui);
-        let routines = button(text(robroz_ui::cards::routines::TITLE).size(t.type_.row_name))
-            .width(Fill)
-            .height(Length::Fixed(
-                t.controls.touch_target.max(t.controls.button_h),
-            ))
-            .padding(Padding::from([0.0, 12.0]))
-            .style(view::nav_button_style(*t, self.page == Page::Routines))
-            .on_press(Message::OpenRoutines);
-        let memories = button(text(robroz_ui::cards::memories::TITLE).size(t.type_.row_name))
-            .width(Fill)
-            .height(Length::Fixed(
-                t.controls.touch_target.max(t.controls.button_h),
-            ))
-            .padding(Padding::from([0.0, 12.0]))
-            .style(view::nav_button_style(*t, self.page == Page::Memories))
-            .on_press(Message::OpenMemories);
-        let skills = button(text(robroz_ui::cards::skills::TITLE).size(t.type_.row_name))
-            .width(Fill)
-            .height(Length::Fixed(
-                t.controls.touch_target.max(t.controls.button_h),
-            ))
-            .padding(Padding::from([0.0, 12.0]))
-            .style(view::nav_button_style(*t, self.page == Page::Skills))
-            .on_press(Message::OpenSkills);
-        let model_nav = button(text(model_page::TITLE).size(t.type_.row_name))
-            .width(Fill)
-            .height(Length::Fixed(
-                t.controls.touch_target.max(t.controls.button_h),
-            ))
-            .padding(Padding::from([0.0, 12.0]))
-            .style(view::nav_button_style(*t, self.page == Page::Model))
-            .on_press(Message::OpenModel);
-        let search = button(text(search_page::TITLE).size(t.type_.row_name))
-            .width(Fill)
-            .height(Length::Fixed(
-                t.controls.touch_target.max(t.controls.button_h),
-            ))
-            .padding(Padding::from([0.0, 12.0]))
-            .style(view::nav_button_style(*t, self.page == Page::Search))
-            .on_press(Message::OpenSearch);
-        let mcp = button(text(robroz_ui::cards::mcp::TITLE).size(t.type_.row_name))
-            .width(Fill)
-            .height(Length::Fixed(
-                t.controls.touch_target.max(t.controls.button_h),
-            ))
-            .padding(Padding::from([0.0, 12.0]))
-            .style(view::nav_button_style(*t, self.page == Page::Mcp))
-            .on_press(Message::OpenMcp);
-        let review_rules = button(text(review_rules::TITLE).size(t.type_.row_name))
-            .width(Fill)
-            .height(Length::Fixed(
-                t.controls.touch_target.max(t.controls.button_h),
-            ))
-            .padding(Padding::from([0.0, 12.0]))
-            .style(view::nav_button_style(*t, self.page == Page::ReviewRules))
-            .on_press(Message::OpenReviewRules);
-        container(
-            column![
-                scrollable(list).height(Fill),
-                routines,
-                memories,
-                skills,
-                model_nav,
-                search,
-                mcp,
-                review_rules
-            ]
-            .spacing(4),
+        let list = view::conversation_list(
+            t,
+            view::HomeList {
+                list: &self.convs,
+                selected,
+                now: now_unix(),
+                width: list_w,
+                query: &self.home_query,
+                main_bro: self.main_bro(),
+                me_name: self.me.as_ref().map(|m| m.name.as_str()),
+                self_menu: self.self_menu,
+                scale: self.scale,
+            },
         )
-        .width(width)
-        .height(Fill)
-        .padding(8)
-        .style(view::sidebar_style(*t))
-        .into()
+        .map(Message::Ui);
+        container(list)
+            .width(width)
+            .height(Fill)
+            .padding(8)
+            .style(view::sidebar_style(*t))
+            .into()
     }
 
     fn content_width(&self, t: &Skin) -> f32 {
@@ -3318,39 +3705,38 @@ impl App {
             // only the address on a lighter line below. The reason is
             // shown once, under the connection form. The Language row is
             // the same control as the Model page.
-            let notice = state.notice(self.error.as_deref()).map(|key| {
-                let detail = text(self.origin.as_str())
-                    .size(t.type_.foot)
-                    .color(color(t.palette.text3));
-                let head = column![
-                    text(key).size(t.type_.body).color(color(t.palette.text)),
-                    detail,
-                ]
-                .spacing(4)
-                .align_x(Alignment::Center);
-                if state.shows_language_row() {
-                    // Offline pane only: 360px centred Language row and the
-                    // same-width connection form, 24px below the address
-                    // line. The Model page still uses the full-width row.
-                    Element::from(
+            if state.shows_language_row() {
+                // Offline pane: 360px centred Language row and the same-width
+                // connection form. Unreachable keeps the headline and address
+                // above; SignedOut shows only the form (no error headline, no
+                // retry). The Model page still uses the full-width row.
+                let mut col = column![];
+                if let Some(key) = state.notice(self.error.as_deref()) {
+                    col = col.push(
                         column![
-                            head,
-                            container(self.language_row(t)).width(Length::Fixed(360.0)),
-                            container(self.connection_form(t, false)).width(Length::Fixed(360.0)),
+                            text(key).size(t.type_.body).color(color(t.palette.text)),
+                            text(self.origin.as_str())
+                                .size(t.type_.foot)
+                                .color(color(t.palette.text3)),
                         ]
-                        .spacing(24)
+                        .spacing(4)
                         .align_x(Alignment::Center),
-                    )
-                } else {
-                    Element::from(head)
+                    );
                 }
-            });
-            return container(
-                notice.map_or_else(|| Element::from(space::horizontal()), Element::from),
-            )
-            .padding(t.metrics.stream_padding)
-            .center(Fill)
-            .into();
+                col = col
+                    .push(container(self.language_row(t)).width(Length::Fixed(360.0)))
+                    .push(container(self.connection_form(t, false)).width(Length::Fixed(360.0)))
+                    .spacing(24)
+                    .align_x(Alignment::Center);
+                return container(col)
+                    .padding(t.metrics.stream_padding)
+                    .center(Fill)
+                    .into();
+            }
+            return container(space::horizontal())
+                .padding(t.metrics.stream_padding)
+                .center(Fill)
+                .into();
         }
         if self.page == Page::NewBro {
             let d = &self.new_bro;
@@ -3378,6 +3764,77 @@ impl App {
                 )
                 .map(Message::Ui);
             }
+        }
+        if self.page == Page::GroupProfile {
+            let id = self.selected.as_deref().unwrap_or("");
+            let name = self.convs.get(id).map(|c| c.name.as_str()).unwrap_or(id);
+            let more = self.convs.get(id).map(|c| c.group_avatar_more).unwrap_or(0);
+            let faces = self
+                .convs
+                .get(id)
+                .map(|c| c.group_avatars.as_slice())
+                .unwrap_or(&[]);
+            let copied = self.copied_until.is_some_and(|until| now_unix() < until);
+            return view::group_profile_page(
+                t,
+                view::GroupProfile {
+                    name,
+                    avatars: faces,
+                    more,
+                    can_manage: self.can_manage(id),
+                    routines_on: Some(*self.routines_on.get(id).unwrap_or(&0)),
+                    members: self.member_count.get(id).copied(),
+                    edit: self.group_edit.as_deref(),
+                    saving: self.group_edit_saving,
+                    note: self.group_note.as_deref(),
+                    copied,
+                    menu_open: self.group_menu,
+                    scale: self.scale,
+                },
+            )
+            .map(Message::Ui);
+        }
+        if self.page == Page::FindInChat {
+            return view::find_in_chat_page(
+                t,
+                &self.find_query,
+                &self.find_hits,
+                self.find_busy,
+                now_unix(),
+            )
+            .map(Message::Ui);
+        }
+        if self.page == Page::Members {
+            return view::members_page(
+                t,
+                self.members.as_ref(),
+                |id| self.avatar_of(id),
+                self.scale,
+            )
+            .map(Message::Ui);
+        }
+        if self.page == Page::Settings {
+            return view::settings_landing(
+                t,
+                [
+                    (
+                        robroz_ui::cards::routines::TITLE.as_str(),
+                        Message::OpenRoutines,
+                    ),
+                    (
+                        robroz_ui::cards::memories::TITLE.as_str(),
+                        Message::OpenMemories,
+                    ),
+                    (
+                        robroz_ui::cards::skills::TITLE.as_str(),
+                        Message::OpenSkills,
+                    ),
+                    (model_page::TITLE.as_str(), Message::OpenModel),
+                    (search_page::TITLE.as_str(), Message::OpenSearch),
+                    (robroz_ui::cards::mcp::TITLE, Message::OpenMcp),
+                    (review_rules::TITLE.as_str(), Message::OpenReviewRules),
+                ],
+            );
         }
         if self.page == Page::Memories {
             return scrollable(
@@ -3623,6 +4080,7 @@ impl App {
             name,
             dm,
             self.narrow(),
+            self.convs.unread_except(Some(id)),
             rename,
             view::HeaderBros {
                 avatars: &header_avatars,
@@ -3631,7 +4089,7 @@ impl App {
             },
         )
         .map(Message::Ui);
-        let chrome: Element<'_, Message> = if self.show_reconnect_banner() {
+        let mut chrome: Element<'_, Message> = if self.show_reconnect_banner() {
             // Small surface capsule, 12px text, stuck/warning yellow
             // dot on the left (same token as 「卡住」). Brand orange is
             // the "working" dot and must not be reused here.
@@ -3661,6 +4119,16 @@ impl App {
                 .height(Fill)
                 .into()
         };
+        if self.group_menu && self.page == Page::Group {
+            let can = self.can_manage(id);
+            let menu =
+                view::group_menu_overlay(t, can, self.scale, header_h, t.metrics.stream_padding)
+                    .map(Message::Ui);
+            chrome = iced::widget::stack![chrome, menu]
+                .width(Fill)
+                .height(Fill)
+                .into();
+        }
         let mut south = column![];
         if let Some(feed) = self.feeds.get(id) {
             let working = feed.working_bros();

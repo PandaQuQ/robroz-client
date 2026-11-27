@@ -215,6 +215,8 @@ impl EventSource for HttpSource {
                 .map(|g| GroupTab {
                     id: g.id,
                     name: g.name,
+                    dm: g.dm,
+                    created_by: g.created_by,
                 })
                 .collect();
         }
@@ -255,14 +257,8 @@ fn parse_groups(value: &str) -> Vec<GroupTab> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|entry| match entry.split_once('=') {
-            Some((id, name)) => GroupTab {
-                id: id.trim().to_string(),
-                name: name.trim().to_string(),
-            },
-            None => GroupTab {
-                id: entry.to_string(),
-                name: entry.to_string(),
-            },
+            Some((id, name)) => GroupTab::new(id.trim(), name.trim()),
+            None => GroupTab::new(entry, entry),
         })
         .collect()
 }
@@ -275,16 +271,7 @@ mod tests {
     fn parses_group_list() {
         assert_eq!(
             parse_groups(" g1=官网 , g2 ,,"),
-            vec![
-                GroupTab {
-                    id: "g1".into(),
-                    name: "官网".into()
-                },
-                GroupTab {
-                    id: "g2".into(),
-                    name: "g2".into()
-                },
-            ]
+            vec![GroupTab::new("g1", "官网"), GroupTab::new("g2", "g2"),]
         );
     }
 

@@ -205,6 +205,38 @@ pub mod space {
     pub const NARROW_WIDTH: f32 = l::MIN_WIDTH;
 }
 
+/// Home list, chat top bar and group menus (v0.2 PR4).
+pub mod home {
+    pub const MAIN_BRO: f32 = 96.0;
+    pub const MAIN_BRO_NAME: f32 = 13.0;
+    pub const ROW: f32 = 72.0;
+    pub const ROW_AVATAR: f32 = 48.0;
+    pub const ROW_NAME: f32 = 16.0;
+    pub const ROW_TIME: f32 = 12.0;
+    pub const ROW_PREVIEW: f32 = 14.0;
+    pub const UNREAD_DOT: f32 = 8.0;
+    pub const GROUP_TILE: f32 = 28.0;
+    pub const SEARCH: f32 = 48.0;
+    pub const SEARCH_LIFT: f32 = 16.0;
+    pub const FLOAT_BTN: f32 = 40.0;
+    pub const MENU_W: f32 = 220.0;
+    pub const MENU_R: f32 = 16.0;
+    pub const MENU_GAP: f32 = 8.0;
+    pub const MENU_ROW: f32 = 48.0;
+    pub const MENU_ICON: f32 = 20.0;
+    pub const MENU_ICON_GAP: f32 = 12.0;
+    pub const MENU_TEXT: f32 = 15.0;
+    pub const PROFILE_AVATAR: f32 = 96.0;
+    pub const PROFILE_NAME_GAP: f32 = 12.0;
+    pub const PROFILE_NAME: f32 = 22.0;
+    pub const PROFILE_EDIT_H: f32 = 32.0;
+    pub const PROFILE_EDIT_GAP: f32 = 12.0;
+    pub const CARD_R: f32 = 16.0;
+    pub const CARD_ROW: f32 = 52.0;
+    pub const CARD_ICON: f32 = 20.0;
+    pub const DIALOG_W: f32 = 400.0;
+}
+
 /// Font sizes and line heights, logical px. Weights are 400 and 700 only.
 pub mod font {
     use crate::base::type_scale as ts;
@@ -359,6 +391,39 @@ fn scalar_vars() -> Vec<(String, String)> {
             ("row-time", f::ROW_TIME),
             ("empty-title", f::EMPTY_TITLE),
             ("empty-hint", f::EMPTY_HINT),
+        ],
+    );
+    add(
+        "home",
+        &[
+            ("main-bro", crate::home::MAIN_BRO),
+            ("main-bro-name", crate::home::MAIN_BRO_NAME),
+            ("row", crate::home::ROW),
+            ("row-avatar", crate::home::ROW_AVATAR),
+            ("row-name", crate::home::ROW_NAME),
+            ("row-time", crate::home::ROW_TIME),
+            ("row-preview", crate::home::ROW_PREVIEW),
+            ("unread-dot", crate::home::UNREAD_DOT),
+            ("group-tile", crate::home::GROUP_TILE),
+            ("search", crate::home::SEARCH),
+            ("search-lift", crate::home::SEARCH_LIFT),
+            ("float-btn", crate::home::FLOAT_BTN),
+            ("menu-w", crate::home::MENU_W),
+            ("menu-r", crate::home::MENU_R),
+            ("menu-gap", crate::home::MENU_GAP),
+            ("menu-row", crate::home::MENU_ROW),
+            ("menu-icon", crate::home::MENU_ICON),
+            ("menu-icon-gap", crate::home::MENU_ICON_GAP),
+            ("menu-text", crate::home::MENU_TEXT),
+            ("profile-avatar", crate::home::PROFILE_AVATAR),
+            ("profile-name-gap", crate::home::PROFILE_NAME_GAP),
+            ("profile-name", crate::home::PROFILE_NAME),
+            ("profile-edit-h", crate::home::PROFILE_EDIT_H),
+            ("profile-edit-gap", crate::home::PROFILE_EDIT_GAP),
+            ("card-r", crate::home::CARD_R),
+            ("card-row", crate::home::CARD_ROW),
+            ("card-icon", crate::home::CARD_ICON),
+            ("dialog-w", crate::home::DIALOG_W),
         ],
     );
     v.push((
