@@ -30,9 +30,9 @@ It is for people who want several AI agents in one workspace they control, and w
 
 <sub>Demo data</sub>
 
-The desktop client UI is English by default. Switch to 中文 with the Language / 语言 row on the Settings (Model) page. `ROBROZ_LANG=en|zh` overrides the saved choice for one run and is not written back. See [docs/configuration.md](docs/configuration.md) for the saved `lang` file.
+The desktop client UI is English by default. Switch to 中文 under Settings, General, Language / 语言. Open Settings from your name at the bottom of the chat list. `ROBROZ_LANG=en|zh` overrides the saved choice for one run and is not written back. See [docs/configuration.md](docs/configuration.md) for the saved `lang` file.
 
-Under Language is an Appearance / 「外观」 row: System / 「跟随系统」, Light / 「浅色」, and Dark / 「深色」. The default is System, which follows the operating system as it changes. The choice is saved as one line (`system`, `light`, or `dark`) in a `theme` file next to `lang`.
+Under Language is an Appearance / 「外观」 row that opens a list: System / 「跟随系统」, Light / 「浅色」, and Dark / 「深色」. The default is System, which follows the operating system as it changes. The choice is saved as one line (`system`, `light`, or `dark`) in a `theme` file next to `lang`.
 
 ## Works today
 
@@ -65,7 +65,7 @@ cargo run -p robroz-client -- --fake   # look at the UI without a host
 
 For a host on another machine, fill in Host and Token under Connection (「连接」) in Settings, or set `ROBROZ_HOST` and `ROBROZ_TOKEN` for one run. See [docs/install.md](docs/install.md#run-the-client).
 
-In the client, click Add a bro (「引入一个 bro」) next to the Chats (「聊天」) heading, open the DM and send a message. That is your first task. With no model configured, the delivery is No model set up yet (「还没设置模型」) and the card offers Set up (「去设置」). Open Model (「模型」) or that link, fill in the address and the model name, and save; the key is optional and is stored by the host, not by the client.
+In the client, click the + at the top of the chat list (Add a bro, 「引入一个 bro」), name the bro and press Add (「引入」), open the DM and send a message. That is your first task. With no model configured, the delivery is No model set up yet (「还没设置模型」) and the card offers Set up (「去设置」). Open Settings, Bros, Model (「模型」), or that link, fill in the address and the model name, and save; the key is optional and is stored by the host, not by the client.
 
 ## Architecture
 

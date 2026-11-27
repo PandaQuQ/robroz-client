@@ -2,7 +2,7 @@
 
 How to install the robroz client from a GitHub Release or build it from source, and connect it to a host. Starting the host, connecting a model and the first task over `curl` are in the host repository's [install.md](https://github.com/PandaQuQ/robroz/blob/main/docs/install.md). The client's environment variables are in [configuration.md](configuration.md).
 
-The desktop client UI is English by default. Switch to 中文 with the Language / 语言 row on the Settings (Model) page. `ROBROZ_LANG=en|zh` overrides the saved choice for one run and is not written back. Quoted UI text below is what the English UI shows; the Chinese is in parentheses where it helps. See [configuration.md](configuration.md) for the saved `lang` file.
+The desktop client UI is English by default. Switch to 中文 under Settings, General, Language / 语言. Open Settings from your name at the bottom of the chat list. `ROBROZ_LANG=en|zh` overrides the saved choice for one run and is not written back. Quoted UI text below is what the English UI shows; the Chinese is in parentheses where it helps. See [configuration.md](configuration.md) for the saved `lang` file.
 
 ## Download a release
 
@@ -105,7 +105,7 @@ cargo run -p robroz-client
 
 Linux needs a graphical session (X11 or Wayland). CI's `ubuntu-latest` can build the client without extra system packages.
 
-In the client, click Add a bro (「引入一个 bro」) next to the Chats (「聊天」) heading, open the DM and send a message. That is a first task from the UI.
+In the client, click the + at the top of the chat list (Add a bro, 「引入一个 bro」), name the bro and press Add (「引入」), open the DM and send a message. That is a first task from the UI.
 
 ## Connecting to a remote host
 

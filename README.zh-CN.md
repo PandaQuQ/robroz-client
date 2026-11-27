@@ -30,9 +30,9 @@
 
 <sub>演示数据</sub>
 
-桌面客户端界面默认是英文。要换成中文，到设置（模型）页的「Language / 语言」那一行切换。`ROBROZ_LANG=en|zh` 只对这一次运行生效，不会写回已保存的选择。保存的 `lang` 文件见 [docs/configuration.md](docs/configuration.md)。
+桌面客户端界面默认是英文。要换成中文，到设置的「通用」里点「Language / 语言」切换。设置从聊天列表底部你的名字那一行进。`ROBROZ_LANG=en|zh` 只对这一次运行生效，不会写回已保存的选择。保存的 `lang` 文件见 [docs/configuration.md](docs/configuration.md)。
 
-语言那一行下面是 Appearance / 「外观」：System / 「跟随系统」、Light / 「浅色」、Dark / 「深色」。默认是 System，会跟着操作系统实时切换。选择保存在 `lang` 旁边的 `theme` 文件里，一行，值为 `system`、`light` 或 `dark`。
+语言那一行下面是 Appearance / 「外观」，点开是一个列表：System / 「跟随系统」、Light / 「浅色」、Dark / 「深色」。默认是 System，会跟着操作系统实时切换。选择保存在 `lang` 旁边的 `theme` 文件里，一行，值为 `system`、`light` 或 `dark`。
 
 ## 现在能用的
 
@@ -65,7 +65,7 @@ cargo run -p robroz-client -- --fake   # 不连宿主机，只看界面
 
 宿主机在别的机器上时，到设置的 Connection（「连接」）里填 Host 和 Token，或者只对这一次运行设 `ROBROZ_HOST` 和 `ROBROZ_TOKEN`。见 [docs/install.md](docs/install.md#run-the-client)。
 
-在客户端 Chats（「聊天」）标题旁点 Add a bro（「引入一个 bro」），打开私聊发一条消息，这就是第一个任务。没设置模型时，交付是 No model set up yet（「还没设置模型」），卡片上有 Set up（「去设置」）。打开 Model（「模型」）或点这个链接，填地址和模型名后保存；密钥可选，由宿主机保存，客户端不存。
+在客户端聊天列表顶部点 +（Add a bro，「引入一个 bro」），起个名字再点「引入」，打开私聊发一条消息，这就是第一个任务。没设置模型时，交付是 No model set up yet（「还没设置模型」），卡片上有 Set up（「去设置」）。打开设置，在「bro」一组里点 Model（「模型」），或点这个链接，填地址和模型名后保存；密钥可选，由宿主机保存，客户端不存。
 
 ## 架构
 

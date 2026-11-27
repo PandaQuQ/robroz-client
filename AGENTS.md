@@ -56,6 +56,6 @@ cargo deny check licenses bans sources   # 需要先装 cargo-deny
 | --- | --- |
 | [`docs/install.md`](docs/install.md) | 下载发布版、构建、运行客户端、连接宿主机（含远程）。 |
 | [`docs/configuration.md`](docs/configuration.md) | 客户端的环境变量和保存的偏好（`lang`、`theme`、`host`、`token`）。 |
-| [`docs/client.md`](docs/client.md) | 客户端界面：布局、各种卡怎么显示、处理人、记忆页、技能页、模型页（含「去设置」）、联网搜索页（含「去设置」）、MCP 页（含 stdio 命令批准）、例行任务。 |
+| [`docs/client.md`](docs/client.md) | 客户端界面：布局、设置页、各种卡怎么显示、处理人、记忆页、技能页、模型页（含「去设置」）、联网搜索页（含「去设置」）、MCP 页（含 stdio 命令批准）、例行任务。 |
 
 `README.md` 和 `README.zh-CN.md` 只放简介、功能、快速开始、文档入口和参与开发的要点，不写接口细节。新功能的说明写进上面对应的 `docs/` 文件，宿主机侧的写进[宿主机仓库的 docs](https://github.com/PandaQuQ/robroz/tree/main/docs)；没有合适的文件就新建一个并加进这张表。
