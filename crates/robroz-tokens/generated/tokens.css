@@ -282,6 +282,17 @@
   --robroz-spec-mcp-connect-h: 32px;
   --robroz-spec-mcp-count-text: 13px;
   --robroz-spec-mcp-connected-dot: 6px;
+  --robroz-spec-settings-card-r: 16px;
+  --robroz-spec-settings-group-gap: 24px;
+  --robroz-spec-settings-group-title: 12px;
+  --robroz-spec-settings-group-title-gap: 8px;
+  --robroz-spec-settings-row: 44px;
+  --robroz-spec-settings-divider: 1px;
+  --robroz-spec-settings-side-pad: 16px;
+  --robroz-spec-settings-version: 12px;
+  --robroz-spec-settings-title: 20px;
+  --robroz-spec-settings-bottom-pad: 24px;
+  --robroz-spec-settings-max-w: 720px;
   --robroz-spec-font-weight-regular: 400;
   --robroz-spec-font-weight-bold: 700;
   --robroz-spec-font-family-sans: system-ui, -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", sans-serif;

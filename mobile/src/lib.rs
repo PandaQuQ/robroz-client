@@ -230,6 +230,20 @@ fn apply_metrics(ui: &MainWindow) {
     am.set_swatch_hit(a::SWATCH_HIT);
     am.set_ring(a::SELECTED_RING);
     am.set_create_empty_opacity(a::CREATE_EMPTY_OPACITY);
+    {
+        use robroz_tokens::settings as st;
+        let sm = ui.global::<SettingsMetrics>();
+        sm.set_card_r(st::CARD_R);
+        sm.set_group_gap(st::GROUP_GAP);
+        sm.set_group_title(st::GROUP_TITLE);
+        sm.set_group_title_gap(st::GROUP_TITLE_GAP);
+        sm.set_row(st::ROW);
+        sm.set_divider(st::DIVIDER);
+        sm.set_side_pad(st::SIDE_PAD);
+        sm.set_version(st::VERSION);
+        sm.set_title(st::TITLE);
+        sm.set_bottom_pad(st::BOTTOM_PAD);
+    }
     use robroz_tokens::home as h;
     let hm = ui.global::<HomeMetrics>();
     hm.set_row(h::ROW);
@@ -277,7 +291,7 @@ fn apply_metrics(ui: &MainWindow) {
     mm.set_connected_dot(k::CONNECTED_DOT);
 }
 
-/// Push the MCP book into screen 9 (and its command sheet).
+/// Push the MCP book into screen 10 (and its command sheet).
 fn apply_mcp(ui: &MainWindow, st: &State) {
     let book = &st.mcp_book;
     let rows: Vec<McpLine> = mcp::lines(book)
@@ -325,7 +339,7 @@ fn mcp_tested(
     }
 }
 
-/// Screen 9: load the server list.
+/// Screen 10: load the server list.
 fn open_mcp(ui: &MainWindow, state: &Arc<Mutex<State>>) {
     let Some(conn) = state.lock().unwrap().conn.clone() else {
         return;
@@ -336,7 +350,7 @@ fn open_mcp(ui: &MainWindow, state: &Arc<Mutex<State>>) {
         st.mcp_prompt = None;
         apply_mcp(ui, &st);
     }
-    ui.set_screen(9);
+    ui.set_screen(10);
     let weak = ui.as_weak();
     let state = state.clone();
     std::thread::spawn(move || {
@@ -466,6 +480,7 @@ fn apply_strings(ui: &MainWindow) {
     tr.set_members_title(Key::MembersTitle.as_str().into());
     tr.set_settings_title(Key::SettingsTitle.as_str().into());
     tr.set_sign_out(Key::SignOutOnThisDevice.as_str().into());
+    tr.set_settings_general(Key::SettingsGroupGeneral.as_str().into());
     {
         use robroz_ui::cards::mcp as m;
         tr.set_mcp_title(m::TITLE.into());
@@ -1202,7 +1217,7 @@ fn prepare_shot(ui: &MainWindow, state: &Arc<Mutex<State>>, shot: &str) {
                     }
                 }
             }
-            ui.set_screen(9);
+            ui.set_screen(10);
             apply_mcp(ui, &st);
             return;
         }
@@ -1536,7 +1551,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let screen = ui.get_screen();
             let to = match screen {
                 3 => state.lock().unwrap().before_settings,
-                9 => 3,
+                9 | 10 => 3,
                 6 | 7 => 2,
                 8 => 6,
                 _ => 1,
@@ -1563,6 +1578,15 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 ui.set_mcp_available(st.conn.is_some());
             }
             ui.set_screen(3);
+        }
+    });
+
+    ui.on_open_choice({
+        let weak = ui.as_weak();
+        move |kind| {
+            let ui = weak.unwrap();
+            ui.set_choice_kind(kind);
+            ui.set_screen(9);
         }
     });
 

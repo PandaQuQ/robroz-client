@@ -473,6 +473,8 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ReviewRulesAddedOn => "Added {0}",
         // 读不到：{0}  [approved, batch 2]
         Key::ReviewRulesLoadFailedBecause => "Couldn't load: {0}",
+        // 等管理员确认  [approved, PR5 settings]
+        Key::ReviewRulesWaitingForAdmin => "Waiting for an admin",
         // 审批卡不存在  [approved, batch 1]
         Key::ReviewRulesCardMissing => "Approval card not found",
 
@@ -797,6 +799,10 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::SettingsAppearance => "Appearance",
         // 跟随系统  [approved, appearance row]
         Key::SettingsThemeSystem => "System",
+        // 通用  [approved, PR5 settings]
+        Key::SettingsGroupGeneral => "General",
+        // bro  [approved, PR5 settings]
+        Key::SettingsGroupBros => "Bros",
 
         // ---- Client-side errors (client/src/api.rs) ----
         // 连不上主机  [approved, batch 2]

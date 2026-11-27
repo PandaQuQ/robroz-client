@@ -103,6 +103,7 @@ export global Tr {
     in property <string> members-title;
     in property <string> settings-title;
     in property <string> sign-out;
+    in property <string> settings-general;
     in property <string> mcp-title;
     in property <string> mcp-all;
     in property <string> mcp-connect;
@@ -112,6 +113,20 @@ export global Tr {
     in property <string> mcp-prompt-args;
     in property <string> mcp-runs-local;
     in property <string> mcp-approve-run;
+}
+
+// Settings page (PR5). Values pushed from `robroz_tokens::settings`.
+export global SettingsMetrics {
+    in property <length> card-r: 16px;
+    in property <length> group-gap: 24px;
+    in property <length> group-title: 12px;
+    in property <length> group-title-gap: 8px;
+    in property <length> row: 44px;
+    in property <length> divider: 1px;
+    in property <length> side-pad: 16px;
+    in property <length> version: 12px;
+    in property <length> title: 20px;
+    in property <length> bottom-pad: 24px;
 }
 
 // Bro avatar sizes from robroz-tokens `base.avatar` (pushed from Rust).
@@ -275,45 +290,6 @@ component Pill inherits Rectangle {
         font-weight: 600;
     }
     TouchArea { clicked => { root.clicked(); } }
-}
-
-// Language / Appearance segment: selected fill and text come from the
-// same tokens as the desktop client (border+text on dark, control_checked
-// + text on light).
-component Segment inherits Rectangle {
-    in property <string> text;
-    in property <bool> selected;
-    callback clicked();
-    min-height: 36px;
-    horizontal-stretch: 1;
-    border-radius: 8px;
-    background: root.selected ? Brand.segment-fill : transparent;
-    Text {
-        text: root.text;
-        color: root.selected ? Brand.segment-text : Brand.ink;
-        font-size: 15px;
-        font-weight: root.selected ? 600 : 400;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-    TouchArea { clicked => { root.clicked(); } }
-}
-
-component SegmentBar inherits HorizontalLayout {
-    in property <string> left-text;
-    in property <string> mid-text;
-    in property <string> right-text;
-    in property <int> selected;
-    callback picked(int);
-    spacing: 4px;
-    height: 40px;
-    Segment { text: root.left-text; selected: root.selected == 0; clicked => { root.picked(0); } }
-    if root.mid-text != "": Segment { text: root.mid-text; selected: root.selected == 1; clicked => { root.picked(1); } }
-    Segment {
-        text: root.right-text;
-        selected: root.mid-text == "" ? root.selected == 1 : root.selected == 2;
-        clicked => { root.picked(root.mid-text == "" ? 1 : 2); }
-    }
 }
 
 component Field inherits VerticalLayout {
@@ -569,6 +545,56 @@ component AvatarPicker inherits VerticalLayout {
 }
 
 // One 36px menu item: text centred vertically, 12px inside the item.
+// A 52px settings row: label, optional text2 value, then a tick or `›`.
+// `first` hides the 1px divider drawn above every other row.
+component SettingsRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> danger: false;
+    in property <bool> chevron: true;
+    in property <bool> ticked: false;
+    in property <bool> first: true;
+    callback clicked();
+    height: SettingsMetrics.row;
+    if !root.first: Rectangle {
+        y: 0;
+        height: SettingsMetrics.divider;
+        background: Brand.border;
+    }
+    HorizontalLayout {
+        padding-left: SettingsMetrics.side-pad;
+        padding-right: SettingsMetrics.side-pad;
+        spacing: 8px;
+        Text { text: root.label; color: root.danger ? Brand.danger : Brand.ink; font-size: 16px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+        if root.value != "": Text { text: root.value; color: Brand.muted; font-size: 16px; vertical-alignment: center; }
+        if root.chevron: Text { text: "›"; color: Brand.text3; font-size: 18px; vertical-alignment: center; }
+        if root.ticked: Path {
+            width: 16px;
+            height: 16px;
+            y: (parent.height - self.height) / 2;
+            viewbox-width: 16;
+            viewbox-height: 16;
+            commands: "M 3.2 8.3 L 6.7 11.8 L 13.1 4.5";
+            stroke: Brand.accent;
+            stroke-width: 2px;
+            stroke-line-cap: round;
+            stroke-line-join: round;
+        }
+        if !root.chevron && !root.ticked && !root.danger: Rectangle { width: 16px; }
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+// r16 surface card with a hairline, children stacked.
+component SettingsCard inherits Rectangle {
+    border-radius: SettingsMetrics.card-r;
+    background: Brand.surface;
+    border-width: 1px;
+    border-color: Brand.border;
+    clip: true;
+    VerticalLayout { @children }
+}
+
 component MenuRow inherits Rectangle {
     in property <string> label;
     in property <bool> danger: false;
@@ -640,7 +666,8 @@ component Capsule inherits Rectangle {
 }
 
 export component MainWindow inherits Window {
-    // 0 connect, 1 sessions, 2 card, 3 settings, 4 create bro, 5 avatar
+    // 0 connect, 1 sessions, 2 card, 3 settings, 4 create bro, 5 avatar,
+    // 6 profile, 7 find, 8 members, 9 settings choice
     in-out property <int> screen: 0;
     in-out property <string> host-url;
     in-out property <string> token;
@@ -735,6 +762,9 @@ export component MainWindow inherits Window {
     callback open-settings();
     callback set-locale(int);
     callback set-theme(int);
+    // Settings choice page (screen 9): 0 Language, 1 Appearance.
+    in-out property <int> choice-kind: 0;
+    callback open-choice(int);
     callback theme-follow-system();
     callback send();
     callback open-new-bro();
@@ -776,10 +806,10 @@ export component MainWindow inherits Window {
     min-height: 844px;
 
     VerticalLayout {
-        padding-left: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 || root.screen == 9 ? HomeMetrics.profile-side : 20px);
-        padding-right: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 || root.screen == 9 ? HomeMetrics.profile-side : 20px);
+        padding-left: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 || root.screen == 10 ? HomeMetrics.profile-side : 20px);
+        padding-right: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 || root.screen == 10 ? HomeMetrics.profile-side : 20px);
         padding-top: 20px + root.safe-area-insets.top + root.extra-safe-top;
-        padding-bottom: root.screen == 2 ? 0 : (20px + root.safe-area-insets.bottom + root.extra-safe-bottom);
+        padding-bottom: root.screen == 2 ? 0 : ((root.screen == 3 || root.screen == 9 || root.screen == 10 ? SettingsMetrics.bottom-pad : 20px) + root.safe-area-insets.bottom + root.extra-safe-bottom);
         spacing: 14px;
 
         if root.screen == 0: VerticalLayout {
@@ -1534,46 +1564,76 @@ export component MainWindow inherits Window {
         }
 
         if root.screen == 3: VerticalLayout {
-            spacing: 14px;
-            Header { has-back: true; back-text: Tr.back; back => { root.back(); } }
-            Text { text: Tr.settings; color: Brand.ink; font-size: 24px; font-weight: 700; }
-            Text { text: Tr.language; color: Brand.muted; font-size: 13px; }
-            SegmentBar {
-                left-text: Tr.locale-en;
-                right-text: Tr.locale-zh;
-                selected: root.locale-index;
-                picked(i) => { root.set-locale(i); }
+            spacing: 8px;
+            HorizontalLayout {
+                height: HomeMetrics.float-btn + 16px;
+                spacing: 12px;
+                VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.back(); } } }
+                Text { text: Tr.settings-title; color: Brand.ink; font-size: SettingsMetrics.title; font-weight: 700; vertical-alignment: center; }
             }
-            Text { text: Tr.appearance; color: Brand.muted; font-size: 13px; }
-            SegmentBar {
-                left-text: Tr.theme-system;
-                mid-text: Tr.theme-light;
-                right-text: Tr.theme-dark;
-                selected: root.theme-index;
-                picked(i) => { root.set-theme(i); }
-            }
-            if root.mcp-available: Rectangle {
-                height: HomeMetrics.card-row;
-                border-radius: HomeMetrics.card-r;
-                background: Brand.surface;
-                border-width: 1px;
-                border-color: Brand.border;
-                HorizontalLayout {
-                    padding-left: 16px;
-                    padding-right: 16px;
-                    Text { text: Tr.mcp-title; color: Brand.ink; font-size: 16px; vertical-alignment: center; horizontal-stretch: 1; }
-                    Text { text: "›"; color: Brand.text3; font-size: 20px; vertical-alignment: center; }
+            Flickable {
+                VerticalLayout {
+                    spacing: SettingsMetrics.group-gap;
+                    alignment: start;
+                    VerticalLayout {
+                        spacing: SettingsMetrics.group-title-gap;
+                        HorizontalLayout {
+                            padding-left: SettingsMetrics.side-pad;
+                            Text { text: Tr.settings-general; color: Brand.text3; font-size: SettingsMetrics.group-title; }
+                        }
+                        SettingsCard {
+                            SettingsRow {
+                                label: Tr.language;
+                                value: root.locale-index == 1 ? Tr.locale-zh : Tr.locale-en;
+                                clicked => { root.open-choice(0); }
+                            }
+                            SettingsRow {
+                                first: false;
+                                label: Tr.appearance;
+                                value: root.theme-index == 1 ? Tr.theme-light : root.theme-index == 2 ? Tr.theme-dark : Tr.theme-system;
+                                clicked => { root.open-choice(1); }
+                            }
+                        }
+                    }
+                    if root.mcp-available: SettingsCard {
+                        SettingsRow { label: Tr.mcp-title; clicked => { root.open-mcp(); } }
+                    }
+                    SettingsCard {
+                        SettingsRow { label: Tr.sign-out; danger: true; chevron: false; clicked => { root.sign-out(); } }
+                    }
+                    Text {
+                        text: root.version-text;
+                        color: Brand.text3;
+                        font-size: SettingsMetrics.version;
+                        horizontal-alignment: center;
+                    }
+                    // The Slint attribution slot, at the very bottom of Settings.
+                    Rectangle {
+                        height: 160px;
+                        AboutSlint { }
+                    }
                 }
-                TouchArea { clicked => { root.open-mcp(); } }
+            }
+        }
+
+        if root.screen == 9: VerticalLayout {
+            spacing: 8px;
+            HorizontalLayout {
+                height: HomeMetrics.float-btn + 16px;
+                spacing: 12px;
+                VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.back(); } } }
+                Text { text: root.choice-kind == 0 ? Tr.language : Tr.appearance; color: Brand.ink; font-size: SettingsMetrics.title; font-weight: 700; vertical-alignment: center; }
+            }
+            if root.choice-kind == 0: SettingsCard {
+                SettingsRow { label: Tr.locale-en; chevron: false; ticked: root.locale-index == 0; clicked => { root.set-locale(0); } }
+                SettingsRow { first: false; label: Tr.locale-zh; chevron: false; ticked: root.locale-index == 1; clicked => { root.set-locale(1); } }
+            }
+            if root.choice-kind == 1: SettingsCard {
+                SettingsRow { label: Tr.theme-system; chevron: false; ticked: root.theme-index == 0; clicked => { root.set-theme(0); } }
+                SettingsRow { first: false; label: Tr.theme-light; chevron: false; ticked: root.theme-index == 1; clicked => { root.set-theme(1); } }
+                SettingsRow { first: false; label: Tr.theme-dark; chevron: false; ticked: root.theme-index == 2; clicked => { root.set-theme(2); } }
             }
             Rectangle { vertical-stretch: 1; }
-            // About: the Slint attribution slot, at the very bottom of Settings.
-            Text { text: Tr.about; color: Brand.muted; font-size: 13px; }
-            Text { text: root.version-text; color: Brand.ink; font-size: 15px; }
-            Rectangle {
-                height: 160px;
-                AboutSlint { }
-            }
         }
 
         if root.screen == 6: VerticalLayout {
@@ -1764,13 +1824,13 @@ export component MainWindow inherits Window {
         }
         // MCP page: capsules, 64px rows with a 44px r12 tile, Connect or the
         // inert Connected label.
-        if root.screen == 9: VerticalLayout {
-            spacing: 12px;
+        if root.screen == 10: VerticalLayout {
+            spacing: 8px;
             HorizontalLayout {
-                height: HomeMetrics.float-btn;
-                spacing: 8px;
+                height: HomeMetrics.float-btn + 16px;
+                spacing: 12px;
                 VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.back(); } } }
-                Text { text: Tr.mcp-title; color: Brand.ink; font-size: 20px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
+                Text { text: Tr.mcp-title; color: Brand.ink; font-size: SettingsMetrics.title; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
                 if root.mcp-connected-text != "": VerticalLayout {
                     alignment: center;
                     Text {
@@ -1813,7 +1873,7 @@ export component MainWindow inherits Window {
                             alignment: center;
                             spacing: 2px;
                             horizontal-stretch: 1;
-                            Text { text: r.name; color: Brand.ink; font-size: McpMetrics.row-name; font-weight: 700; overflow: elide; }
+                            Text { text: r.name; color: Brand.ink; font-size: McpMetrics.row-name; font-weight: 600; overflow: elide; }
                             Text { text: r.sub; color: Brand.text3; font-size: McpMetrics.row-sub; overflow: elide; }
                         }
                         if r.connected: VerticalLayout {
@@ -1847,7 +1907,7 @@ export component MainWindow inherits Window {
                                 background: Brand.surface;
                                 border-width: 1px;
                                 border-color: Brand.border;
-                                connect-label := Text { text: Tr.mcp-connect; color: Brand.ink; font-size: McpMetrics.capsule-text; }
+                                connect-label := Text { text: Tr.mcp-connect; color: Brand.ink; font-size: McpMetrics.capsule-text; font-weight: 600; }
                                 TouchArea { clicked => { if !root.mcp-busy { root.mcp-connect-server(r.id); } } }
                             }
                         }
@@ -1858,7 +1918,7 @@ export component MainWindow inherits Window {
     }
 
     // stdio command approval: bottom sheet with the exact command and args.
-    if root.screen == 9 && root.mcp-prompt-open: Rectangle {
+    if root.screen == 10 && root.mcp-prompt-open: Rectangle {
         width: 100%;
         height: 100%;
         background: #00000088;

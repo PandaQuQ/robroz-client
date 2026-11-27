@@ -33,6 +33,19 @@ pub fn viewer(card: &ApprovalCard, me: Option<&str>) -> Viewer {
     }
 }
 
+/// Whether a card uses the owner layout ([`lines`]): status line, and
+/// buttons for the owner only. A group card always does (except a rule
+/// card the owner answers in place). Anywhere else, a viewer who is not
+/// the owner does too, because the host (`may_answer`) refuses everyone
+/// but the bro's owner, in a DM as well. Legacy cards keep the v0.1 card.
+pub fn owner_layout(in_group: bool, is_rule: bool, viewer: Viewer) -> bool {
+    match viewer {
+        Viewer::Legacy => false,
+        Viewer::Other => true,
+        Viewer::Owner => in_group && !is_rule,
+    }
+}
+
 /// The owner's name for a sentence, or "its owner" when none is known.
 pub fn owner_label(name: Option<&str>) -> String {
     match name.map(str::trim).filter(|n| !n.is_empty()) {
@@ -349,6 +362,25 @@ mod tests {
         );
         // Before /api/me answers nobody gets buttons.
         assert_eq!(lines(&c, &ui, None, &Utc).actions, ApprovalActions::None);
+    }
+
+    #[test]
+    fn a_non_owner_never_gets_the_buttons_in_a_dm_or_on_a_rule_card() {
+        // Group cards: owner layout for everyone.
+        assert!(owner_layout(true, false, Viewer::Owner));
+        assert!(owner_layout(true, false, Viewer::Other));
+        // A rule card or a DM card: the owner keeps the full card...
+        assert!(!owner_layout(true, true, Viewer::Owner));
+        assert!(!owner_layout(false, false, Viewer::Owner));
+        assert!(!owner_layout(false, true, Viewer::Owner));
+        // ...anyone else gets the status line and no buttons.
+        assert!(owner_layout(false, false, Viewer::Other));
+        assert!(owner_layout(false, true, Viewer::Other));
+        assert!(owner_layout(true, true, Viewer::Other));
+        // A card without an owner (older host) keeps the v0.1 card.
+        for (g, r) in [(true, false), (false, false), (true, true)] {
+            assert!(!owner_layout(g, r, Viewer::Legacy));
+        }
     }
 
     #[test]
