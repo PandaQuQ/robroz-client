@@ -523,6 +523,16 @@ impl Default for NewBroDraft {
 }
 
 /// Avatar of bro `id` from a bro list: stored, else the id default.
+/// The bro's owner for a status event, used by the list preview.
+fn status_owner_id<'a>(bros: &'a [Bro], event: &Event) -> Option<&'a str> {
+    let Event::Status { bot_id, .. } = event else {
+        return None;
+    };
+    bros.iter()
+        .find(|b| b.id == *bot_id)
+        .and_then(|b| b.owner_user_id.as_deref())
+}
+
 fn avatar_for(bros: &[Bro], id: &str) -> BroAvatar {
     avatar::resolve(bros.iter().find(|b| b.id == id).and_then(|b| b.avatar), id)
 }
@@ -1253,9 +1263,12 @@ impl App {
         // Newest change time wins the list preview; a tie goes to the
         // outcome (see `model::preview_wins`), not to arrival order.
         let at = change_time(event);
-        let shown = self
-            .previews
-            .offer(&group, event, self.me.as_ref().map(|m| m.id.as_str()));
+        let shown = self.previews.offer(
+            &group,
+            event,
+            self.me.as_ref().map(|m| m.id.as_str()),
+            status_owner_id(&self.bros, event),
+        );
         self.convs.touch(&group, shown, Some(at));
         self.feeds
             .entry(group)
