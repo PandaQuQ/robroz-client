@@ -5643,14 +5643,14 @@ dependencies = [
 
 [[package]]
 name = "robroz-card"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "robroz-contract 0.1.0 (git+https://github.com/PandaQuQ/robroz?tag=contract-v0.3.1)",
 ]
 
 [[package]]
 name = "robroz-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "chrono",
@@ -5725,7 +5725,7 @@ dependencies = [
 
 [[package]]
 name = "robroz-mobile"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "robroz-card",
  "robroz-contract 0.1.0 (git+https://github.com/PandaQuQ/robroz?tag=contract-v0.3.1)",
@@ -5766,14 +5766,14 @@ dependencies = [
 
 [[package]]
 name = "robroz-tokens"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "robroz-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "iced",
