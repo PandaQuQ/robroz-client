@@ -24,8 +24,8 @@ robroz is a self-hosted workspace in which you assign work, in plain language, t
 It is intended for people who want several AI agents in one workspace they control, and who want to approve risky steps themselves.
 
 <p>
-  <img src="docs/assets/main-en-light.png" alt="robroz desktop client, light theme: a group chat with status and delivery cards" width="49%">
-  <img src="docs/assets/main-en-dark.png" alt="robroz desktop client, dark theme: a group chat with status and delivery cards" width="49%">
+  <img src="docs/assets/screenshots/main-desktop-en-light.png" alt="robroz desktop client, light theme: a group chat with status and delivery cards" width="49%">
+  <img src="docs/assets/screenshots/main-desktop-en-dark.png" alt="robroz desktop client, dark theme: a group chat with status and delivery cards" width="49%">
 </p>
 
 <sub>Demo data</sub>
