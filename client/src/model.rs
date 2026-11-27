@@ -233,7 +233,9 @@ pub struct Previews {
 
 impl Previews {
     /// Offer `event` for `group`'s preview; the preview text if it wins.
-    pub fn offer(&mut self, group: &str, event: &Event) -> Option<String> {
+    /// `me` is the signed-in user id, so a reminder uses the owner or
+    /// non-owner sentence.
+    pub fn offer(&mut self, group: &str, event: &Event, me: Option<&str>) -> Option<String> {
         let at = change_time(event);
         let rank = preview_rank(event);
         let cur = self.by_group.get(group);
@@ -242,14 +244,15 @@ impl Previews {
         }
         self.by_group
             .insert(group.to_string(), (at.to_string(), rank, event.clone()));
-        Some(preview(event))
+        Some(preview_of(event, me))
     }
 
     /// Every chat's preview, drawn again in the active language.
-    pub fn redraw(&self) -> impl Iterator<Item = (&str, String)> + '_ {
+    pub fn redraw(&self, me: Option<&str>) -> impl Iterator<Item = (&str, String)> + '_ {
+        let me = me.map(str::to_owned);
         self.by_group
             .iter()
-            .map(|(g, (_, _, ev))| (g.as_str(), preview(ev)))
+            .map(move |(g, (_, _, ev))| (g.as_str(), preview_of(ev, me.as_deref())))
     }
 }
 
@@ -739,6 +742,12 @@ pub fn change_time(event: &Event) -> &str {
 
 /// One-line preview of an event for the conversation list.
 pub fn preview(event: &Event) -> String {
+    preview_of(event, None)
+}
+
+/// Like [`preview`], with the signed-in user id so a reminder can choose
+/// the owner or non-owner sentence.
+pub fn preview_of(event: &Event, me: Option<&str>) -> String {
     match event {
         Event::Message { kind, body, .. } => match kind {
             MessageKind::Text => body.clone(),
@@ -830,7 +839,7 @@ pub fn preview(event: &Event) -> String {
         ),
         // The same sentence the row shows: the ask, then the result.
         Event::ApprovalReminder { .. } => Reminder::from_event(event)
-            .map(|r| r.text(&chrono::Local))
+            .map(|r| r.text(&chrono::Local, me))
             .unwrap_or_default(),
     }
 }
@@ -2131,14 +2140,17 @@ mod tests {
         let mut previews = Previews::default();
         let shown = {
             let _en = scoped(Locale::En);
-            previews.offer("g1", &status).unwrap()
+            previews.offer("g1", &status, None).unwrap()
         };
         let _zh = scoped(Locale::Zh);
-        let redrawn: Vec<_> = previews.redraw().collect();
+        let redrawn: Vec<_> = previews.redraw(None).collect();
         assert_ne!(redrawn[0].1, shown);
         assert_eq!(redrawn, vec![("g1", preview(&status))]);
         // Same time and rank: the newer arrival still wins.
-        assert!(previews.offer("g1", &status).is_some(), "tie, same rank");
+        assert!(
+            previews.offer("g1", &status, None).is_some(),
+            "tie, same rank"
+        );
     }
 
     // ---- chat bubbles: who sent it, and grouping ----
@@ -2437,7 +2449,14 @@ mod tests {
         use robroz_ui::i18n::{scoped, Locale};
         let ev = reminder(ReminderState::Waiting, None);
         let _en = scoped(Locale::En);
-        assert_eq!(preview(&ev), "Ada is waiting for your approval in Site");
+        assert_eq!(
+            preview_of(&ev, Some("u-me")),
+            "Ada is waiting for your approval in Site"
+        );
+        assert_eq!(
+            preview_of(&ev, Some("u-lin")),
+            "Waiting for this bro's owner"
+        );
         assert_eq!(change_time(&ev), "2026-10-07T19:00:00.000Z");
         let done = reminder(ReminderState::Denied, Some("2026-10-07T19:05:00.000Z"));
         assert_eq!(change_time(&done), "2026-10-07T19:05:00.000Z");

@@ -18,6 +18,9 @@ pub struct Reminder {
     pub group_name: String,
     pub bot_name: String,
     pub owner_name: String,
+    /// The bro's owner (`ownerUserId`). Used so a non-owner never sees
+    /// "waiting for your approval".
+    pub owner_id: String,
     pub state: ReminderState,
     /// `createdAt`, unix seconds.
     pub created_at: i64,
@@ -41,6 +44,7 @@ impl Reminder {
             group_name,
             bot_name,
             owner_name,
+            owner_user_id,
             state,
             created_at,
             answered_at,
@@ -56,6 +60,7 @@ impl Reminder {
             group_name: group_name.clone(),
             bot_name: bot_name.clone(),
             owner_name: owner_name.clone(),
+            owner_id: owner_user_id.clone(),
             state: *state,
             created_at: unix(created_at).unwrap_or(0),
             answered_at: answered_at.as_deref().and_then(unix),
@@ -66,15 +71,23 @@ impl Reminder {
         reminder_dot(self.state)
     }
 
+    /// Whether `me` is this card's owner. Unknown id (`None`) is not.
+    pub fn is_owner(&self, me: Option<&str>) -> bool {
+        me.is_some_and(|id| !self.owner_id.is_empty() && id == self.owner_id)
+    }
+
     /// The row's text: the ask while waiting, then the result.
-    pub fn text<Tz: TimeZone>(&self, _tz: &Tz) -> String
+    /// A non-owner waiting sees the same sentence as the card
+    /// (`ApprovalWaitingFor`), not "waiting for your approval".
+    pub fn text<Tz: TimeZone>(&self, _tz: &Tz, me: Option<&str>) -> String
     where
         Tz::Offset: std::fmt::Display,
     {
         match self.state {
-            ReminderState::Waiting => {
+            ReminderState::Waiting if self.is_owner(me) => {
                 Key::ApprovalDmReminder.fill(&[&self.bot_name, &self.group_name])
             }
+            ReminderState::Waiting => Key::ApprovalWaitingFor.into(),
             // The reminder only goes to the owner. Time sits on the right.
             ReminderState::Approved => Key::ApprovalDmApprovedByYou.to_string(),
             ReminderState::Denied => Key::ApprovalDmDeniedByYou.to_string(),
@@ -125,11 +138,14 @@ mod tests {
         let r = Reminder::from_event(&event(ReminderState::Waiting, None)).unwrap();
         {
             let _g = scoped(Locale::En);
-            assert_eq!(r.text(&Utc), "Ada is waiting for your approval in Site");
+            assert_eq!(
+                r.text(&Utc, Some("u-me")),
+                "Ada is waiting for your approval in Site"
+            );
             assert_eq!(r.time(&Utc).as_deref(), Some("19:00"));
         }
         let _g = scoped(Locale::Zh);
-        assert_eq!(r.text(&Utc), "Ada 在 Site 等你审批");
+        assert_eq!(r.text(&Utc, Some("u-me")), "Ada 在 Site 等你审批");
         assert_eq!(r.dot(), Dot::Waiting);
     }
 
@@ -141,17 +157,17 @@ mod tests {
         ))
         .unwrap();
         let _g = scoped(Locale::En);
-        assert_eq!(r.text(&Utc), "Approved by you");
+        assert_eq!(r.text(&Utc, Some("u-me")), "Approved by you");
         assert_eq!(r.time(&Utc).as_deref(), Some("19:02"));
         assert_eq!(r.dot(), Dot::Done);
         let d = Reminder::from_event(&event(ReminderState::Denied, Some("2026-10-07T19:03:00Z")))
             .unwrap();
-        assert_eq!(d.text(&Utc), "Denied by you");
+        assert_eq!(d.text(&Utc, Some("u-me")), "Denied by you");
         assert_eq!(d.time(&Utc).as_deref(), Some("19:03"));
         assert_eq!(d.dot(), Dot::Void);
         let _g = scoped(Locale::Zh);
-        assert_eq!(r.text(&Utc), "你已批准");
-        assert_eq!(d.text(&Utc), "你已拒绝");
+        assert_eq!(r.text(&Utc, Some("u-me")), "你已批准");
+        assert_eq!(d.text(&Utc, Some("u-me")), "你已拒绝");
     }
 
     #[test]
@@ -159,9 +175,21 @@ mod tests {
         let r = Reminder::from_event(&event(ReminderState::Expired, Some("2026-10-07T19:30:00Z")))
             .unwrap();
         let _g = scoped(Locale::Zh);
-        assert_eq!(r.text(&Utc), "已过期");
+        assert_eq!(r.text(&Utc, Some("u-me")), "已过期");
         assert_eq!(r.dot(), Dot::Void);
         assert_eq!(r.time(&Utc).as_deref(), Some("19:30"));
+    }
+
+    #[test]
+    fn a_non_owner_waiting_sees_the_card_sentence() {
+        let r = Reminder::from_event(&event(ReminderState::Waiting, None)).unwrap();
+        {
+            let _g = scoped(Locale::En);
+            assert_eq!(r.text(&Utc, Some("u-lin")), "Waiting for this bro's owner");
+            assert_eq!(r.text(&Utc, None), "Waiting for this bro's owner");
+        }
+        let _g = scoped(Locale::Zh);
+        assert_eq!(r.text(&Utc, Some("u-lin")), "等这个 bro 的主人审批");
     }
 
     #[test]

@@ -619,7 +619,8 @@ impl Skin {
             palette.sunken = [0x1d, 0x1e, 0x21];
             palette.divider = [0x2f, 0x32, 0x36];
             palette.text = [0xec, 0xe8, 0xdf];
-            palette.text2 = [0x8f, 0x8b, 0x83];
+            // UI姐: dark text.muted #8E939B (5.75:1 on #17181A, 5.33:1 on #1D1F25).
+            palette.text2 = [0x8E, 0x93, 0x9B];
         }
         Self {
             mode,
@@ -662,6 +663,12 @@ impl Skin {
     /// False only on the phone target. Independent of [`Self::narrow`].
     pub fn can_edit(&self) -> bool {
         !self.phone
+    }
+
+    /// Mark this skin as the phone target (`ROBROZ_PHONE=1` in iced shots).
+    pub fn with_phone(mut self, phone: bool) -> Self {
+        self.phone = phone;
+        self
     }
 
     /// Colour for a status dot.
@@ -746,7 +753,7 @@ mod tests {
         assert_eq!(d.palette.sidebar, [0x1d, 0x1e, 0x21]);
         assert_eq!(d.palette.divider, [0x2f, 0x32, 0x36]);
         assert_eq!(d.palette.text, [0xec, 0xe8, 0xdf]);
-        assert_eq!(d.palette.text2, [0x8f, 0x8b, 0x83]);
+        assert_eq!(d.palette.text2, [0x8E, 0x93, 0x9B]);
     }
 
     #[test]

@@ -84,6 +84,7 @@ pub fn title_ids(dm: Option<&Bro>, items: &[ChatItem]) -> Vec<String> {
                 ..
             } => id,
             ChatItem::Status(c) => &c.bot_id,
+            ChatItem::Approval(a) => &a.bot_id,
             _ => continue,
         };
         if !id.is_empty() && !ids.contains(id) {

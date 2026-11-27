@@ -1696,11 +1696,11 @@ const REMINDER_TEXT: f32 = 13.0;
 
 /// The owner's DM reminder: dot, one line of text, the time on the right.
 /// Not a card and no buttons; the whole row is the click target.
-pub fn reminder_row<'a>(t: &Skin, r: &'a Reminder) -> Element<'a, Action> {
+pub fn reminder_row<'a>(t: &Skin, r: &'a Reminder, me: Option<&str>) -> Element<'a, Action> {
     let t = *t;
     let mut line = row![
         dot(&t, r.dot()),
-        text(r.text(&Local))
+        text(r.text(&Local, me))
             .size(REMINDER_TEXT)
             .color(color(t.palette.text))
             .wrapping(Wrapping::None),
@@ -3020,16 +3020,18 @@ pub fn mcp_panel<'a>(
             list = list.push(container(mcp_form(t, book, busy)).padding(pad));
             continue;
         }
-        list = list.push(container(mcp_row(t, book, server, busy)).padding(Padding {
-            top: 0.0,
-            bottom: if book.open.as_deref() == Some(server.id.as_str()) {
-                m.row_pad_h * 0.75
-            } else {
-                0.0
-            },
-            left: m.row_pad_h,
-            right: m.row_pad_h,
-        }));
+        list = list.push(
+            container(mcp_row(t, book, server, busy, _width)).padding(Padding {
+                top: 0.0,
+                bottom: if book.open.as_deref() == Some(server.id.as_str()) {
+                    m.row_pad_h * 0.75
+                } else {
+                    0.0
+                },
+                left: m.row_pad_h,
+                right: m.row_pad_h,
+            }),
+        );
     }
     col = col.push(list);
     col.into()
@@ -3376,12 +3378,21 @@ fn mcp_connect_button<'a>(t: &Skin, on_press: Option<Action>) -> Element<'a, Act
 /// Outline delete: 1px border, `danger` text, no red fill. The confirm
 /// already follows.
 fn mcp_delete_button<'a>(t: &Skin, on_press: Option<Action>) -> Element<'a, Action> {
+    danger_outline_button(t, mcp::DELETE.into(), on_press)
+}
+
+/// Outline + danger red text, no red fill. Used by MCP and rules Delete.
+fn danger_outline_button<'a>(
+    t: &Skin,
+    label: String,
+    on_press: Option<Action>,
+) -> Element<'a, Action> {
     let t = *t;
     let enabled = on_press.is_some();
     let fg = color(crate::theme::DANGER);
     let visual = move |hovered: bool| -> Element<'a, Action> {
         container(
-            text(mcp::DELETE)
+            text(label.clone())
                 .size(t.type_.button)
                 .font(semibold())
                 .color(fg)
@@ -3459,6 +3470,7 @@ fn mcp_row<'a>(
     book: &'a McpBook,
     server: &'a McpServer,
     busy: bool,
+    width: f32,
 ) -> Element<'a, Action> {
     let m = t.metrics;
     let id = server.id.clone();
@@ -3479,9 +3491,18 @@ fn mcp_row<'a>(
         Some(test) => (test.text(), t.palette.text2),
         None => (mcp::row_subtitle(server), t.palette.text3),
     };
-    let sub_text = text(sub)
+    let cols = mcp::subtitle_cols(
+        width,
+        t.type_.unit_width,
+        t.metrics.row_pad_h,
+        t.controls.button_gap,
+    );
+    let sub_text = text(mcp::clamp_subtitle(&sub, cols))
         .size(robroz_tokens::mcp::ROW_SUB)
-        .wrapping(text::Wrapping::None)
+        .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
+            robroz_tokens::mcp::ROW_SUB + 4.0,
+        )))
+        .wrapping(text::Wrapping::Word)
         .color(color(sub_rgb));
     let sub_line: Element<'a, Action> = if mcp::shows_approval_status(server, has_test) {
         row![mcp_status_dot(t, t.status.blocked), sub_text]
@@ -3494,20 +3515,23 @@ fn mcp_row<'a>(
     let title = container(column![name, sub_line].spacing(2.0))
         .width(Fill)
         .clip(true);
+    let connected: Element<'a, Action> = row![
+        mcp_connected_dot(t),
+        text(mcp::CONNECTED)
+            .size(robroz_tokens::mcp::CAPSULE_TEXT)
+            .wrapping(text::Wrapping::None)
+            .color(color(t.palette.text2)),
+    ]
+    .spacing(6.0)
+    .align_y(Alignment::Center)
+    .into();
+    // Phone is list + status only: no Connect button.
     let right: Element<'a, Action> = if mcp::is_connected(server) {
-        // Inert: muted status text with a 6px done dot, not a button.
-        row![
-            mcp_connected_dot(t),
-            text(mcp::CONNECTED)
-                .size(robroz_tokens::mcp::CAPSULE_TEXT)
-                .wrapping(text::Wrapping::None)
-                .color(color(t.palette.text2)),
-        ]
-        .spacing(6.0)
-        .align_y(Alignment::Center)
-        .into()
-    } else {
+        connected
+    } else if mcp::can_edit(t) {
         mcp_connect_button(t, (!busy).then(|| Action::McpConnect { id: id.clone() }))
+    } else {
+        iced::widget::Space::new().width(0).height(0).into()
     };
     let top = row![
         button(
@@ -3532,12 +3556,13 @@ fn mcp_row<'a>(
     // 16px between the tool list, the group list, and the action buttons.
     let mut col = column![top].spacing(16.0);
     if open {
-        if book.command_prompt_for(&server.id).is_some() {
+        if mcp::can_edit(t) && book.command_prompt_for(&server.id).is_some() {
             col = col.push(mcp_command_prompt(t, book, server, busy));
         } else {
             col = col.push(mcp_tools(t, book, server));
         }
-        if !book.chats.is_empty() {
+        // Group toggles are an edit control; hide them on the phone.
+        if mcp::can_edit(t) && !book.chats.is_empty() {
             col = col.push(mcp_group_toggles(t, book, &server.id, busy));
         }
         // Phone is view-only: no add / edit / disconnect / delete, so no
@@ -5354,30 +5379,45 @@ pub fn review_rules_panel<'a>(
 ) -> Element<'a, Action> {
     let locked = page.locked();
     let mut body_col = column![].spacing(12).width(Fill);
-    let mut input = text_input(review_rules::PLACEHOLDER.as_str(), &page.draft)
+    // Placeholder is a wrapping hint, not a single-line field string, so
+    // a narrow window does not cut the English mid-word ("…PRs wher").
+    let mut input = text_input("", &page.draft)
         .size(t.type_.body)
         .padding(field_padding())
         .width(Fill)
         .style(review_rule_input_style(*t));
-    if !locked {
+    let can_edit = review_rules::shows_edit_controls(can_decide);
+    if can_edit && !locked {
         input = input
             .on_input(|text| Action::ReviewDraft { text })
             .on_submit(Action::ReviewAdd);
     }
-    body_col = body_col.push(
-        row![
-            input,
-            btn(
-                t,
-                review_rules::ADD.into(),
-                Look::Primary,
-                Leading::None,
-                (!locked).then_some(Action::ReviewAdd),
-            ),
-        ]
-        .spacing(t.controls.button_gap)
-        .align_y(Alignment::Center),
-    );
+    if can_edit {
+        let mut field = column![input].spacing(4).width(Fill);
+        if page.draft.is_empty() {
+            field = field.push(
+                text(review_rules::PLACEHOLDER)
+                    .size(t.type_.foot)
+                    .color(color(t.palette.text3))
+                    .wrapping(Wrapping::Word)
+                    .width(Fill),
+            );
+        }
+        body_col = body_col.push(
+            row![
+                field,
+                btn(
+                    t,
+                    review_rules::ADD.into(),
+                    Look::Primary,
+                    Leading::None,
+                    (!locked).then_some(Action::ReviewAdd),
+                ),
+            ]
+            .spacing(t.controls.button_gap)
+            .align_y(Alignment::Start),
+        );
+    }
     if let Some(note) = &page.note {
         if *note == review_rules::ALREADY_ANSWERED {
             body_col = body_col.push(
@@ -5425,20 +5465,22 @@ pub fn review_rules_panel<'a>(
                         row_el.push(text(date).size(t.type_.foot).color(color(t.palette.text2)));
                 }
                 let id = r.id.clone();
-                body_col = body_col.push(
+                let rule_row: Element<'a, Action> = if can_edit {
                     row![
                         container(row_el).width(Fill),
-                        btn(
+                        danger_outline_button(
                             t,
                             review_rules::DELETE.into(),
-                            Look::Secondary,
-                            Leading::None,
                             (!locked).then_some(Action::ReviewDelete { id }),
                         ),
                     ]
                     .spacing(t.controls.button_gap)
-                    .align_y(Alignment::Center),
-                );
+                    .align_y(Alignment::Center)
+                    .into()
+                } else {
+                    container(row_el).width(Fill).into()
+                };
+                body_col = body_col.push(rule_row);
             }
         }
     }
@@ -5910,19 +5952,16 @@ where
     F: FnMut(&str) -> crate::avatar::BroAvatar,
 {
     let _ = scale;
-    let back = crate::avatar_view::round_button(t, crate::icons::Glyph::Back, Action::MembersClose);
-    let title = text(Key::MembersTitle)
-        .size(t.type_.list_title)
-        .font(bold())
-        .color(color(t.palette.text));
-    let mut col = column![
-        container(row![back, title].spacing(12).align_y(Alignment::Center))
-            .padding(Padding::from([8.0, t.metrics.stream_padding]))
-    ]
-    .spacing(0)
-    .width(Fill);
+    let mut col = column![].spacing(0).width(Fill);
     let Some(members) = members else {
-        return scrollable(col).height(Fill).width(Fill).into();
+        return settings_frame(
+            *t,
+            Key::MembersTitle.into(),
+            Some(Action::MembersClose),
+            col.into(),
+            std::convert::identity,
+            None,
+        );
     };
     for b in &members.bros {
         let face = crate::avatar_view::bro_avatar(t, avatar_of(&b.bot_id), 40.0);
@@ -5934,7 +5973,7 @@ where
         col = col.push(
             container(row![face, body].spacing(12).align_y(Alignment::Center))
                 .width(Fill)
-                .padding(Padding::from([10.0, t.metrics.stream_padding])),
+                .padding(Padding::from([10.0, 0.0])),
         );
     }
     for u in &members.users {
@@ -5947,10 +5986,17 @@ where
                     .align_y(Alignment::Center),
             )
             .width(Fill)
-            .padding(Padding::from([10.0, t.metrics.stream_padding])),
+            .padding(Padding::from([10.0, 0.0])),
         );
     }
-    scrollable(col).height(Fill).width(Fill).into()
+    settings_frame(
+        *t,
+        Key::MembersTitle.into(),
+        Some(Action::MembersClose),
+        col.into(),
+        std::convert::identity,
+        None,
+    )
 }
 
 /// One Settings row as drawn: label, optional `text2` value, then `›`.
@@ -6032,9 +6078,28 @@ fn settings_row<'a>(
         .width(Fill)
         .height(Length::Fixed(st::ROW))
         .padding(Padding::from([0.0, st::SIDE_PAD]))
-        .style(conversation_row_style(t, false))
+        .style(settings_row_style(t))
         .on_press(on)
         .into()
+}
+
+/// Idle fill is `surface`, same as the card, so a row cannot punch a
+/// hole through to the page (the 记忆 row did this with a transparent
+/// conversation-row style).
+fn settings_row_style(t: Skin) -> impl Fn(&IcedTheme, button::Status) -> button::Style {
+    move |_, status| {
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: Some(Background::Color(color(if hovered {
+                t.palette.control_hover
+            } else {
+                t.palette.surface
+            }))),
+            text_color: color(t.palette.text),
+            border: Border::default(),
+            ..button::Style::default()
+        }
+    }
 }
 
 fn settings_trailing<'a>(t: Skin, value: Option<String>) -> Element<'a, Action> {

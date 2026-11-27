@@ -1,18 +1,30 @@
-//! One conversation as chat rows: text bubbles and status cards.
+//! One conversation as chat rows: text bubbles, status cards, and
+//! read-only approval rows.
 //!
 //! Own messages are bubbles on the right, a bro's messages bubbles on the
 //! left, grouped into runs: the name once above the first item in a group,
 //! the avatar only at the last. A task's status card sits on the left
 //! under the same rules. A card is keyed by task: later status events
-//! update the card where it first appeared. Other card types (delivery,
-//! choice, approval, ...) are not drawn in the spike.
+//! update the card where it first appeared. An approval event becomes a
+//! read-only row (no buttons on the phone in v0.2), keyed by approval
+//! id, and later events for the same id update it in place.
 
 use robroz_contract::Event;
 use robroz_ui::cards::status as status_ui;
+use robroz_ui::cards::ApprovalCard;
 use robroz_ui::conversations;
 use robroz_ui::runs::{self, Block, Meta, RunSender, GROUP_SECS};
 
 use crate::card::StatusCard;
+
+/// An approval event in the feed, with the bot id and created time used
+/// to place it in a run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalItem {
+    pub card: ApprovalCard,
+    pub bot_id: String,
+    pub at: Option<i64>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Side {
@@ -57,6 +69,7 @@ pub enum ChatItem {
         at: Option<i64>,
     },
     Status(StatusCard),
+    Approval(ApprovalItem),
 }
 
 /// One row in the feed, after run grouping.
@@ -79,56 +92,15 @@ pub enum FeedEntry {
 
 /// `events` is oldest first, each with whether a message is the user's own
 /// (see `Conn::events`). A status event replaces the earlier card of the
-/// same task in place.
+/// same task in place; an approval event does the same by approval id.
 pub fn build(events: &[(Event, bool)]) -> Vec<ChatItem> {
-    let mut items: Vec<ChatItem> = Vec::new();
-    let mut card_at: Vec<(&str, usize)> = Vec::new();
-    for (event, own) in events {
-        match event {
-            Event::Message {
-                body, created_at, ..
-            } => {
-                let at = runs::parse_unix(created_at);
-                let side = if *own {
-                    Side::Own
-                } else {
-                    Side::Bro {
-                        id: String::new(),
-                        name: String::new(),
-                    }
-                };
-                items.push(ChatItem::Text {
-                    body: body.clone(),
-                    side,
-                    at,
-                });
-            }
-            Event::Status { task_id, .. } => {
-                let Some(mut card) = StatusCard::from_event(event) else {
-                    continue;
-                };
-                match card_at.iter().find(|(t, _)| *t == task_id.as_str()) {
-                    Some(&(_, at)) => {
-                        if let ChatItem::Status(old) = &items[at] {
-                            card = merge_status(old, card);
-                        }
-                        items[at] = ChatItem::Status(card);
-                    }
-                    None => {
-                        card_at.push((task_id.as_str(), items.len()));
-                        items.push(ChatItem::Status(card));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    items
+    build_from(events)
 }
 
 pub fn build_from(events: &[(Event, bool)]) -> Vec<ChatItem> {
     let mut items: Vec<ChatItem> = Vec::new();
     let mut card_at: Vec<(String, usize)> = Vec::new();
+    let mut approval_at: Vec<(String, usize)> = Vec::new();
     for (event, own) in events {
         match event {
             Event::Message {
@@ -164,6 +136,30 @@ pub fn build_from(events: &[(Event, bool)]) -> Vec<ChatItem> {
                     None => {
                         card_at.push((task_id.clone(), items.len()));
                         items.push(ChatItem::Status(card));
+                    }
+                }
+            }
+            Event::Approval {
+                id,
+                bot_id,
+                created_at,
+                ..
+            } => {
+                let Some(card) = ApprovalCard::from_event(event) else {
+                    continue;
+                };
+                let item = ChatItem::Approval(ApprovalItem {
+                    card,
+                    bot_id: bot_id.clone(),
+                    at: runs::parse_unix(created_at),
+                });
+                match approval_at.iter().find(|(t, _)| t == id) {
+                    Some((_, at)) => {
+                        items[*at] = item;
+                    }
+                    None => {
+                        approval_at.push((id.clone(), items.len()));
+                        items.push(item);
                     }
                 }
             }
@@ -224,6 +220,7 @@ pub fn bro_name<'a>(items: &'a [ChatItem], fallback: &'a str) -> &'a str {
         .rev()
         .find_map(|i| match i {
             ChatItem::Status(c) => Some(c.bot_name.as_str()),
+            ChatItem::Approval(a) => Some(a.card.bot.as_str()),
             ChatItem::Text {
                 side: Side::Bro { name, .. },
                 ..
@@ -251,6 +248,13 @@ fn item_meta(item: &ChatItem, fallback: &str) -> (Side, Option<i64>) {
                 name: c.bot_name.clone(),
             },
             c.at,
+        ),
+        ChatItem::Approval(a) => (
+            Side::Bro {
+                id: a.bot_id.clone(),
+                name: a.card.bot.clone(),
+            },
+            a.at,
         ),
     }
 }
@@ -453,5 +457,83 @@ mod tests {
             assert!(times[..times.len() - 1].iter().all(|empty| *empty));
             assert!(!times[times.len() - 1]);
         }
+    }
+
+    fn approval(
+        id: &str,
+        bot_id: &str,
+        bot_name: &str,
+        summary: &str,
+        decision: Option<robroz_contract::ApprovalDecision>,
+        owner: Option<(&str, &str)>,
+    ) -> Event {
+        Event::Approval {
+            reason_code: None,
+            id: id.into(),
+            bot_id: bot_id.into(),
+            bot_name: bot_name.into(),
+            action: robroz_contract::ApprovalAction::Delete,
+            summary: summary.into(),
+            path: None,
+            decision,
+            created_at: "2026-11-20T10:00:00.000Z".into(),
+            answered_at: decision.map(|_| "2026-11-20T10:02:00.000Z".into()),
+            answered_by: None,
+            task_id: None,
+            mcp_server: None,
+            mcp_tool: None,
+            reason: None,
+            expires_at: None,
+            owner_user_id: owner.map(|o| o.0.into()),
+            owner_name: owner.map(|o| o.1.into()),
+        }
+    }
+
+    #[test]
+    fn an_approval_event_is_drawn_and_updates_in_place() {
+        let events = vec![
+            (msg("m1", "please delete the logs"), true),
+            (
+                approval(
+                    "a1",
+                    "b",
+                    "Ada",
+                    "Delete 12 old log files",
+                    None,
+                    Some(("u-me", "Panda")),
+                ),
+                false,
+            ),
+            (msg("m2", "ok"), true),
+        ];
+        let items = build(&events);
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[1], ChatItem::Approval(a) if a.card.id == "a1"));
+        let ChatItem::Approval(first) = &items[1] else {
+            panic!("approval is kept");
+        };
+        assert_eq!(first.card.state, robroz_ui::cards::ApprovalState::Pending);
+
+        let mut later = events.clone();
+        later.push((
+            approval(
+                "a1",
+                "b",
+                "Ada",
+                "Delete 12 old log files",
+                Some(robroz_contract::ApprovalDecision::Denied),
+                Some(("u-me", "Panda")),
+            ),
+            false,
+        ));
+        let items = build(&later);
+        assert_eq!(items.len(), 3, "the decided card stays where it appeared");
+        let ChatItem::Approval(decided) = &items[1] else {
+            panic!("approval updates in place");
+        };
+        assert!(matches!(
+            decided.card.state,
+            robroz_ui::cards::ApprovalState::Denied { .. }
+        ));
     }
 }
