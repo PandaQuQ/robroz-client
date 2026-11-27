@@ -71,6 +71,11 @@ impl StatusCard {
         self.failure.is_none() && self.state == TaskState::Running && self.container_up
     }
 
+    /// The task is sitting on an approval card.
+    pub fn awaits_approval(&self) -> bool {
+        awaits_approval(self.state, self.waiting_for)
+    }
+
     pub fn timer(&self, now: i64) -> robroz_ui::process::TimerPhase {
         robroz_ui::process::timer_phase(robroz_ui::process::TimerInput {
             state: self.state,
