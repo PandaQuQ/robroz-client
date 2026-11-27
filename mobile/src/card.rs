@@ -12,7 +12,7 @@
 
 use robroz_card::{Palette, Tone};
 use robroz_contract::{Event, FailureCode, TaskState, WaitingFor};
-use robroz_ui::cards::codes::{FailureLine, ProgressLine};
+use robroz_ui::cards::codes::{self, FailureLine, ProgressLine};
 use robroz_ui::i18n::{host_text, Key};
 
 /// The status line while a task waits on an approval card. Same constant as
@@ -54,11 +54,17 @@ impl StatusCard {
     }
 
     /// The status (or failure) line in the active language.
+    ///
+    /// Task status words come from `state` via i18n, not the host `label`.
+    /// A task waiting on an approval uses the awaiting copy.
     pub fn shown_status(&self) -> String {
-        match self.failure_line() {
-            Some(line) => line.text,
-            None => display(&self.status_line).into_owned(),
+        if let Some(line) = self.failure_line() {
+            return line.text;
         }
+        if self.awaits_approval() {
+            return Key::ClientAwaitingApproval.into();
+        }
+        codes::status_text_from_state(self.state, self.container_up)
     }
 
     /// The raw failure detail line under the status (monospace, muted,
@@ -431,5 +437,32 @@ mod tests {
         };
         assert!(StatusCard::from_event(&msg).is_none());
         assert_eq!(latest_status(&[msg]), None);
+    }
+    #[test]
+    fn shown_status_uses_state_i18n_not_the_host_label() {
+        let ev = status(TaskState::Done, false);
+        let card = StatusCard::from_event(&ev).unwrap();
+        {
+            let _en = scoped(Locale::En);
+            assert_eq!(card.shown_status(), "Done");
+        }
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(card.shown_status(), "完成");
+    }
+
+    #[test]
+    fn shown_status_prefers_awaiting_copy_when_waiting_on_approval() {
+        let mut ev = status(TaskState::Blocked, false);
+        if let Event::Status { waiting_for, .. } = &mut ev {
+            *waiting_for = Some(robroz_contract::WaitingFor::Approval);
+        }
+        let card = StatusCard::from_event(&ev).unwrap();
+        {
+            let _en = scoped(Locale::En);
+            assert_eq!(card.shown_status(), "Needs your approval");
+            assert_ne!(card.shown_status(), "Stuck");
+        }
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(card.shown_status(), "等你批准");
     }
 }
