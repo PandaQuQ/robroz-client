@@ -27,6 +27,9 @@ keyring = { version = "3.6", default-features = false, features = ["apple-native
 [dev-dependencies]
 # In-process host for the `against_host` tests, from the server repository.
 robroz-host = { workspace = true }
+# Same crate and version as the host's: `against_host` tests set a card's time
+# columns in the host database the way the pump's claim does.
+rusqlite = { version = "0.41", features = ["bundled"] }
 axum = "0.8"
 serde = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }

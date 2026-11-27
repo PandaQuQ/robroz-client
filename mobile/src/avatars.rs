@@ -52,10 +52,13 @@ pub fn stack_at(
     )
 }
 
-/// You own this bro: its `ownerUserId` is your `GET /api/me` id. Unknown
-/// on either side means no, so the edit entry stays hidden.
+/// You own this bro: its `ownerUserId` is your `GET /api/me` id. A bro with
+/// no owner (null or empty) belongs to `local-admin`, the same as the host's
+/// `COALESCE(owner_user_id, 'local-admin')` and the desktop approval rule
+/// ([`robroz_ui::cards::is_bro_owner`]). Without `GET /api/me` the answer is
+/// no, so the edit entry stays hidden.
 pub fn owns(me: Option<&Me>, bro: &Bro) -> bool {
-    matches!((me, &bro.owner_user_id), (Some(me), Some(owner)) if &me.id == owner)
+    robroz_ui::cards::is_bro_owner(me.map(|m| m.id.as_str()), bro.owner_user_id.as_deref())
 }
 
 /// The avatar to draw for bro `id`: the stored one, else the id default.
@@ -193,6 +196,21 @@ mod tests {
         assert!(!owns(Some(&me("u2")), &b));
         assert!(!owns(None, &b));
         assert!(!owns(Some(&me("u1")), &bro("ada", None, None)));
+    }
+
+    #[test]
+    fn a_bro_with_no_owner_belongs_to_local_admin() {
+        for owner in [None, Some(""), Some("  ")] {
+            let b = bro("ada", owner, None);
+            assert!(owns(Some(&me("local-admin")), &b), "owner {owner:?}");
+            assert!(!owns(Some(&me("u2")), &b), "owner {owner:?}");
+            assert!(!owns(None, &b), "owner {owner:?}");
+        }
+        // A real owner is still only that user, local-admin included.
+        assert!(!owns(
+            Some(&me("local-admin")),
+            &bro("ada", Some("u1"), None)
+        ));
     }
 
     #[test]
