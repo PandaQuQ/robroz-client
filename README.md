@@ -13,15 +13,15 @@
 
 > This repository is the robroz **client**: the native desktop app (Windows, Linux, macOS) and the mobile app (Android, iOS). The host (server), the runner, the API contract and the Docker images are in [PandaQuQ/robroz](https://github.com/PandaQuQ/robroz). The client needs a running host.
 
-Self-hosted multi-agent workspace you drive through chat. Agents (bros) run in Docker sandboxes; approvals and results come back as cards. This repository has the native clients, written in Rust.
+A self-hosted multi-agent workspace operated through chat. Agents (bros) run in Docker sandboxes; approvals and results are returned as cards. This repository contains the native clients, written in Rust.
 
 See [CHANGELOG.md](CHANGELOG.md) and [docs/install.md](docs/install.md).
 
-## What is robroz
+## Overview
 
-You chat on your own machine with a group of AI bros. You give them work in plain language; they do it in a sandbox on that machine, and they ask you before anything risky.
+robroz is a self-hosted workspace in which you assign work, in plain language, to a group of AI bros on your own machine. The bros carry out that work in a sandbox on that machine and request approval before any risky step.
 
-It is for people who want several AI agents in one workspace they control, and who want to approve risky steps themselves.
+It is intended for people who want several AI agents in one workspace they control, and who want to approve risky steps themselves.
 
 <p>
   <img src="docs/assets/main-en-light.png" alt="robroz desktop client, light theme: a group chat with status and delivery cards" width="49%">
@@ -30,33 +30,33 @@ It is for people who want several AI agents in one workspace they control, and w
 
 <sub>Demo data</sub>
 
-The desktop client UI is English by default. Switch to 中文 under Settings, General, Language / 语言. Open Settings from your name at the bottom of the chat list. `ROBROZ_LANG=en|zh` overrides the saved choice for one run and is not written back. See [docs/configuration.md](docs/configuration.md) for the saved `lang` file.
+The desktop client UI defaults to English. The language can be switched to 中文 under Settings, General, Language / 语言. Settings can be opened from your name at the bottom of the chat list. `ROBROZ_LANG=en|zh` overrides the saved choice for one run and is not written back. See [docs/configuration.md](docs/configuration.md) for the saved `lang` file.
 
 Under Language is an Appearance / 「外观」 row that opens a list: System / 「跟随系统」, Light / 「浅色」, and Dark / 「深色」. The default is System, which follows the operating system as it changes. The choice is saved as one line (`system`, `light`, or `dark`) in a `theme` file next to `lang`.
 
 ## Features
 
-- **Chat bubbles.** Your messages sit on the right; bro cards sit on the left, grouped by sender. A delivery with a `bot_name` is attached to that bro; a delivery without one stands alone.
-- **Group turns.** Send a message in a group and every bro can reply, or stay quiet. A bro you name with `@name` at the start of the message speaks first.
-- **Bros reply to each other.** When a bro replies in a group, the other bros can join in. It stops after two rounds.
-- **Follow-ups.** If a bro is still working, you can add to that work instead of starting a new task. In a group, start the message with `@name`; in a direct message, just send it.
-- **Bigger tasks in steps.** A bro can split a task into up to 3 steps; the card shows "Step n of m".
-- **Direct messages.** Talk one-to-one with a bro.
+- **Chat bubbles.** Your messages appear on the right; bro cards appear on the left, grouped by sender. A delivery with a `bot_name` is attached to that bro; a delivery without one stands alone.
+- **Group turns.** A message that names no bro receives one reply, from one bro selected by the host. Name a bro with `@name` at the start and that bro speaks first; the others may then take a turn or remain silent.
+- **Bros reply to each other.** When a bro replies in a group, the other bros may also reply. The exchange stops after two rounds.
+- **Follow-ups.** If a bro is still working, further instructions can be added to that work instead of starting a new task. In a group, start the message with `@name`; in a direct message, send the message without a mention.
+- **Multi-step tasks.** A bro can split a task into up to 3 steps; the card shows "Step n of m".
+- **Direct messages.** One-to-one conversation with a bro.
 - **Docker sandbox.** Each job runs in a container on your machine, without network access.
-- **Approvals and Allow rules.** Risky steps wait for you. Auto-review checks each card against your allow rules; if no rule allows it, the card comes to you in a direct message. Memory and skill changes also wait for you to confirm.
-- **Model settings.** Connect any OpenAI-compatible model. A base URL and a model name are enough; the key is optional. You can set this in the client or with environment variables.
+- **Approvals and Allow rules.** Risky steps require your approval. Auto-review checks each card against your allow rules; if no rule allows it, the card stays where the task started and you approve or deny it. For a card in a group, a reminder is also sent in your direct message with the bro. Memory and skill changes also require confirmation.
+- **Model settings.** Any OpenAI-compatible model can be connected. A base URL and a model name are sufficient; the key is optional. Settings can be applied in the client or with environment variables.
 
-You can also use web search (Brave or SearXNG), MCP tools, and scheduled routines. When a step runs long or stalls, a hint appears on the card; the work is not cancelled.
+Web search (Brave or SearXNG), MCP tools, and scheduled routines are also available. When a step runs long or stalls, a hint appears on the card; the work is not cancelled.
 
 ## Roadmap
 
-These are accepted design or in progress. They are **not** shipped on `main`. Details: [design/multi-agent.md](https://github.com/PandaQuQ/robroz/blob/main/docs/design/multi-agent.md) in the host repository.
+The following items are accepted design or are in progress. They are **not** shipped on `main`. Details: [design/multi-agent.md](https://github.com/PandaQuQ/robroz/blob/main/docs/design/multi-agent.md) in the host repository.
 
 - Cancelling a timed-out step or stopping the container.
 
-## Quick start
+## Installation
 
-You need a Rust stable toolchain (`rustup`, `cargo`) and a running host. To start a host, follow the quick start in [PandaQuQ/robroz](https://github.com/PandaQuQ/robroz#quick-start); it listens on `127.0.0.1:8790` by default. To install a published client binary instead of building it, see [docs/install.md](docs/install.md).
+A Rust stable toolchain (`rustup`, `cargo`) and a running host are required. To start a host, follow the [Installation](https://github.com/PandaQuQ/robroz#installation) section in PandaQuQ/robroz; it listens on `127.0.0.1:8790` by default. To install a published client binary instead of building from source, see [docs/install.md](docs/install.md).
 
 ```sh
 cargo run -p robroz-client   # default host http://127.0.0.1:8790
@@ -65,21 +65,9 @@ cargo run -p robroz-client -- --fake   # look at the UI without a host
 
 For a host on another machine, fill in Host and Token under Connection (「连接」) in Settings, or set `ROBROZ_HOST` and `ROBROZ_TOKEN` for one run. See [docs/install.md](docs/install.md#run-the-client).
 
-In the client, click the + at the top of the chat list (Add a bro, 「引入一个 bro」), name the bro and press Add (「引入」), open the DM and send a message. That is your first task. With no model configured, the delivery is No model set up yet (「还没设置模型」) and the card offers Set up (「去设置」). Open Settings, Bros, Model (「模型」), or that link, fill in the address and the model name, and save; the key is optional and is stored by the host, not by the client.
+## Quick start
 
-## Architecture
-
-The desktop client (`robroz-client`, [iced](https://iced.rs/) 0.14, no web view) talks to the host (`robroz-host`) over HTTP and SSE. Request, response and card types come from `robroz-contract` in the host repository, pinned by git tag (`contract-v*`) in `Cargo.toml`. The client's `against_host` tests build that host from the same tag, so no Docker is needed to test the client. How the host side fits together: [architecture.md](https://github.com/PandaQuQ/robroz/blob/main/docs/architecture.md).
-
-| Path | Crate | Role |
-| --- | --- | --- |
-| `client/` | `robroz-client` | iced desktop client |
-| `mobile/` | `robroz-mobile` | Mobile client (Android and iOS); see [mobile/README.md](mobile/README.md) |
-| `crates/robroz-card` | `robroz-card` | Card status text, tone and actions |
-| `crates/robroz-tokens` | `robroz-tokens` | Design tokens generated from `tokens.json` |
-| `crates/robroz-ui` | `robroz-ui` | Shared client UI layer and theme |
-
-"Bro" is the UI name for a bot: code, API and the database still say bot (`botId` / `botName`). The four task states `queued` / `running` / `blocked` / `done` are frozen.
+In the client, click the + at the top of the chat list (Add a bro, 「引入一个 bro」), enter a name and press Add (「引入」), open the DM and send a message. That is your first task. With no model configured, the delivery is No model set up yet (「还没设置模型」) and the card offers Set up (「去设置」). Open Settings, Bros, Model (「模型」), or that link, fill in the address and the model name, and save; the key is optional and is stored by the host, not by the client.
 
 ## Documentation
 
@@ -97,7 +85,21 @@ The API, cards, permissions, approvals, memory, skills, search, MCP and the host
 
 ## Status
 
-This repository has no release yet; build the client from source (see [Quick start](#quick-start)). v0.1.1 and earlier were published from the [host repository](https://github.com/PandaQuQ/robroz/releases). `main` targets the [v0.2.0 host](https://github.com/PandaQuQ/robroz/releases/tag/v0.2.0) and `contract-v0.3.1`.
+This repository has not yet published a release; build the client from source (see [Installation](#installation)). v0.1.1 and earlier were published from the [host repository](https://github.com/PandaQuQ/robroz/releases). `main` targets the [v0.2.0 host](https://github.com/PandaQuQ/robroz/releases/tag/v0.2.0) and `contract-v0.3.1`.
+
+## Architecture
+
+The desktop client (`robroz-client`, [iced](https://iced.rs/) 0.14, no web view) talks to the host (`robroz-host`) over HTTP and SSE. Request, response and card types come from `robroz-contract` in the host repository, pinned by git tag (`contract-v*`) in `Cargo.toml`. The client's `against_host` tests build that host from the same tag, so no Docker is needed to test the client. How the host side fits together: [architecture.md](https://github.com/PandaQuQ/robroz/blob/main/docs/architecture.md).
+
+| Path | Crate | Role |
+| --- | --- | --- |
+| `client/` | `robroz-client` | iced desktop client |
+| `mobile/` | `robroz-mobile` | Mobile client (Android and iOS); see [mobile/README.md](mobile/README.md) |
+| `crates/robroz-card` | `robroz-card` | Card status text, tone and actions |
+| `crates/robroz-tokens` | `robroz-tokens` | Design tokens generated from `tokens.json` |
+| `crates/robroz-ui` | `robroz-ui` | Shared client UI layer and theme |
+
+"Bro" is the UI name for a bot: code, API and the database still say bot (`botId` / `botName`). The four task states `queued` / `running` / `blocked` / `done` are frozen.
 
 ## Development
 
