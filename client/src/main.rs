@@ -4328,26 +4328,22 @@ impl App {
         // The title bar is stacked on top with a solid `window` fill, and
         // the feed is padded by the bar's height so the first card starts
         // below it. Scrolling then tucks messages under the bar, not
-        // through it.
+        // through it. The status capsule (Reconnecting, Syncing…,
+        // too_many_streams) is also stacked, 4px under the bar, and
+        // does not reserve feed space — appearing or disappearing
+        // must not shift the content.
         let header_h = view::chat_header_height(t)
             + if rename.is_some_and(|r| r.note.is_some()) {
                 t.type_.foot + 6.0
             } else {
                 0.0
             };
-        // Capsule sits 4px under the title bar (12px type, 4px pad
-        // top/bottom) and leaves 8px before the first feed item.
         let notice = self.header_notice();
-        let banner_h = if notice.is_some() {
-            4.0 + 4.0 + t.type_.foot + 4.0 + 8.0
-        } else {
-            0.0
-        };
         let feed_body = container(container(feed_col).width(Length::Fixed(column_w)))
             .width(Fill)
             .center_x(Fill)
             .padding(Padding {
-                top: header_h + banner_h,
+                top: header_h,
                 ..Padding::ZERO
             });
         let feed = scrollable(feed_body)

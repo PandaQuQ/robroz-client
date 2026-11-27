@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Chat top-bar status capsule (Reconnecting, Syncing…, too many connections): floats over the feed 4px under the title bar and does not reserve layout space, so appearing or disappearing no longer shifts the content.
+
 - MCP title row: the "{0} connected" count and Add sit on the right of ‹ MCP instead of on a second empty-left row. An expanded server uses 16px gaps between the tool list, the group list and the buttons. On a phone the page is read-only (no Add, Edit, Disconnect or Delete). The Slint Connected dot is vertically centred with its label and the group is right-aligned with Connect. The `#MadeWithSlint` badge is removed from Settings (the client is AGPL-3.0-only; Slint is used under GPLv3, which does not require the badge).
 
 - Approve / Reject follow who may answer on the host (`may_answer`): rule and settings cards on the review-rules page show the buttons only to an admin from `/api/me`, and anyone else sees "Waiting for an admin" / 「等管理员确认」 and the rule text, with no "Confirm to add this allow rule" / 「确认后加入放行规则」 line and no buttons; a bro's approval card in a DM shows the buttons only to the bro's owner. If `/api/me` has not loaded, no buttons are shown. No contract change.
