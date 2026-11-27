@@ -3706,6 +3706,10 @@ fn mcp_group_toggles<'a>(
         .size(t.type_.foot)
         .color(color(t.palette.text3))]
     .spacing(m.dot_gap);
+    // Toggle rows are a fixed 44px (`mcp::GROUP_ROW`) on wide and narrow
+    // desktop. Spacing them with `dot_gap` on top of `touch_target` made
+    // the pitch ~38px wide and ~50px narrow.
+    let mut rows = column![];
     for (group, name) in &book.chats {
         let load = book.group_load_state(group);
         let known = (load == mcp::GroupLoad::Ready)
@@ -3746,12 +3750,15 @@ fn mcp_group_toggles<'a>(
         if let Some(hint) = hint {
             label = label.push(text(hint).size(t.type_.foot).color(color(t.palette.text3)));
         }
-        list = list.push(
+        rows = rows.push(
             row![container(label).width(Fill), toggle]
                 .spacing(t.controls.button_gap)
-                .align_y(Alignment::Center),
+                .align_y(Alignment::Center)
+                .height(Length::Fixed(robroz_tokens::mcp::GROUP_ROW))
+                .width(Fill),
         );
     }
+    list = list.push(rows);
     list.into()
 }
 

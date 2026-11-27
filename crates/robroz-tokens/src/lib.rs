@@ -280,6 +280,9 @@ pub mod mcp {
     pub const CONNECT_H: f32 = 32.0;
     /// Green `status.done` dot in front of the Connected label.
     pub const CONNECTED_DOT: f32 = 6.0;
+    /// "Use in these groups" switch rows. Fixed 44px on wide and narrow
+    /// desktop; not driven by `touch_target`.
+    pub const GROUP_ROW: f32 = 44.0;
 }
 
 /// Settings page (PR5): grouped cards like iOS settings.
@@ -644,6 +647,7 @@ mod tests {
         assert_eq!(m::ICON_R, 12.0);
         assert_eq!(m::COUNT_TEXT, 13.0);
         assert_eq!(m::CONNECTED_DOT, 6.0);
+        assert_eq!(m::GROUP_ROW, 44.0);
         assert!(m::ICON < m::ROW && m::CONNECT_H < m::ROW);
     }
 
