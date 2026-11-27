@@ -6,6 +6,7 @@
 //! Colours come from `robroz_tokens` via [`robroz_ui::theme::Skin`].
 
 pub mod api;
+pub mod avatars;
 pub mod card;
 pub mod chat;
 
@@ -14,7 +15,9 @@ use std::sync::{Arc, Mutex};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use robroz_card::Tone;
+use robroz_contract::{Bro, BroAvatar, Me};
 use robroz_tokens::{ColorSet, DARK, LIGHT};
+use robroz_ui::avatar;
 use robroz_ui::conversations;
 use robroz_ui::i18n::{self, Key, Locale};
 use robroz_ui::runs;
@@ -159,6 +162,7 @@ fn apply_theme(ui: &MainWindow, mode: Mode) {
     brand.set_surface(color(p.surface));
     brand.set_border(color(p.border));
     brand.set_text3(color(p.text3));
+    brand.set_danger(color(robroz_ui::theme::DANGER));
     // Own bubbles and the send button use accentStrong + white in both
     // modes. Bro bubbles use surface + border.
     brand.set_own_bg(color(p.accent_strong));
@@ -203,6 +207,78 @@ fn apply_metrics(ui: &MainWindow) {
     m.set_bubble_mine_size(c::BUBBLE_MINE_SIZE);
     m.set_thumb_size(c::THUMB_SIZE);
     m.set_time_size(c::TIME_SIZE);
+    use robroz_tokens::base::avatar as a;
+    let am = ui.global::<AvatarMetrics>();
+    am.set_title_height(a::TITLE_HEIGHT);
+    am.set_title_size(a::TITLE_SIZE);
+    am.set_title_overlap(a::TITLE_OVERLAP);
+    am.set_title_pad(a::TITLE_PAD);
+    am.set_more_button(a::MORE_BUTTON);
+    am.set_preview(a::PREVIEW);
+    am.set_preview_glyph(a::PREVIEW_GLYPH);
+    am.set_preview_radius(a::PREVIEW_RADIUS);
+    am.set_name_height(a::NAME_HEIGHT);
+    am.set_name_radius(a::NAME_RADIUS);
+    // Phone: 48px cells, 12px gap, six per row (two rows). Desktop keeps 56.
+    am.set_cell(48.0);
+    am.set_cell_glyph(32.0);
+    am.set_swatch(a::SWATCH);
+    am.set_swatch_hit(a::SWATCH_HIT);
+    am.set_ring(a::SELECTED_RING);
+    am.set_create_empty_opacity(a::CREATE_EMPTY_OPACITY);
+}
+
+/// Open the avatar page for the open DM's bro, owner only.
+fn open_avatar(ui: &MainWindow, state: &Arc<Mutex<State>>) {
+    let mut st = state.lock().unwrap();
+    let Some(bro) = avatars::dm_bro(&st.bros, &st.chat_group).cloned() else {
+        return;
+    };
+    if !avatars::owns(st.me.as_ref(), &bro) {
+        return;
+    }
+    st.editor = Some(avatars::Editor::open(&bro));
+    ui.set_screen(5);
+    render_page(ui, &st);
+}
+
+/// Avatar page pick: show it at once, then save; a failure reverts.
+fn save_avatar(ui: &MainWindow, state: &Arc<Mutex<State>>, next: Option<BroAvatar>) {
+    let mut guard = state.lock().unwrap();
+    let st = &mut *guard;
+    let Some(conn) = st.conn.clone() else {
+        return;
+    };
+    let Some(ed) = st.editor.as_mut() else {
+        return;
+    };
+    let Some(seq) = ed.begin(&mut st.bros, next) else {
+        return;
+    };
+    let bro = ed.bro.clone();
+    render_chat(ui, st);
+    let weak = ui.as_weak();
+    let state = state.clone();
+    std::thread::spawn(move || {
+        let result = conn.set_avatar(&bro, next);
+        let _ = slint::invoke_from_event_loop(move || {
+            let ui = weak.unwrap();
+            let mut guard = state.lock().unwrap();
+            let st = &mut *guard;
+            match st.editor.as_mut() {
+                Some(ed) if ed.bro == bro => ed.finish(&mut st.bros, seq, result),
+                // The page moved on to another bro: keep the host's answer.
+                _ => {
+                    if let Ok(saved) = result {
+                        if let Some(b) = st.bros.iter_mut().find(|b| b.id == saved.id) {
+                            *b = saved;
+                        }
+                    }
+                }
+            }
+            render_chat(&ui, st);
+        });
+    });
 }
 
 fn apply_pref(ui: &MainWindow, state: &mut State, pref: ThemePref) {
@@ -233,6 +309,14 @@ fn apply_strings(ui: &MainWindow) {
     tr.set_theme_dark(Key::ClientThemeDark.as_str().into());
     tr.set_about(Key::MobileAbout.as_str().into());
     tr.set_send(Key::ConversationsSend.as_str().into());
+    tr.set_add_bro(Key::ConversationsNewBro.as_str().into());
+    tr.set_name_placeholder(Key::CreateBroNamePlaceholder.as_str().into());
+    tr.set_create(Key::CreateBroCreate.as_str().into());
+    tr.set_cancel(Key::ViewRenameCancel.as_str().into());
+    tr.set_avatar_title(Key::AvatarTitle.as_str().into());
+    tr.set_shape(Key::AvatarShape.as_str().into());
+    tr.set_color(Key::AvatarColor.as_str().into());
+    tr.set_use_default(Key::AvatarUseDefault.as_str().into());
     ui.set_locale_index(match i18n::locale() {
         Locale::En => 0,
         Locale::Zh => 1,
@@ -264,20 +348,118 @@ fn apply_token_field(ui: &MainWindow, st: &State) {
     }
 }
 
+fn window_scale(ui: &MainWindow) -> f32 {
+    ui.window().scale_factor().max(1.0)
+}
+
 fn chat_rows(
     items: &[chat::ChatItem],
     fallback_name: &str,
     mode: Mode,
     in_group: bool,
+    bros: &[Bro],
+    scale: f32,
 ) -> Vec<ChatRow> {
     let now = runs::now_unix();
     chat::feed(items, fallback_name, in_group, now)
         .into_iter()
-        .map(|entry| feed_entry_row(entry, fallback_name, mode))
+        .map(|entry| feed_entry_row(entry, fallback_name, mode, bros, scale))
         .collect()
 }
 
-fn feed_entry_row(entry: chat::FeedEntry, fallback: &str, mode: Mode) -> ChatRow {
+/// The open chat, its title capsule and the avatar pages, from `st`.
+fn render_chat(ui: &MainWindow, st: &State) {
+    ui.set_chat(ModelRc::new(VecModel::from(chat_rows(
+        &st.chat,
+        &st.chat_name,
+        st.theme,
+        st.chat_in_group,
+        &st.bros,
+        window_scale(ui),
+    ))));
+    render_title(ui, st);
+    render_page(ui, st);
+}
+
+/// Title capsule: up to three avatars then "+N"; the `…` entry only for
+/// the owner of a DM's bro.
+fn render_title(ui: &MainWindow, st: &State) {
+    let dm = avatars::dm_bro(&st.bros, &st.chat_group);
+    let ids = avatars::title_ids(dm, &st.chat);
+    let (shown, more) = avatar::stack(&ids);
+    let ring = tokens_for(st.theme).surface;
+    let list: Vec<BroAvatar> = shown
+        .iter()
+        .map(|id| avatars::avatar_of(&st.bros, id))
+        .collect();
+    let (img, width) = avatars::stack(&list, st.theme, ring, window_scale(ui));
+    ui.set_title_avatars(img);
+    ui.set_title_avatars_width(width);
+    ui.set_title_more(more as i32);
+    ui.set_can_edit_avatar(dm.is_some_and(|b| avatars::owns(st.me.as_ref(), b)));
+}
+
+/// The create-bro (4) or avatar (5) page: preview, picker, note.
+fn render_page(ui: &MainWindow, st: &State) {
+    let (current, note, stored, name) = match (ui.get_screen(), &st.editor) {
+        (4, _) => (
+            st.new_bro.unwrap_or_else(|| avatar::default_for("new-bro")),
+            st.new_bro_note.clone(),
+            false,
+            String::new(),
+        ),
+        (5, Some(ed)) => {
+            let b = st.bros.iter().find(|b| b.id == ed.bro);
+            (
+                avatars::avatar_of(&st.bros, &ed.bro),
+                ed.note.clone(),
+                b.is_some_and(|b| b.avatar.is_some()),
+                b.map(|b| b.name.clone()).unwrap_or_default(),
+            )
+        }
+        _ => return,
+    };
+    let scale = window_scale(ui);
+    let t = robroz_tokens::base::avatar::PREVIEW_GLYPH;
+    ui.set_avatar_preview(avatars::glyph(current, st.theme, t, scale));
+    ui.set_avatar_note(note.unwrap_or_default().into());
+    ui.set_avatar_stored(stored);
+    ui.set_avatar_name(name.into());
+    ui.set_avatar_busy(st.creating);
+    let cell = 32.0; // matches AvatarMetrics.cell-glyph
+    let shapes: Vec<PickerCell> = (0..avatar::SHAPES)
+        .map(|shape| PickerCell {
+            glyph: avatars::glyph(
+                BroAvatar {
+                    shape,
+                    color: current.color,
+                },
+                st.theme,
+                cell,
+                scale,
+            ),
+            selected: shape == current.shape,
+            ..PickerCell::default()
+        })
+        .collect();
+    let swatches: Vec<PickerCell> = (0..avatar::COLORS)
+        .map(|c| PickerCell {
+            fill: color(avatar::color(c, st.theme == Mode::Dark)),
+            selected: c == current.color,
+            ..PickerCell::default()
+        })
+        .collect();
+    ui.set_picker_shapes(ModelRc::new(VecModel::from(shapes)));
+    ui.set_picker_swatches(ModelRc::new(VecModel::from(swatches)));
+}
+
+fn feed_entry_row(
+    entry: chat::FeedEntry,
+    fallback: &str,
+    mode: Mode,
+    bros: &[Bro],
+    scale: f32,
+) -> ChatRow {
     let shown = |p: &Option<robroz_ui::cards::codes::ProgressLine>| -> SharedString {
         p.as_ref().map(|p| p.text()).unwrap_or_default().into()
     };
@@ -307,6 +489,25 @@ fn feed_entry_row(entry: chat::FeedEntry, fallback: &str, mode: Mode) -> ChatRow
                 }
             };
             let initial: SharedString = conversations::initial(&name).into();
+            let bro_id = match &row.item {
+                chat::ChatItem::Text {
+                    side: chat::Side::Bro { id, .. },
+                    ..
+                } => id.as_str(),
+                chat::ChatItem::Status(c) => c.bot_id.as_str(),
+                _ => "",
+            };
+            let has_glyph = !bro_id.is_empty();
+            let glyph = if has_glyph {
+                avatars::glyph(
+                    avatars::avatar_of(bros, bro_id),
+                    mode,
+                    robroz_tokens::base::chat::AVATAR,
+                    scale,
+                )
+            } else {
+                slint::Image::default()
+            };
             match row.item {
                 chat::ChatItem::Text { body, side, .. } => ChatRow {
                     kind: if side.is_own() { 0 } else { 1 },
@@ -319,6 +520,8 @@ fn feed_entry_row(entry: chat::FeedEntry, fallback: &str, mode: Mode) -> ChatRow
                     show_name: row.show_name,
                     show_avatar: row.show_avatar,
                     initial,
+                    glyph: glyph.clone(),
+                    has_glyph,
                     pad_top: row.pad_top,
                     time: row.time.into(),
                     ..ChatRow::default()
@@ -339,6 +542,8 @@ fn feed_entry_row(entry: chat::FeedEntry, fallback: &str, mode: Mode) -> ChatRow
                     show_name: row.show_name,
                     show_avatar: row.show_avatar,
                     initial,
+                    glyph,
+                    has_glyph,
                     pad_top: row.pad_top,
                     time: row.time.into(),
                     ..ChatRow::default()
@@ -369,11 +574,24 @@ struct State {
     token_dirty: bool,
     /// True while the current token is the one from `ROBROZ_TOKEN`.
     token_from_env: bool,
+    /// `GET /api/bros` and `GET /api/me`, loaded on connect.
+    bros: Vec<Bro>,
+    me: Option<Me>,
+    /// The open chat's group id.
+    chat_group: String,
+    /// The avatar page's bro and save state.
+    editor: Option<avatars::Editor>,
+    /// Create-bro page: the avatar `引入` will store, its error line, and
+    /// whether the request is out.
+    new_bro: Option<BroAvatar>,
+    new_bro_note: Option<String>,
+    creating: bool,
 }
 
 /// Desktop-only shot hook: pre-fill screens from a fixture host when
 /// `ROBROZ_SHOT_SCREEN` is set (`connect`, `chats`, `chat-running`,
-/// `chat-failed`, `settings`, `connect-401`).
+/// `chat-failed`, `settings`, `connect-401`; PR2: `chat-group`, `chat-dm`,
+/// `chat-dm-other`, `create-bro`, `avatar`, `avatar-error`).
 fn prepare_shot(ui: &MainWindow, state: &Arc<Mutex<State>>, shot: &str) {
     let shot = shot.trim();
     if shot == "connect" || shot == "connect-hint" {
@@ -415,6 +633,8 @@ fn prepare_shot(ui: &MainWindow, state: &Arc<Mutex<State>>, shot: &str) {
             )));
             let mut st = state.lock().unwrap();
             st.conn = Some(conn.clone());
+            st.bros = conn.bros().unwrap_or_default();
+            st.me = conn.me().ok();
             if !token.is_empty() && shot != "connect-401" {
                 st.token_saved = Some(token);
                 st.token_dirty = false;
@@ -437,6 +657,22 @@ fn prepare_shot(ui: &MainWindow, state: &Arc<Mutex<State>>, shot: &str) {
         }
         "chat-running" => ("g1", 2),
         "chat-failed" => ("g2", 2),
+        "chat-group" => ("g-site", 2),
+        "chat-dm" | "avatar" | "avatar-error" => ("dm-ada", 2),
+        // Someone else's bro: no avatar entry.
+        "chat-dm-other" => ("dm-bea", 2),
+        "create-bro" => {
+            let mut st = state.lock().unwrap();
+            st.new_bro = Some(avatar::default_for("new-bro"));
+            ui.set_new_bro_name(
+                std::env::var("ROBROZ_NEW_BRO_NAME")
+                    .unwrap_or_default()
+                    .into(),
+            );
+            ui.set_screen(4);
+            render_page(ui, &st);
+            return;
+        }
         _ => return,
     };
     // Clone the conn first so the mutex is not held across events() or
@@ -454,18 +690,53 @@ fn prepare_shot(ui: &MainWindow, state: &Arc<Mutex<State>>, shot: &str) {
                 let items = chat::build(&events);
                 ui.set_chat_title(name.clone().into());
                 ui.set_chat_note("".into());
-                let theme = state.lock().unwrap().theme;
-                ui.set_chat(ModelRc::new(VecModel::from(chat_rows(
-                    &items, &name, theme, true,
-                ))));
                 let mut st = state.lock().unwrap();
                 st.chat = items;
                 st.chat_name = name.clone();
-                st.chat_in_group = true;
-                set_composer_hint(&ui, &name, false);
+                st.chat_group = group_id.to_string();
+                st.chat_in_group = avatars::dm_bro(&st.bros, &st.chat_group).is_none();
+                set_composer_hint(ui, &name, !st.chat_in_group);
                 ui.set_composer_draft("".into());
                 ui.set_composer_focused(false);
                 ui.set_screen(screen);
+                render_chat(ui, &st);
+                if shot == "avatar" || shot == "avatar-error" {
+                    drop(st);
+                    open_avatar(ui, state);
+                }
+                if shot == "avatar-error" {
+                    // A real save against the fixture, which refuses it:
+                    // the preview goes back and the line shows.
+                    let (conn, next, seq) = {
+                        let mut st = state.lock().unwrap();
+                        let cur = st
+                            .editor
+                            .as_ref()
+                            .map(|e| avatars::avatar_of(&st.bros, &e.bro));
+                        let next = cur.map(|c| BroAvatar {
+                            shape: (c.shape + 1) % avatar::SHAPES,
+                            color: c.color,
+                        });
+                        let st = &mut *st;
+                        let seq = match (st.editor.as_mut(), next) {
+                            (Some(ed), Some(n)) => ed.begin(&mut st.bros, Some(n)),
+                            _ => None,
+                        };
+                        (st.conn.clone(), next, seq)
+                    };
+                    if let (Some(conn), Some(seq)) = (conn, seq) {
+                        let bro = state.lock().unwrap().editor.as_ref().map(|e| e.bro.clone());
+                        if let Some(bro) = bro {
+                            let result = conn.set_avatar(&bro, next);
+                            let mut st = state.lock().unwrap();
+                            let st = &mut *st;
+                            if let Some(ed) = st.editor.as_mut() {
+                                ed.finish(&mut st.bros, seq, result);
+                            }
+                            render_chat(ui, st);
+                        }
+                    }
+                }
             }
             Err(e) => ui.set_chat_note(e.0.into()),
         }
@@ -592,6 +863,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     let unread = conn.unread().unwrap_or_default();
                     Ok(api::session_rows(&groups, &unread))
                 });
+                // Avatars and who owns which bro; an older host has neither.
+                let bros = conn.bros().unwrap_or_default();
+                let me = conn.me().ok();
                 let _ = slint::invoke_from_event_loop(move || {
                     let ui = weak.unwrap();
                     ui.set_busy(false);
@@ -609,6 +883,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             {
                                 let mut st = state.lock().unwrap();
                                 st.conn = Some(conn);
+                                st.bros = bros;
+                                st.me = me;
                                 if !token.is_empty() {
                                     st.token_from_env = from_env;
                                     st.token_saved = Some(token);
@@ -637,6 +913,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
             ui.set_chat_title(name.clone());
             ui.set_chat_note("…".into());
             ui.set_screen(2);
+            {
+                let mut st = state.lock().unwrap();
+                st.chat.clear();
+                st.chat_group = id.to_string();
+                render_title(&ui, &st);
+            }
             let weak = ui.as_weak();
             let state = state.clone();
             let id = id.to_string();
@@ -653,17 +935,17 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             } else {
                                 "".into()
                             });
-                            let theme = state.lock().unwrap().theme;
-                            ui.set_chat(ModelRc::new(VecModel::from(chat_rows(
-                                &items, &name, theme, true,
-                            ))));
                             let mut st = state.lock().unwrap();
+                            if st.chat_group != id {
+                                return;
+                            }
                             st.chat = items;
                             st.chat_name = name.clone();
-                            st.chat_in_group = true;
-                            set_composer_hint(&ui, &name, false);
+                            st.chat_in_group = avatars::dm_bro(&st.bros, &id).is_none();
+                            set_composer_hint(&ui, &name, !st.chat_in_group);
                             ui.set_composer_draft("".into());
                             ui.set_composer_focused(false);
+                            render_chat(&ui, &st);
                         }
                         Err(e) => ui.set_chat_note(e.0.into()),
                     }
@@ -707,12 +989,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             apply_unencrypted_hint(&ui);
             clear_connect_error(&ui);
             let st = state.lock().unwrap();
-            ui.set_chat(ModelRc::new(VecModel::from(chat_rows(
-                &st.chat,
-                &st.chat_name,
-                st.theme,
-                st.chat_in_group,
-            ))));
+            render_chat(&ui, &st);
         }
     });
 
@@ -723,12 +1000,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let ui = weak.unwrap();
             let mut st = state.lock().unwrap();
             apply_pref(&ui, &mut st, ThemePref::from_index(index));
-            ui.set_chat(ModelRc::new(VecModel::from(chat_rows(
-                &st.chat,
-                &st.chat_name,
-                st.theme,
-                st.chat_in_group,
-            ))));
+            render_chat(&ui, &st);
         }
     });
 
@@ -742,12 +1014,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 return;
             }
             apply_pref(&ui, &mut st, ThemePref::System);
-            ui.set_chat(ModelRc::new(VecModel::from(chat_rows(
-                &st.chat,
-                &st.chat_name,
-                st.theme,
-                st.chat_in_group,
-            ))));
+            render_chat(&ui, &st);
         }
     });
 
@@ -768,12 +1035,176 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 side: chat::Side::Own,
                 at: Some(runs::now_unix()),
             });
-            ui.set_chat(ModelRc::new(VecModel::from(chat_rows(
-                &st.chat,
-                &st.chat_name,
-                st.theme,
-                st.chat_in_group,
-            ))));
+            render_chat(&ui, &st);
+        }
+    });
+
+    ui.on_open_new_bro({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            // A random start; the preview shows exactly what 引入 stores.
+            let seed = format!(
+                "{:?}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+            );
+            st.new_bro = Some(avatar::default_for(&seed));
+            st.new_bro_note = None;
+            ui.set_new_bro_name("".into());
+            ui.set_screen(4);
+            render_page(&ui, &st);
+        }
+    });
+
+    ui.on_open_avatar({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || open_avatar(&weak.unwrap(), &state)
+    });
+
+    ui.on_pick_shape({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move |i| {
+            let ui = weak.unwrap();
+            let shape = (i.max(0) as u8) % avatar::SHAPES;
+            if ui.get_screen() == 4 {
+                let mut st = state.lock().unwrap();
+                if !st.creating {
+                    let cur = st.new_bro.unwrap_or_else(|| avatar::default_for("new-bro"));
+                    st.new_bro = Some(BroAvatar { shape, ..cur });
+                    render_page(&ui, &st);
+                }
+                return;
+            }
+            let next = {
+                let st = state.lock().unwrap();
+                st.editor.as_ref().map(|e| BroAvatar {
+                    shape,
+                    ..avatars::avatar_of(&st.bros, &e.bro)
+                })
+            };
+            if let Some(n) = next {
+                save_avatar(&ui, &state, Some(n));
+            }
+        }
+    });
+
+    ui.on_pick_color({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move |i| {
+            let ui = weak.unwrap();
+            let color = (i.max(0) as u8) % avatar::COLORS;
+            if ui.get_screen() == 4 {
+                let mut st = state.lock().unwrap();
+                if !st.creating {
+                    let cur = st.new_bro.unwrap_or_else(|| avatar::default_for("new-bro"));
+                    st.new_bro = Some(BroAvatar { color, ..cur });
+                    render_page(&ui, &st);
+                }
+                return;
+            }
+            let next = {
+                let st = state.lock().unwrap();
+                st.editor.as_ref().map(|e| BroAvatar {
+                    color,
+                    ..avatars::avatar_of(&st.bros, &e.bro)
+                })
+            };
+            if let Some(n) = next {
+                save_avatar(&ui, &state, Some(n));
+            }
+        }
+    });
+
+    ui.on_avatar_reset({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || save_avatar(&weak.unwrap(), &state, None)
+    });
+
+    ui.on_create_bro({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            let name = ui.get_new_bro_name().trim().to_string();
+            let (conn, a) = {
+                let mut st = state.lock().unwrap();
+                if st.creating || name.is_empty() {
+                    return;
+                }
+                let Some(conn) = st.conn.clone() else {
+                    return;
+                };
+                st.creating = true;
+                st.new_bro_note = None;
+                render_page(&ui, &st);
+                let a = st.new_bro.unwrap_or_else(|| avatar::default_for("new-bro"));
+                (conn, a)
+            };
+            let weak = ui.as_weak();
+            let state = state.clone();
+            std::thread::spawn(move || {
+                let result = conn.create_bro(&name, a);
+                // The new DM shows up in the list right away.
+                let rows = conn.groups().ok().map(|groups| {
+                    let unread = conn.unread().unwrap_or_default();
+                    api::session_rows(&groups, &unread)
+                });
+                let _ = slint::invoke_from_event_loop(move || {
+                    let ui = weak.unwrap();
+                    let mut st = state.lock().unwrap();
+                    st.creating = false;
+                    match result {
+                        Ok(bro) => {
+                            if let Some(rows) = rows {
+                                ui.set_sessions(ModelRc::new(VecModel::from(
+                                    rows.into_iter()
+                                        .map(|(g, n)| SessionRow {
+                                            id: g.id.into(),
+                                            name: g.name.into(),
+                                            unread: n.min(99) as i32,
+                                        })
+                                        .collect::<Vec<_>>(),
+                                )));
+                            }
+                            let dm = bro.dm_group_id.clone();
+                            let name = bro.name.clone();
+                            if !st.bros.iter().any(|b| b.id == bro.id) {
+                                st.bros.push(bro);
+                            }
+                            st.new_bro = None;
+                            drop(st);
+                            match dm {
+                                Some(dm) => ui.invoke_open_session(dm.into(), name.into()),
+                                None => ui.set_screen(1),
+                            }
+                        }
+                        Err(e) => {
+                            st.new_bro_note = Some(Key::ClientNewBroFailed.fill(&[&e.0]));
+                            render_page(&ui, &st);
+                        }
+                    }
+                });
+            });
+        }
+    });
+
+    ui.on_page_back({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move || {
+            let ui = weak.unwrap();
+            let to = if ui.get_screen() == 5 { 2 } else { 1 };
+            ui.set_screen(to);
+            let st = state.lock().unwrap();
+            render_title(&ui, &st);
         }
     });
 

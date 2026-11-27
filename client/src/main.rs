@@ -36,10 +36,12 @@ use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{
     window, Alignment, Border, Element, Fill, Font, Length, Padding, Size, Subscription, Task,
 };
+use robroz_contract::BroAvatar;
 use robroz_contract::{
     ApprovalDecision, Bro, ConfirmSubject, Event, McpServer, McpTestResult, McpTool, Me, Memory,
     Said, ScheduleEntry, Skill, Unread,
 };
+use robroz_ui::avatar;
 use robroz_ui::cards::confirm::{self, ConfirmState, Fold};
 use robroz_ui::cards::interact::{CardUi, Note};
 use robroz_ui::cards::mcp::{self, Book as McpBook};
@@ -281,6 +283,10 @@ enum Page {
 
     Model,
     ReviewRules,
+    /// 「引入一个 bro」: name, shape and colour, then 引入.
+    NewBro,
+    /// Your own bro's avatar (`…` in its DM).
+    BroAvatar,
 }
 
 #[derive(Debug, Clone)]
@@ -425,6 +431,13 @@ enum Message {
     /// The card's 300 ms accent stroke is over.
     FlashOff(String),
     BroCreated(Result<Bro, ApiError>),
+    /// robroz#194 avatar save; `seq` tells the latest save from older
+    /// ones still in flight.
+    AvatarSaved {
+        bro: String,
+        seq: u64,
+        result: Result<Bro, ApiError>,
+    },
     GroupsReloaded(Result<Vec<GroupTab>, SourceError>),
     Live(stream::Live),
     /// Rename result for the bro behind DM `group`.
@@ -454,6 +467,32 @@ enum Message {
     Shot(window::Screenshot),
 }
 
+/// The create-bro page's draft.
+#[derive(Debug, Clone)]
+struct NewBroDraft {
+    name: String,
+    avatar: BroAvatar,
+    busy: bool,
+    /// Last create error, shown under the preview.
+    note: Option<String>,
+}
+
+impl Default for NewBroDraft {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            avatar: avatar::default_for(""),
+            busy: false,
+            note: None,
+        }
+    }
+}
+
+/// Avatar of bro `id` from a bro list: stored, else the id default.
+fn avatar_for(bros: &[Bro], id: &str) -> BroAvatar {
+    avatar::resolve(bros.iter().find(|b| b.id == id).and_then(|b| b.avatar), id)
+}
+
 struct App {
     source: Shared,
     api: Arc<dyn CardApi>,
@@ -466,8 +505,20 @@ struct App {
     stream_up: bool,
     /// Narrow screens: a chat (or routines) is open over the list.
     narrow_open: bool,
-    /// Known bros (DM owners, the rename box).
+    /// Known bros (DM owners, the rename box) and their avatars.
     bros: Vec<Bro>,
+    /// The create-bro page.
+    new_bro: NewBroDraft,
+    /// The bro whose avatar page is open.
+    avatar_bro: Option<String>,
+    /// Last avatar save error, shown under the preview.
+    avatar_note: Option<String>,
+    /// Latest avatar save sent; only its failure reverts the preview.
+    avatar_seq: u64,
+    /// The bro last opened on the avatar page and the avatar the host last
+    /// confirmed for it; a failed save puts this back, even after the page
+    /// is closed.
+    avatar_confirmed: Option<(String, Option<BroAvatar>)>,
     /// The signed-in person (`GET /api/me`); decides who sees the approval
     /// buttons. `None` until the host answers, and on an older host.
     me: Option<Me>,
@@ -626,6 +677,11 @@ impl App {
             stream_up: false,
             narrow_open: false,
             bros: Vec::new(),
+            new_bro: NewBroDraft::default(),
+            avatar_bro: None,
+            avatar_note: None,
+            avatar_seq: 0,
+            avatar_confirmed: None,
             me: None,
             drafts: HashMap::new(),
             sending: false,
@@ -765,6 +821,118 @@ impl App {
     }
 
     /// The bro whose DM is `group`.
+    /// The avatar to draw for bro `id`: stored, else the id default.
+    fn avatar_of(&self, id: &str) -> BroAvatar {
+        avatar_for(&self.bros, id)
+    }
+
+    /// You own this bro (`ownerUserId` == `GET /api/me` id). Unknown
+    /// either side means no: the edit entry stays hidden. An admin is not
+    /// an exception (robroz `docs/api.md`, bro owners).
+    fn owns(&self, bro: &Bro) -> bool {
+        match (&self.me, &bro.owner_user_id) {
+            (Some(me), Some(owner)) => &me.id == owner,
+            _ => false,
+        }
+    }
+
+    /// Give every known DM row its bro's avatar.
+    fn sync_conv_avatars(&mut self) {
+        let pairs: Vec<(String, BroAvatar)> = self
+            .bros
+            .iter()
+            .filter_map(|b| {
+                b.dm_group_id
+                    .clone()
+                    .map(|g| (g, avatar::resolve(b.avatar, &b.id)))
+            })
+            .collect();
+        for (g, a) in pairs {
+            self.convs.set_avatar(&g, a);
+        }
+    }
+
+    /// Open the create-bro page with a fresh draft. The starting avatar
+    /// is a default from a random seed (a fixed one in fake runs), so the
+    /// preview shows exactly what 引入 will store.
+    fn open_new_bro(&mut self) -> Task<Message> {
+        let seed = if self.fake {
+            "new-bro".to_string()
+        } else {
+            format!(
+                "{:?}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+            )
+        };
+        self.new_bro = NewBroDraft {
+            avatar: avatar::default_for(&seed),
+            ..NewBroDraft::default()
+        };
+        self.page = Page::NewBro;
+        self.narrow_open = true;
+        iced::widget::operation::focus(robroz_ui::avatar_view::NEW_BRO_NAME)
+    }
+
+    /// Optimistic avatar save: the preview, feed and list change at once;
+    /// a failed save puts the previous avatar back.
+    fn save_avatar(&mut self, next: Option<BroAvatar>) -> Task<Message> {
+        let Some(id) = self.avatar_bro.clone() else {
+            return Task::none();
+        };
+        let Some(entry) = self.bros.iter_mut().find(|b| b.id == id) else {
+            return Task::none();
+        };
+        if entry.avatar == next {
+            return Task::none();
+        }
+        entry.avatar = next;
+        self.avatar_note = None;
+        self.avatar_seq += 1;
+        let seq = self.avatar_seq;
+        self.sync_conv_avatars();
+        let bro = id.clone();
+        Task::perform(
+            call(&self.api, move |api| api.set_avatar(&bro, next)),
+            move |result| Message::AvatarSaved {
+                bro: id.clone(),
+                seq,
+                result,
+            },
+        )
+    }
+
+    /// `--fake` + `ROBROZ_PAGE=new-bro` (with `ROBROZ_NEW_BRO_NAME`) or
+    /// `ROBROZ_PAGE=avatar` (the selected DM's bro; `ROBROZ_AVATAR_NOTE=
+    /// owner|failed` shows that inline note): open the page for
+    /// screenshots. Runs after bros and after `me` load; once.
+    fn page_knob(&mut self) -> Task<Message> {
+        if !self.fake || self.page != Page::Group {
+            return Task::none();
+        }
+        match std::env::var("ROBROZ_PAGE").ok().as_deref() {
+            Some("new-bro") => {
+                let task = self.open_new_bro();
+                self.new_bro.name = std::env::var("ROBROZ_NEW_BRO_NAME").unwrap_or_default();
+                task
+            }
+            Some("avatar") => {
+                let task = self.on_action(Action::AvatarPageOpen);
+                if self.page == Page::BroAvatar {
+                    if let Ok(note) = std::env::var("ROBROZ_AVATAR_NOTE") {
+                        self.avatar_note = Some(match note.as_str() {
+                            "owner" => Text::AvatarNotOwner.into(),
+                            _ => Text::AvatarSaveFailed.into(),
+                        });
+                    }
+                }
+                task
+            }
+            _ => Task::none(),
+        }
+    }
+
     fn dm_bro(&self, group: &str) -> Option<&Bro> {
         self.bros
             .iter()
@@ -1740,9 +1908,85 @@ impl App {
                 Task::none()
             }
             Action::RenameSave => self.save_rename(),
-            Action::NewBro => {
-                Task::perform(call(&self.api, |api| api.create_bro()), Message::BroCreated)
+            Action::NewBro => self.open_new_bro(),
+            Action::NewBroName { text } => {
+                if !self.new_bro.busy {
+                    self.new_bro.name = text;
+                }
+                Task::none()
             }
+            Action::NewBroCreate => {
+                let name = self.new_bro.name.trim().to_string();
+                if self.new_bro.busy || name.is_empty() {
+                    return Task::none();
+                }
+                self.new_bro.busy = true;
+                self.new_bro.note = None;
+                let a = self.new_bro.avatar;
+                Task::perform(
+                    call(&self.api, move |api| api.create_bro(Some(&name), Some(a))),
+                    Message::BroCreated,
+                )
+            }
+            Action::AvatarPageClose => {
+                self.page = Page::Group;
+                self.avatar_bro = None;
+                self.avatar_note = None;
+                if self.selected.is_none() {
+                    self.narrow_open = false;
+                }
+                Task::none()
+            }
+            Action::AvatarPageOpen => {
+                let Some(group) = self.selected.clone() else {
+                    return Task::none();
+                };
+                let Some(bro) = self.dm_bro(&group).cloned() else {
+                    return Task::none();
+                };
+                if !self.owns(&bro) {
+                    return Task::none();
+                }
+                self.avatar_bro = Some(bro.id.clone());
+                self.avatar_confirmed = Some((bro.id.clone(), bro.avatar));
+                self.avatar_note = None;
+                self.page = Page::BroAvatar;
+                self.narrow_open = true;
+                Task::none()
+            }
+            Action::AvatarShape(shape) => {
+                if self.page == Page::NewBro {
+                    if !self.new_bro.busy {
+                        self.new_bro.avatar.shape = shape;
+                    }
+                    return Task::none();
+                }
+                let Some(id) = self.avatar_bro.clone() else {
+                    return Task::none();
+                };
+                let cur = self.avatar_of(&id);
+                self.save_avatar(Some(BroAvatar {
+                    shape,
+                    color: cur.color,
+                }))
+            }
+            Action::AvatarColor(c) => {
+                if self.page == Page::NewBro {
+                    if !self.new_bro.busy {
+                        self.new_bro.avatar.color = c;
+                    }
+                    return Task::none();
+                }
+                let Some(id) = self.avatar_bro.clone() else {
+                    return Task::none();
+                };
+                let cur = self.avatar_of(&id);
+                self.save_avatar(Some(BroAvatar {
+                    shape: cur.shape,
+                    color: c,
+                }))
+            }
+            Action::AvatarReset => self.save_avatar(None),
             Action::TogglePause { id } => {
                 let Some(wanted) = self.routines.toggle(&id) else {
                     return Task::none();
@@ -2090,6 +2334,7 @@ impl App {
                 // An error leaves it unknown: the group card then shows no
                 // buttons (a click would only be refused).
                 self.me = result.ok();
+                return self.page_knob();
             }
             Message::JumpTo(card) => {
                 self.ui.entry(card.clone()).or_default().flash = true;
@@ -2111,6 +2356,7 @@ impl App {
                 if let Ok(bros) = result {
                     self.bros = bros.clone();
                     self.sync_memory_bros();
+                    self.sync_conv_avatars();
                     // `--fake` + `ROBROZ_RENAME=<draft>`: open the rename box
                     // on the selected DM (screenshots).
                     let mut tasks: Vec<_> = bros
@@ -2128,31 +2374,73 @@ impl App {
                             }
                         }
                     }
+                    tasks.push(self.page_knob());
                     return Task::batch(tasks);
                 }
             }
-            Message::BroCreated(result) => match result {
-                Ok(bro) => {
-                    if !self.bros.iter().any(|b| b.id == bro.id) {
-                        self.bros.push(bro.clone());
+            Message::BroCreated(result) => {
+                self.new_bro.busy = false;
+                match result {
+                    Ok(bro) => {
+                        if !self.bros.iter().any(|b| b.id == bro.id) {
+                            self.bros.push(bro.clone());
+                        }
+                        self.new_bro = NewBroDraft::default();
+                        self.page = Page::Group;
+                        let Some(dm) = bro.dm_group_id.clone() else {
+                            return Task::none();
+                        };
+                        let learn = self.learn_group(
+                            GroupTab {
+                                id: dm.clone(),
+                                name: bro.name.clone(),
+                            },
+                            true,
+                        );
+                        let now = chrono::Utc::now().to_rfc3339();
+                        self.convs.touch(&dm, None, Some(&now));
+                        self.sync_conv_avatars();
+                        let open = self.open_chat(dm);
+                        return Task::batch([learn, open]);
                     }
-                    let Some(dm) = bro.dm_group_id else {
-                        return Task::none();
-                    };
-                    let learn = self.learn_group(
-                        GroupTab {
-                            id: dm.clone(),
-                            name: bro.name,
-                        },
-                        true,
-                    );
-                    let now = chrono::Utc::now().to_rfc3339();
-                    self.convs.touch(&dm, None, Some(&now));
-                    let open = self.open_chat(dm);
-                    return Task::batch([learn, open]);
+                    Err(err) => {
+                        self.new_bro.note = Some(Text::ClientNewBroFailed.fill(&[&err.reason()]))
+                    }
                 }
-                Err(err) => self.error = Some(Text::ClientNewBroFailed.fill(&[&err.reason()])),
-            },
+            }
+            Message::AvatarSaved { bro, seq, result } => {
+                let mine = self
+                    .avatar_confirmed
+                    .as_ref()
+                    .is_some_and(|(id, _)| *id == bro);
+                let latest = mine && seq == self.avatar_seq;
+                match result {
+                    Ok(entry) => {
+                        if mine {
+                            self.avatar_confirmed = Some((bro.clone(), entry.avatar));
+                        }
+                        if !latest {
+                            return Task::none();
+                        }
+                        if let Some(b) = self.bros.iter_mut().find(|b| b.id == entry.id) {
+                            *b = entry;
+                        }
+                        self.avatar_note = None;
+                    }
+                    Err(_) if !latest => return Task::none(),
+                    Err(err) => {
+                        let back = self.avatar_confirmed.as_ref().and_then(|(_, a)| *a);
+                        if let Some(b) = self.bros.iter_mut().find(|b| b.id == bro) {
+                            b.avatar = back;
+                        }
+                        self.avatar_note = Some(match err {
+                            ApiError::NotBroOwner { .. } => Text::AvatarNotOwner.into(),
+                            _ => Text::AvatarSaveFailed.into(),
+                        });
+                    }
+                }
+                self.sync_conv_avatars();
+            }
             Message::GroupsReloaded(result) => {
                 if let Ok(groups) = result {
                     let tasks: Vec<_> = groups
@@ -2170,6 +2458,7 @@ impl App {
                         self.rename_note = None;
                         if let Some(b) = self.bros.iter_mut().find(|b| b.id == bro.id) {
                             b.name = bro.name.clone();
+                            b.avatar = bro.avatar;
                         }
                         return self.learn_group(
                             GroupTab {
@@ -3001,6 +3290,33 @@ impl App {
             .center(Fill)
             .into();
         }
+        if self.page == Page::NewBro {
+            let d = &self.new_bro;
+            return robroz_ui::avatar_view::create_bro_page(
+                t,
+                &d.name,
+                d.avatar,
+                d.note.as_deref(),
+                d.busy,
+            )
+            .map(Message::Ui);
+        }
+        if self.page == Page::BroAvatar {
+            if let Some(bro) = self
+                .avatar_bro
+                .as_deref()
+                .and_then(|id| self.bros.iter().find(|b| b.id == id))
+            {
+                return robroz_ui::avatar_view::avatar_page(
+                    t,
+                    &bro.name,
+                    avatar::resolve(bro.avatar, &bro.id),
+                    bro.avatar.is_some(),
+                    self.avatar_note.as_deref(),
+                )
+                .map(Message::Ui);
+            }
+        }
         if self.page == Page::Memories {
             return scrollable(
                 container(view::memories_panel(t, &self.memories, now_unix()).map(Message::Ui))
@@ -3144,6 +3460,7 @@ impl App {
                     feed_col = feed_col.push(group_view(
                         t,
                         g,
+                        &self.bros,
                         &self.ui,
                         &empty,
                         self.caps,
@@ -3161,14 +3478,6 @@ impl App {
         // composer_height + 16 instead; here the composer sits under the
         // feed, so the extra 16px is the visible gap.
         feed_col = feed_col.push(iced::widget::Space::new().height(16.0));
-        let feed_body = container(container(feed_col).width(Length::Fixed(column_w)))
-            .width(Fill)
-            .center_x(Fill);
-        let feed = scrollable(feed_body)
-            .id(FEED_ID)
-            .height(Fill)
-            .width(Fill)
-            .anchor_bottom();
         let (name, dm) = self
             .convs
             .get(id)
@@ -3187,15 +3496,74 @@ impl App {
                 .filter(|(g, _)| g == id)
                 .map(|(_, n)| n.as_str()),
         });
+        // Title capsule: a DM shows its bro; a group shows the bros seen in
+        // its feed, newest first (the contract has no member list yet).
+        let header_ids: Vec<String> = match self.dm_bro(id) {
+            Some(b) => vec![b.id.clone()],
+            None => {
+                let mut ids: Vec<String> = Vec::new();
+                let items: Vec<_> = self
+                    .feeds
+                    .get(id)
+                    .into_iter()
+                    .flat_map(Feed::items)
+                    .collect();
+                for (_, meta) in items.into_iter().rev() {
+                    if let model::Sender::Bro { id: bro, .. } = &meta.sender {
+                        if !ids.contains(bro) {
+                            ids.push(bro.clone());
+                        }
+                    }
+                }
+                ids
+            }
+        };
+        let (shown, more) = avatar::stack(&header_ids);
+        let header_avatars: Vec<BroAvatar> = shown.iter().map(|b| self.avatar_of(b)).collect();
+        let can_edit = self.dm_bro(id).is_some_and(|b| self.owns(b));
         let draft = self.drafts.get(id).map_or("", String::as_str);
         let note = self.send_note.get(id).map(String::as_str);
         let side = ((area - column_w) / 2.0).max(t.chat.column_margin);
         // The scrollable is the full main area so the scrollbar sits against
         // the window edge, not on the 720px column (where it clipped cards
         // and the own-bubble timestamp). The column width is unchanged.
+        // The title bar is stacked on top with a solid `window` fill, and
+        // the feed is padded by the bar's height so the first card starts
+        // below it. Scrolling then tucks messages under the bar, not
+        // through it.
+        let header_h = view::chat_header_height(t)
+            + if rename.is_some_and(|r| r.note.is_some()) {
+                t.type_.foot + 6.0
+            } else {
+                0.0
+            };
+        let feed_body = container(container(feed_col).width(Length::Fixed(column_w)))
+            .width(Fill)
+            .center_x(Fill)
+            .padding(Padding {
+                top: header_h,
+                ..Padding::ZERO
+            });
+        let feed = scrollable(feed_body)
+            .id(FEED_ID)
+            .height(Fill)
+            .width(Fill)
+            .anchor_bottom();
+        let header = view::chat_header(
+            t,
+            name,
+            dm,
+            self.narrow(),
+            rename,
+            view::HeaderBros {
+                avatars: &header_avatars,
+                more,
+                can_edit,
+            },
+        )
+        .map(Message::Ui);
         column![
-            view::chat_header(t, name, dm, self.narrow(), rename).map(Message::Ui),
-            feed,
+            iced::widget::stack![feed, header].width(Fill).height(Fill),
             container(view::composer(t, draft, &hint, self.sending, note).map(Message::Ui))
                 .width(Fill)
                 .center_x(Fill)
@@ -3312,9 +3680,18 @@ enum FeedItem<'a> {
 /// group chat, and a small avatar only at the bottom-left of the last
 /// item. Cards fill the text column beside the avatar gutter. The time
 /// closes the run.
+/// Avatar for a run's sender (only bros draw one).
+fn sender_avatar(bros: &[Bro], sender: &model::Sender) -> BroAvatar {
+    match sender {
+        model::Sender::Bro { id, .. } => avatar_for(bros, id),
+        _ => avatar::default_for(sender.name()),
+    }
+}
+
 fn group_view<'a>(
     t: &Skin,
     group: robroz_ui::runs::Run<FeedItem<'a>, model::Sender>,
+    bros: &[Bro],
     ui: &HashMap<String, CardUi>,
     empty: &CardUi,
     caps: Caps,
@@ -3339,6 +3716,7 @@ fn group_view<'a>(
     let mut col = column![].spacing(t.chat.gap_in);
     if in_group {
         if let model::Sender::Bro { name, .. } = &group.sender {
+            // Names stay `text2` (muted). Colour lives only on the avatar.
             let label = text(name.clone())
                 .size(t.type_.foot)
                 .color(color(t.palette.text2));
@@ -3365,7 +3743,7 @@ fn group_view<'a>(
         } else {
             col = col.push(
                 row![
-                    container(view::chat_avatar(t, group.sender.name()))
+                    container(view::chat_avatar(t, sender_avatar(bros, &group.sender)))
                         .width(Length::Fixed(t.chat.avatar))
                         .align_y(Alignment::End),
                     body

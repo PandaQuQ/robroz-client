@@ -1,6 +1,7 @@
 //! Minimal blocking host client for the spike: `GET /api/groups`,
-//! `GET /api/unread` and `GET /api/groups/{id}/events`, every request with
-//! `Authorization: Bearer <token>`. It decodes with the `robroz-contract`
+//! `GET /api/unread`, `GET /api/groups/{id}/events`, `GET /api/me`, the
+//! bro list, `POST /api/bros` and the avatar `PATCH /api/bros/{id}`, every
+//! request with `Authorization: Bearer <token>`. It decodes with the `robroz-contract`
 //! types, so the wire format is the one the desktop client uses.
 //!
 //! ureq runs with rustls so an `https://` tunnel works on Android and iOS.
@@ -12,7 +13,10 @@
 use std::fmt;
 use std::time::Duration;
 
-use robroz_contract::{ErrorBody, Event, Events, Group, Groups, Unread, Unreads};
+use robroz_contract::{
+    Bro, BroAvatar, Bros, CreateBro, ErrorBody, Event, Events, Group, Groups, Me, PatchBro, Unread,
+    Unreads, FORBIDDEN_NOT_BRO_OWNER,
+};
 use robroz_ui::i18n::{host_text, Key};
 
 #[derive(Clone)]
@@ -106,31 +110,105 @@ impl Conn {
     }
 
     fn get(&self, path: &str) -> Result<String, ApiError> {
+        self.send("GET", path, None).map_err(|e| e.message)
+    }
+
+    /// One request; a non-2xx keeps its status and `code` so callers can
+    /// pick their own copy (the avatar page does).
+    fn send(&self, method: &str, path: &str, json: Option<String>) -> Result<String, Failure> {
         let url = format!("{}{path}", self.base);
-        let mut req = self.agent.get(&url);
-        if let Some(t) = &self.token {
-            req = req.header("Authorization", &format!("Bearer {t}"));
-        }
-        let mut response = req
-            .call()
-            .map_err(|e| ApiError(Key::ClientConnectFailed.fill(&[&self.base, &e])))?;
+        let auth = self.token.as_ref().map(|t| format!("Bearer {t}"));
+        let failed = |message: String| Failure {
+            status: 0,
+            code: None,
+            message: ApiError(message),
+        };
+        let sent = match (method, json) {
+            ("GET", _) => {
+                let mut req = self.agent.get(&url);
+                if let Some(a) = &auth {
+                    req = req.header("Authorization", a);
+                }
+                req.call()
+            }
+            (_, body) => {
+                let mut req = if method == "PATCH" {
+                    self.agent.patch(&url)
+                } else {
+                    self.agent.post(&url)
+                };
+                if let Some(a) = &auth {
+                    req = req.header("Authorization", a);
+                }
+                req.header("Content-Type", "application/json")
+                    .send(body.unwrap_or_default())
+            }
+        };
+        let mut response =
+            sent.map_err(|e| failed(Key::ClientConnectFailed.fill(&[&self.base, &e])))?;
         let status = response.status().as_u16();
         let body = response
             .body_mut()
             .read_to_string()
-            .map_err(|e| ApiError(Key::ClientReadFailed.fill(&[&url, &e])))?;
+            .map_err(|e| failed(Key::ClientReadFailed.fill(&[&url, &e])))?;
         if (200..300).contains(&status) {
             return Ok(body);
         }
+        let code = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("code")?.as_str().map(str::to_string));
+        let failure = |message: String| Failure {
+            status,
+            code: code.clone(),
+            message: ApiError(message),
+        };
         // Same as the desktop client: a 401 is always the approved token
         // line, never the host body (which might echo the token).
         if status == 401 {
-            return Err(ApiError(unauthorized_message()));
+            return Err(failure(unauthorized_message()));
         }
         let msg = serde_json::from_str::<ErrorBody>(&body)
             .map(|e| host_text(&e.error).into_owned())
-            .unwrap_or_else(|_| Key::ClientHttpStatus.fill(&[&"GET", &url, &status]));
-        Err(ApiError(msg))
+            .unwrap_or_else(|_| Key::ClientHttpStatus.fill(&[&method, &url, &status]));
+        Err(failure(msg))
+    }
+
+    /// `GET /api/me`: who this client is. An older host has no such route;
+    /// then nobody owns anything here and the avatar edit entry stays hidden.
+    pub fn me(&self) -> Result<Me, ApiError> {
+        Self::decode(&self.get("/api/me")?)
+    }
+
+    /// `GET /api/bros`, oldest first.
+    pub fn bros(&self) -> Result<Vec<Bro>, ApiError> {
+        Ok(Self::decode::<Bros>(&self.get("/api/bros")?)?.bros)
+    }
+
+    /// `POST /api/bros` with a name and an avatar.
+    pub fn create_bro(&self, name: &str, avatar: BroAvatar) -> Result<Bro, ApiError> {
+        let body = serde_json::to_string(&CreateBro {
+            name: Some(name.trim().to_string()).filter(|n| !n.is_empty()),
+            avatar: Some(avatar),
+        })
+        .expect("serialize bro");
+        let out = self
+            .send("POST", "/api/bros", Some(body))
+            .map_err(|e| e.message)?;
+        Self::decode(&out)
+    }
+
+    /// `PATCH /api/bros/{id}` with `{"avatar":{…}}`, or `{"avatar":null}`
+    /// to go back to the id default.
+    pub fn set_avatar(&self, id: &str, avatar: Option<BroAvatar>) -> Result<Bro, AvatarError> {
+        let out = self.send(
+            "PATCH",
+            &format!("/api/bros/{id}"),
+            Some(avatar_body(avatar)),
+        );
+        match out {
+            Ok(body) => Self::decode(&body).map_err(|_| AvatarError::Failed),
+            Err(f) => Err(AvatarError::from_failure(f.status, f.code.as_deref())),
+        }
     }
 
     fn decode<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, ApiError> {
@@ -181,6 +259,48 @@ impl Conn {
             })
             .collect())
     }
+}
+
+/// A non-2xx with its status and error `code`.
+struct Failure {
+    status: u16,
+    code: Option<String>,
+    message: ApiError,
+}
+
+/// Why an avatar save failed, for UI姐's two inline lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AvatarError {
+    /// 403 `not_bro_owner`: 「只有这个 bro 的主人能改头像」.
+    NotOwner,
+    /// 400 `invalid_avatar` and everything else: 「头像没存上，再试一次」.
+    Failed,
+}
+
+impl AvatarError {
+    fn from_failure(status: u16, code: Option<&str>) -> Self {
+        if status == 403 && code == Some(FORBIDDEN_NOT_BRO_OWNER) {
+            AvatarError::NotOwner
+        } else {
+            AvatarError::Failed
+        }
+    }
+
+    pub fn copy(self) -> String {
+        match self {
+            AvatarError::NotOwner => Key::AvatarNotOwner.as_str().to_string(),
+            AvatarError::Failed => Key::AvatarSaveFailed.as_str().to_string(),
+        }
+    }
+}
+
+/// `PATCH /api/bros/{id}` body for an avatar change (contract `PatchBro`).
+pub fn avatar_body(avatar: Option<BroAvatar>) -> String {
+    serde_json::to_string(&PatchBro {
+        name: None,
+        avatar: Some(avatar),
+    })
+    .expect("serialize avatar")
 }
 
 /// Eight bullets: the only stand-in for a saved token, same as the desktop
@@ -266,6 +386,55 @@ mod tests {
             String::from_utf8_lossy(&buf[..n]).to_string()
         });
         (format!("http://{addr}"), handle)
+    }
+
+    #[test]
+    fn avatar_body_sets_or_clears() {
+        assert_eq!(
+            avatar_body(Some(BroAvatar { shape: 3, color: 9 })),
+            r#"{"avatar":{"shape":3,"color":9}}"#
+        );
+        assert_eq!(avatar_body(None), r#"{"avatar":null}"#);
+    }
+
+    #[test]
+    fn set_avatar_patches_and_maps_host_errors() {
+        let (base, req) = fake_host(
+            "400 Bad Request",
+            r#"{"error":"头像不对","code":"invalid_avatar"}"#,
+        );
+        let conn = Conn::new(&base, "t").unwrap();
+        let err = conn
+            .set_avatar("b1", Some(BroAvatar { shape: 1, color: 2 }))
+            .unwrap_err();
+        assert_eq!(err, AvatarError::Failed);
+        let sent = req.join().unwrap();
+        assert!(sent.starts_with("PATCH /api/bros/b1 "), "{sent}");
+
+        let (base, req) = fake_host(
+            "403 Forbidden",
+            r#"{"error":"x","code":"not_bro_owner","ownerName":"Bea"}"#,
+        );
+        let conn = Conn::new(&base, "t").unwrap();
+        assert_eq!(
+            conn.set_avatar("b1", None).unwrap_err(),
+            AvatarError::NotOwner
+        );
+        assert!(req.join().unwrap().starts_with("PATCH /api/bros/b1 "));
+    }
+
+    #[test]
+    fn avatar_errors_pick_the_two_lines() {
+        assert_eq!(
+            AvatarError::from_failure(403, Some("not_bro_owner")),
+            AvatarError::NotOwner
+        );
+        assert_eq!(
+            AvatarError::from_failure(400, Some("invalid_avatar")),
+            AvatarError::Failed
+        );
+        assert_eq!(AvatarError::from_failure(0, None), AvatarError::Failed);
+        assert_eq!(AvatarError::from_failure(500, None), AvatarError::Failed);
     }
 
     #[test]

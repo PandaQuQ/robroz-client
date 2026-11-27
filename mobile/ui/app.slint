@@ -19,6 +19,7 @@ export global Brand {
     in property <color> segment-fill;
     in property <color> segment-text;
     in property <color> text3;
+    in property <color> danger;
 }
 
 // Lengths from robroz-tokens `base.chat`. Rust pushes the values; this
@@ -70,6 +71,41 @@ export global Tr {
     in property <string> about;
     in property <string> version;
     in property <string> send;
+    in property <string> add-bro;
+    in property <string> name-placeholder;
+    in property <string> create;
+    in property <string> cancel;
+    in property <string> avatar-title;
+    in property <string> shape;
+    in property <string> color;
+    in property <string> use-default;
+}
+
+// Bro avatar sizes from robroz-tokens `base.avatar` (pushed from Rust).
+export global AvatarMetrics {
+    in property <length> title-height;
+    in property <length> title-size;
+    in property <length> title-overlap;
+    in property <length> title-pad;
+    in property <length> more-button;
+    in property <length> preview;
+    in property <length> preview-glyph;
+    in property <length> preview-radius;
+    in property <length> name-height;
+    in property <length> name-radius;
+    in property <length> cell;
+    in property <length> cell-glyph;
+    in property <length> swatch;
+    in property <length> swatch-hit;
+    in property <length> ring;
+    in property <float> create-empty-opacity;
+}
+
+// One shape cell or colour swatch of the avatar picker.
+export struct PickerCell {
+    glyph: image,
+    fill: color,
+    selected: bool,
 }
 
 export struct SessionRow {
@@ -95,6 +131,9 @@ export struct ChatRow {
     show-name: bool,
     show-avatar: bool,
     initial: string,
+    // The bro's avatar (shape + colour); empty for own rows.
+    glyph: image,
+    has-glyph: bool,
     pad-top: length,
     time: string,
 }
@@ -271,8 +310,112 @@ component Avatar inherits Rectangle {
     }
 }
 
+// Round button with one glyph (`…`, `+`), 32px, surface fill.
+component RoundButton inherits Rectangle {
+    in property <string> glyph;
+    callback clicked();
+    width: AvatarMetrics.more-button;
+    height: AvatarMetrics.more-button;
+    border-radius: self.width / 2;
+    background: Brand.surface;
+    border-width: 1px;
+    border-color: Brand.border;
+    Text { text: root.glyph; color: Brand.ink; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+// 160px preview tile (radius 32) with the avatar, then the inline note.
+component AvatarPreview inherits VerticalLayout {
+    in property <image> glyph;
+    in property <string> note;
+    spacing: 8px;
+    HorizontalLayout {
+        alignment: center;
+        Rectangle {
+            width: AvatarMetrics.preview;
+            height: AvatarMetrics.preview;
+            border-radius: AvatarMetrics.preview-radius;
+            background: Brand.rule;
+            Image { source: root.glyph; width: AvatarMetrics.preview-glyph; height: AvatarMetrics.preview-glyph; }
+        }
+    }
+    // UI姐: one line under the preview, no pop-up.
+    if root.note != "": Text {
+        text: root.note;
+        color: Brand.danger;
+        font-size: 13px;
+        horizontal-alignment: center;
+        overflow: elide;
+    }
+}
+
+// 12 shapes, six per row (48px cells, 12px gap, two rows), then 10
+// colours as 32px circles in 44px hit areas. A phone is too narrow for
+// ten 44px targets in one row, so colours wrap five per row.
+component AvatarPicker inherits VerticalLayout {
+    in property <[PickerCell]> shapes;
+    in property <[PickerCell]> swatches;
+    callback pick-shape(int);
+    callback pick-color(int);
+    // Same 8px as the desktop picker (label to grid, label to swatches).
+    // vertical-stretch stays 0 so leftover page height cannot inflate
+    // the labels and open a ~40px gap under 「形状」 / 「颜色」.
+    spacing: 8px;
+    alignment: start;
+    vertical-stretch: 0;
+    property <int> shape-cols: 6;
+    property <length> gap: 12px;
+    Text { text: Tr.shape; color: Brand.text3; font-size: 13px; vertical-stretch: 0; }
+    Rectangle {
+        height: 2 * AvatarMetrics.cell + root.gap;
+        vertical-stretch: 0;
+        for c[i] in root.shapes: Rectangle {
+            x: mod(i, root.shape-cols) * (AvatarMetrics.cell + root.gap);
+            y: floor(i / root.shape-cols) * (AvatarMetrics.cell + root.gap);
+            width: AvatarMetrics.cell;
+            height: AvatarMetrics.cell;
+            border-radius: AvatarMetrics.cell / 4;
+            background: Brand.surface;
+            border-width: c.selected ? AvatarMetrics.ring : 1px;
+            border-color: c.selected ? Brand.ink : Brand.border;
+            Image { source: c.glyph; width: AvatarMetrics.cell-glyph; height: AvatarMetrics.cell-glyph; }
+            TouchArea { clicked => { root.pick-shape(i); } }
+        }
+    }
+    // Layout spacing is 8px on both sides of this 8px spacer, so the
+    // gap between the shape grid and 「颜色」 is 24px. Label-to-content
+    // stays 8px.
+    Rectangle { height: 8px; vertical-stretch: 0; }
+    Text { text: Tr.color; color: Brand.text3; font-size: 13px; vertical-stretch: 0; }
+    Rectangle {
+        property <length> step: (self.width - 5 * AvatarMetrics.swatch-hit) / 4 + AvatarMetrics.swatch-hit;
+        height: 2 * AvatarMetrics.swatch-hit;
+        vertical-stretch: 0;
+        for c[i] in root.swatches: Rectangle {
+            x: mod(i, 5) * parent.step;
+            y: floor(i / 5) * AvatarMetrics.swatch-hit;
+            width: AvatarMetrics.swatch-hit;
+            height: AvatarMetrics.swatch-hit;
+            if c.selected: Rectangle {
+                width: AvatarMetrics.swatch + 4 * AvatarMetrics.ring;
+                height: self.width;
+                border-radius: self.width / 2;
+                border-width: AvatarMetrics.ring;
+                border-color: Brand.ink;
+            }
+            Rectangle {
+                width: AvatarMetrics.swatch;
+                height: AvatarMetrics.swatch;
+                border-radius: self.width / 2;
+                background: c.fill;
+            }
+            TouchArea { clicked => { root.pick-color(i); } }
+        }
+    }
+}
+
 export component MainWindow inherits Window {
-    // 0 connect, 1 sessions, 2 card, 3 settings
+    // 0 connect, 1 sessions, 2 card, 3 settings, 4 create bro, 5 avatar
     in-out property <int> screen: 0;
     in-out property <string> host-url;
     in-out property <string> token;
@@ -294,6 +437,22 @@ export component MainWindow inherits Window {
     in property <int> locale-index;
     in property <int> theme-index;
     in property <string> version-text;
+    // Chat title capsule: up to three 24px avatars as one image (first on
+    // top), its width in px (0 = none), then `title-more` as "+N".
+    in property <image> title-avatars;
+    in property <float> title-avatars-width;
+    in property <int> title-more;
+    // Only the bro's owner sees the avatar entry (`…`).
+    in property <bool> can-edit-avatar;
+    // Create-bro (screen 4) and avatar (screen 5) pages.
+    in property <image> avatar-preview;
+    in property <string> avatar-note;
+    in property <string> avatar-name;
+    in property <bool> avatar-stored;
+    in property <bool> avatar-busy;
+    in property <[PickerCell]> picker-shapes;
+    in property <[PickerCell]> picker-swatches;
+    in-out property <string> new-bro-name;
     // Added on top of Window.safe-area-insets so desktop shots can show
     // typical phone insets (the desktop backend reports 0).
     in property <length> extra-safe-top: 0px;
@@ -311,6 +470,13 @@ export component MainWindow inherits Window {
     callback set-theme(int);
     callback theme-follow-system();
     callback send();
+    callback open-new-bro();
+    callback open-avatar();
+    callback pick-shape(int);
+    callback pick-color(int);
+    callback avatar-reset();
+    callback create-bro();
+    callback page-back();
 
     changed os-dark => { root.theme-follow-system(); }
 
@@ -375,7 +541,14 @@ export component MainWindow inherits Window {
 
         if root.screen == 1: VerticalLayout {
             spacing: 8px;
-            Header { title: Tr.title-chats; has-settings: true; settings => { root.open-settings(); } }
+            HorizontalLayout {
+                spacing: 8px;
+                Header { title: Tr.title-chats; has-settings: true; settings => { root.open-settings(); } }
+                VerticalLayout {
+                    alignment: center;
+                    RoundButton { glyph: "+"; clicked => { root.open-new-bro(); } }
+                }
+            }
             if root.sessions.length == 0: Text {
                 text: Tr.empty-chats;
                 color: Brand.muted;
@@ -412,7 +585,50 @@ export component MainWindow inherits Window {
             spacing: 10px;
             width: 100%;
             Header { has-back: true; back-text: Tr.back; back => { root.back(); } }
-            Text { text: root.chat-title; color: Brand.ink; font-size: 20px; font-weight: 700; overflow: elide; }
+            HorizontalLayout {
+                spacing: 8px;
+                height: AvatarMetrics.title-height;
+                Rectangle {
+                    horizontal-stretch: 0;
+                    border-radius: self.height / 2;
+                    background: Brand.surface;
+                    border-width: 1px;
+                    border-color: Brand.border;
+                    HorizontalLayout {
+                        padding-left: root.title-avatars-width > 0 ? AvatarMetrics.title-pad : 14px;
+                        padding-right: 14px;
+                        spacing: 8px;
+                        if root.title-avatars-width > 0: VerticalLayout {
+                            alignment: center;
+                            width: root.title-avatars-width * 1px;
+                            Image {
+                                source: root.title-avatars;
+                                width: root.title-avatars-width * 1px;
+                                height: AvatarMetrics.title-size;
+                            }
+                        }
+                        if root.title-more > 0: Text {
+                            text: "+" + root.title-more;
+                            color: Brand.muted;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.chat-title;
+                            color: Brand.ink;
+                            font-size: 17px;
+                            font-weight: 700;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                if root.can-edit-avatar: VerticalLayout {
+                    alignment: center;
+                    RoundButton { glyph: "…"; clicked => { root.open-avatar(); } }
+                }
+            }
             if root.chat-note != "": Text { text: root.chat-note; color: Brand.muted; wrap: word-wrap; }
             ScrollView {
                 vertical-stretch: 1;
@@ -476,7 +692,8 @@ export component MainWindow inherits Window {
                                     width: Metrics.avatar;
                                     alignment: end;
                                     vertical-stretch: 1;
-                                    if row.show-avatar: Avatar { letter: row.initial; }
+                                    if row.show-avatar && row.has-glyph: Image { source: row.glyph; width: Metrics.avatar; height: Metrics.avatar; }
+                                    if row.show-avatar && !row.has-glyph: Avatar { letter: row.initial; }
                                     if !row.show-avatar: Rectangle { width: Metrics.avatar; height: 1px; }
                                 }
                                 Rectangle { width: Metrics.avatar-gap; }
@@ -530,7 +747,8 @@ export component MainWindow inherits Window {
                                     width: Metrics.avatar;
                                     alignment: end;
                                     vertical-stretch: 1;
-                                    if row.show-avatar: Avatar { letter: row.initial; }
+                                    if row.show-avatar && row.has-glyph: Image { source: row.glyph; width: Metrics.avatar; height: Metrics.avatar; }
+                                    if row.show-avatar && !row.has-glyph: Avatar { letter: row.initial; }
                                     if !row.show-avatar: Rectangle { width: Metrics.avatar; height: 1px; }
                                 }
                                 Rectangle { width: Metrics.avatar-gap; }
@@ -688,6 +906,94 @@ export component MainWindow inherits Window {
             }
             Rectangle {
                 height: Metrics.composer-bottom + root.safe-area-insets.bottom + root.extra-safe-bottom;
+            }
+        }
+
+        if root.screen == 4: VerticalLayout {
+            spacing: 16px;
+            HorizontalLayout {
+                height: 52px;
+                Text { text: Tr.add-bro; color: Brand.ink; font-size: 20px; font-weight: 700; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: Tr.cancel;
+                    color: Brand.accent;
+                    font-size: 16px;
+                    vertical-alignment: center;
+                    TouchArea { clicked => { root.page-back(); } }
+                }
+            }
+            AvatarPreview { glyph: root.avatar-preview; note: root.avatar-note; }
+            Rectangle {
+                height: AvatarMetrics.name-height;
+                border-radius: AvatarMetrics.name-radius;
+                background: Brand.surface;
+                border-width: 1px;
+                border-color: name-input.has-focus ? Brand.accent : Brand.border;
+                if root.new-bro-name == "": Text {
+                    x: 16px;
+                    width: parent.width - 32px;
+                    height: 100%;
+                    text: Tr.name-placeholder;
+                    color: Brand.muted;
+                    font-size: 16px;
+                    vertical-alignment: center;
+                }
+                name-input := TextInput {
+                    x: 16px;
+                    width: parent.width - 32px;
+                    height: 100%;
+                    text <=> root.new-bro-name;
+                    color: Brand.ink;
+                    font-size: 16px;
+                    single-line: true;
+                    vertical-alignment: center;
+                    enabled: !root.avatar-busy;
+                    accepted => { if root.new-bro-name != "" { root.create-bro(); } }
+                }
+            }
+            AvatarPicker {
+                shapes: root.picker-shapes;
+                swatches: root.picker-swatches;
+                pick-shape(i) => { root.pick-shape(i); }
+                pick-color(i) => { root.pick-color(i); }
+            }
+            Rectangle { vertical-stretch: 1; }
+            Rectangle {
+                height: AvatarMetrics.name-height;
+                border-radius: AvatarMetrics.name-radius;
+                background: Brand.accent;
+                opacity: (root.new-bro-name == "" || root.avatar-busy) ? AvatarMetrics.create-empty-opacity : 1;
+                Text { text: Tr.create; color: Brand.on-accent; font-size: 16px; font-weight: 600; }
+                TouchArea { clicked => { if root.new-bro-name != "" && !root.avatar-busy { root.create-bro(); } } }
+            }
+        }
+
+        if root.screen == 5: VerticalLayout {
+            spacing: 16px;
+            HorizontalLayout {
+                height: 52px;
+                Text { text: Tr.avatar-title; color: Brand.ink; font-size: 20px; font-weight: 700; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                VerticalLayout { alignment: center; RoundButton { glyph: "‹"; clicked => { root.page-back(); } } }
+            }
+            AvatarPreview { glyph: root.avatar-preview; note: root.avatar-note; }
+            Text { text: root.avatar-name; color: Brand.ink; font-size: 16px; font-weight: 700; horizontal-alignment: center; }
+            AvatarPicker {
+                shapes: root.picker-shapes;
+                swatches: root.picker-swatches;
+                pick-shape(i) => { root.pick-shape(i); }
+                pick-color(i) => { root.pick-color(i); }
+            }
+            Rectangle { vertical-stretch: 1; }
+            if root.avatar-stored: Rectangle {
+                height: AvatarMetrics.name-height;
+                border-radius: AvatarMetrics.name-radius;
+                background: Brand.surface;
+                border-width: 1px;
+                border-color: Brand.border;
+                Text { text: Tr.use-default; color: Brand.ink; font-size: 16px; }
+                TouchArea { clicked => { root.avatar-reset(); } }
             }
         }
 

@@ -35,7 +35,7 @@ use crate::conversations::{self, Conversation, Conversations};
 use robroz_contract::{McpSecretIn, McpServer};
 
 use crate::theme::{Mode, Rgb, Skin};
-use crate::widgets::{Check, CheckBox, Rings, Toggle};
+use crate::widgets::{CheckBox, Rings, Toggle};
 
 /// What a click on a new card or the routines panel asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,8 +85,24 @@ pub enum Action {
     OpenChat {
         group: String,
     },
-    /// 「引入一个 bro」: create a bro and open its DM.
+    /// 「引入一个 bro」: open the create-bro page.
     NewBro,
+    /// Create-bro page: the name field changed.
+    NewBroName {
+        text: String,
+    },
+    /// Create-bro page: 引入 (only while the name is not empty).
+    NewBroCreate,
+    /// Leave the create-bro or avatar page.
+    AvatarPageClose,
+    /// Title capsule `…` in a DM you own: open that bro's avatar page.
+    AvatarPageOpen,
+    /// Picker: shape `0..12` (create page draft, or a save on the avatar page).
+    AvatarShape(u8),
+    /// Picker: colour `0..10`.
+    AvatarColor(u8),
+    /// Avatar page: clear the stored avatar (`null`) and use the id default.
+    AvatarReset,
     /// Narrow screens: back from a chat to the list.
     BackToList,
     /// Composer text changed.
@@ -308,7 +324,7 @@ pub fn color(c: Rgb) -> Color {
     Color::from_rgb8(c[0], c[1], c[2])
 }
 
-fn faded(c: Rgb, alpha: f32) -> Color {
+pub(crate) fn faded(c: Rgb, alpha: f32) -> Color {
     let mut c = color(c);
     c.a = alpha;
     c
@@ -596,28 +612,9 @@ pub fn chip_style(t: Skin) -> impl Fn(&IcedTheme) -> container::Style {
     }
 }
 
-/// Small round avatar for a bro in the chat feed: accent ring, initial.
-pub fn chat_avatar<'a, M: 'a>(t: &Skin, name: &str) -> Element<'a, M> {
-    let size = t.chat.avatar;
-    let ring = t.chat.accent;
-    container(
-        text(conversations::initial(name))
-            .size(t.type_.foot)
-            .font(bold())
-            .color(color(ring)),
-    )
-    .width(Length::Fixed(size))
-    .height(Length::Fixed(size))
-    .align_x(Alignment::Center)
-    .align_y(Alignment::Center)
-    .style(move |_| container::Style {
-        border: Border::default()
-            .width(1.5)
-            .color(color(ring))
-            .rounded(size / 2.0),
-        ..container::Style::default()
-    })
-    .into()
+/// A bro's avatar in the chat feed (shape and eyes, `chat.avatar` px).
+pub fn chat_avatar<'a, M: 'a>(t: &Skin, a: crate::avatar::BroAvatar) -> Element<'a, M> {
+    crate::avatar_view::bro_avatar(t, a, t.chat.avatar)
 }
 
 pub fn status_card_padding(t: &Skin) -> Padding {
@@ -813,7 +810,7 @@ fn call_args_cols(t: &Skin, inner: f32, prefix: &str, tool: &str) -> usize {
     (room / (t.type_.body * t.type_.unit_width)).max(4.0) as usize
 }
 
-fn footnote<'a, M: 'a>(t: &Skin, s: String) -> Element<'a, M> {
+pub(crate) fn footnote<'a, M: 'a>(t: &Skin, s: String) -> Element<'a, M> {
     text(s)
         .size(t.type_.foot)
         .line_height(LineHeight::Absolute(Pixels(t.type_.foot_line)))
@@ -829,7 +826,7 @@ fn approval_footnote_view<'a, M: 'a>(t: &Skin, foot: status::ApprovalFootnote) -
     r.spacing(t.controls.button_gap).into()
 }
 
-fn tag<'a, M: 'a>(t: &Skin, label: &'static str, fg: Rgb) -> Element<'a, M> {
+pub(crate) fn tag<'a, M: 'a>(t: &Skin, label: &'static str, fg: Rgb) -> Element<'a, M> {
     let border = t.palette.border2;
     let (bw, r) = (t.stroke.tag, t.radii.tag);
     container(text(label).size(t.type_.tag).color(color(fg)))
@@ -1005,29 +1002,28 @@ fn btn_padded<'a>(
         match leading {
             Leading::None => {}
             Leading::Check => {
-                content = content.push(
-                    canvas(Check {
-                        color: fg_color,
-                        stroke: t.metrics.check_stroke,
-                    })
-                    .width(t.metrics.check_w)
-                    .height(t.metrics.check_h),
-                );
+                content = content.push(crate::widgets::check_mark(
+                    fg_color,
+                    t.metrics.check_stroke,
+                    t.metrics.check_w,
+                    t.metrics.check_h,
+                ));
             }
             Leading::Box(checked) => {
-                content = content.spacing(t.metrics.checkbox_gap).push(
-                    canvas(CheckBox {
-                        checked,
-                        fill: faded(t.palette.text, alpha),
-                        mark: color(t.palette.surface),
-                        border: faded(t.palette.border2, alpha),
-                        border_width: t.stroke.checkbox,
-                        radius: t.radii.checkbox,
-                        mark_stroke: t.metrics.check_stroke,
-                    })
-                    .width(t.controls.checkbox)
-                    .height(t.controls.checkbox),
-                );
+                content = content
+                    .spacing(t.metrics.checkbox_gap)
+                    .push(crate::widgets::checkbox(
+                        CheckBox {
+                            checked,
+                            fill: faded(t.palette.text, alpha),
+                            mark: color(t.palette.surface),
+                            border: faded(t.palette.border2, alpha),
+                            border_width: t.stroke.checkbox,
+                            radius: t.radii.checkbox,
+                            mark_stroke: t.metrics.check_stroke,
+                        },
+                        t.controls.checkbox,
+                    ));
             }
         }
         content = content.push(
@@ -1047,9 +1043,9 @@ fn btn_padded<'a>(
             // Proposed red for 「删除规则」; UI姐 to confirm the exact colour.
             Look::Danger => {
                 let fill = if hovered {
-                    [0xb0, 0x3c, 0x32]
+                    crate::theme::DANGER_HOVER
                 } else {
-                    [0xc4, 0x47, 0x3a]
+                    crate::theme::DANGER
                 };
                 (Some(faded(fill, alpha)), Border::default())
             }
@@ -3553,9 +3549,15 @@ fn conversation_row<'a>(
     }
     let body = column![top, bottom].spacing(2).width(Fill).clip(true);
     let content: Element<'a, Action> = container(
-        row![avatar(t, &c.name), body]
-            .spacing(ROW_GAP)
-            .align_y(Alignment::Center),
+        row![
+            match c.bro_avatar {
+                Some(a) => crate::avatar_view::bro_avatar(t, a, avatar_size(t)),
+                None => avatar(t, &c.name),
+            },
+            body
+        ]
+        .spacing(ROW_GAP)
+        .align_y(Alignment::Center),
     )
     .width(Fill)
     .padding(Padding::from([6.0, ROW_PAD_H]))
@@ -3664,18 +3666,39 @@ pub struct HeaderRename<'a> {
 /// Widget id of the rename box, focused when editing starts.
 pub const RENAME_INPUT: &str = "robroz-rename-bro";
 
-/// Top of the chat page: the group or bro name (and `私聊` for a DM).
-/// `back` adds 「‹」 for narrow screens, where the chat covers the list.
-/// With `rename` (bro DMs) the name is a button that turns into an input:
-/// Enter or 保存 saves (保存 is off while the name is empty or unchanged),
-/// Esc or 取消 cancels.
+/// Reserved height of the chat title bar, not counting a rename error line.
+/// The feed is padded by this so the first card sits below the bar, and
+/// the bar itself is an opaque `window` fill so scrolled messages cannot
+/// draw through it.
+pub fn chat_header_height(t: &Skin) -> f32 {
+    t.controls.touch_target.max(t.controls.button_h) + 12.0
+}
+
+/// Who is in the title capsule: up to three avatars, then `+N`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HeaderBros<'a> {
+    pub avatars: &'a [crate::avatar::BroAvatar],
+    pub more: usize,
+    /// You own this DM's bro: show the round `…` (its avatar page).
+    pub can_edit: bool,
+}
+
+/// Top of the chat page: a floating capsule with the stacked bro avatars
+/// (24px, 8px overlap, at most three then `+N`), the group or bro name
+/// and `私聊` for a DM; on the right a round `…` when there is something
+/// behind it (your own bro's avatar page). `back` adds 「‹」 for narrow
+/// screens, where the chat covers the list. With `rename` (bro DMs) the
+/// name is a button that turns into an input: Enter or 保存 saves (保存 is
+/// off while the name is empty or unchanged), Esc or 取消 cancels.
 pub fn chat_header<'a>(
     t: &Skin,
     name: &str,
     dm: bool,
     back: bool,
     rename: Option<HeaderRename<'_>>,
+    bros: HeaderBros<'_>,
 ) -> Element<'a, Action> {
+    use robroz_tokens::base::avatar as tok;
     let h = t.controls.touch_target.max(t.controls.button_h);
     let mut bar = row![].spacing(8).align_y(Alignment::Center);
     if back {
@@ -3732,32 +3755,67 @@ pub fn chat_header<'a>(
                     (!saving).then_some(Action::RenameCancel),
                 ));
         }
-        Some(_) => {
+        _ => {
+            let mut inner = row![].spacing(8).align_y(Alignment::Center);
+            if !bros.avatars.is_empty() {
+                inner = inner.push(crate::avatar_view::avatar_stack(
+                    t,
+                    bros.avatars,
+                    bros.more,
+                    t.palette.surface,
+                ));
+            }
+            inner = match rename {
+                Some(_) => inner.push(
+                    button(
+                        row![
+                            title(),
+                            text(conversations::RENAME_HINT)
+                                .size(t.type_.tag)
+                                .color(color(t.palette.text3)),
+                        ]
+                        .spacing(6)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding(Padding::from([4.0, 6.0]))
+                    .style(nav_button_style(*t, false))
+                    .on_press(Action::RenameStart),
+                ),
+                None => inner.push(title()),
+            };
+            if dm {
+                inner = inner.push(tag(t, Key::ViewDmTag.as_str(), t.palette.text2));
+            }
+            let left = if bros.avatars.is_empty() {
+                14.0
+            } else {
+                tok::TITLE_PAD
+            };
             bar = bar.push(
-                button(
-                    row![
-                        title(),
-                        text(conversations::RENAME_HINT)
-                            .size(t.type_.tag)
-                            .color(color(t.palette.text3)),
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center),
-                )
-                .padding(Padding::from([4.0, 6.0]))
-                .style(nav_button_style(*t, false))
-                .on_press(Action::RenameStart),
+                container(inner)
+                    .height(Length::Fixed(tok::TITLE_HEIGHT))
+                    .align_y(Alignment::Center)
+                    .padding(Padding {
+                        top: 0.0,
+                        right: 14.0,
+                        bottom: 0.0,
+                        left,
+                    })
+                    .style(crate::avatar_view::capsule_style(*t)),
             );
+            bar = bar.push(space::horizontal());
+            if bros.can_edit {
+                bar = bar.push(crate::avatar_view::round_button(
+                    t,
+                    "…",
+                    Action::AvatarPageOpen,
+                ));
+            }
         }
-        None => bar = bar.push(title()),
-    }
-    let editing = matches!(rename, Some(HeaderRename { draft: Some(_), .. }));
-    if dm && !editing {
-        bar = bar.push(tag(t, Key::ViewDmTag.as_str(), t.palette.text2));
     }
     let mut col = column![container(bar)
         .width(Fill)
-        .height(Length::Fixed(h + 12.0))
+        .height(Length::Fixed(chat_header_height(t)))
         .align_y(Alignment::Center)]
     .spacing(0);
     if let Some(note) = rename.and_then(|r| r.note) {
@@ -3766,9 +3824,14 @@ pub fn chat_header<'a>(
             ..Padding::ZERO
         }));
     }
+    let bg = t.palette.window;
     container(col)
         .width(Fill)
         .padding(Padding::from([0.0, t.metrics.stream_padding]))
+        .style(move |_| container::Style {
+            background: Some(color(bg).into()),
+            ..container::Style::default()
+        })
         .into()
 }
 

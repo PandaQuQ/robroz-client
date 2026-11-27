@@ -19,11 +19,11 @@ use std::sync::Mutex;
 
 use robroz_contract::{
     next_bro_name, parse_skill_slug, route_mention, Answer, AnswerChoice, ApprovalAction,
-    ApprovalDecision, Bro, Bros, CreateBro, CreateMemory, CreateReviewRule, CreateSkill, Event,
-    McpCommandNotApproved, McpServer, McpServers, McpTestResult, McpTool, McpTools, Memories,
-    Memory, MemoryKind, MemorySource, MemoryStatus, Message, MessageKind, RenameBro,
-    ReviewRuleCreated, ReviewRules, Said, Say, ScheduleEntry, Schedules, Skill, Skills, Task,
-    TaskState, Unread, Unreads, UpdateMemory, UpdateSchedule, UpdateSkill,
+    ApprovalDecision, Bro, BroAvatar, Bros, CreateBro, CreateMemory, CreateReviewRule, CreateSkill,
+    Event, McpCommandNotApproved, McpServer, McpServers, McpTestResult, McpTool, McpTools,
+    Memories, Memory, MemoryKind, MemorySource, MemoryStatus, Message, MessageKind, PatchBro,
+    RenameBro, ReviewRuleCreated, ReviewRules, Said, Say, ScheduleEntry, Schedules, Skill, Skills,
+    Task, TaskState, Unread, Unreads, UpdateMemory, UpdateSchedule, UpdateSkill,
     MCP_COMMAND_NOT_APPROVED, SETTINGS_APPROVAL_BOT_ID, SETTINGS_APPROVAL_BOT_NAME,
 };
 use robroz_contract::{
@@ -32,6 +32,7 @@ use robroz_contract::{
 use robroz_contract::{
     ModelSettings, ModelSettingsSource, ModelTestResult, SearchSettings, SearchTestResult,
 };
+use robroz_ui::avatar::INVALID_AVATAR;
 use robroz_ui::cards::group_approval::owner_label;
 use robroz_ui::cards::interact::Note;
 use robroz_ui::cards::mcp::{Save as McpSave, SecretPut};
@@ -194,6 +195,29 @@ pub mod bodies {
         .expect("serialize rename")
     }
 
+    /// `POST /api/bros`: `{"name"?,"avatar"?}`. With neither it is the
+    /// v0.2 body `{}` (`CreateBro::default()`).
+    pub fn create_bro(name: Option<&str>, avatar: Option<BroAvatar>) -> String {
+        let name = name.map(str::trim).filter(|n| !n.is_empty());
+        if name.is_none() && avatar.is_none() {
+            return serde_json::to_string(&CreateBro::default()).expect("serialize bro");
+        }
+        serde_json::to_string(&CreateBro {
+            name: name.map(str::to_string),
+            avatar,
+        })
+        .expect("serialize bro")
+    }
+
+    /// `PATCH /api/bros/{id}`: `{"avatar":{…}}` or `{"avatar":null}`.
+    pub fn avatar(avatar: Option<BroAvatar>) -> String {
+        serde_json::to_string(&PatchBro {
+            name: None,
+            avatar: Some(avatar),
+        })
+        .expect("serialize avatar")
+    }
+
     pub fn paused(paused: bool) -> String {
         serde_json::to_string(&UpdateSchedule { paused }).expect("serialize patch")
     }
@@ -226,6 +250,8 @@ pub enum ApiError {
     },
     /// 401 `token_rejected`.
     TokenRejected,
+    /// 400 `invalid_avatar` (robroz#194): shape or color out of range.
+    InvalidAvatar,
 }
 
 /// A v0.2 error body with a `code`. The client never shows the host's
@@ -256,6 +282,7 @@ fn coded_error(body: &str) -> Option<ApiError> {
         }
         FORBIDDEN_NOT_BRO_OWNER => ApiError::NotBroOwner { owner },
         "token_rejected" => ApiError::TokenRejected,
+        INVALID_AVATAR => ApiError::InvalidAvatar,
         _ => return None,
     })
 }
@@ -333,6 +360,7 @@ impl ApiError {
             ApiError::CommandNotApproved(_)
             | ApiError::NotApprovalOwner { .. }
             | ApiError::NotBroOwner { .. }
+            | ApiError::InvalidAvatar
             | ApiError::ApprovalSettled => ConnError::classify(&self.reason()),
         }
     }
@@ -350,6 +378,7 @@ impl ApiError {
                 Text::BroOnlyOwner.fill(&[&owner_label(owner.as_deref())])
             }
             ApiError::TokenRejected => Text::ClientTokenRejected.into(),
+            ApiError::InvalidAvatar => Text::AvatarSaveFailed.into(),
             // Never shown; the card is fetched again instead.
             ApiError::ApprovalSettled => Text::InteractAlreadyDecided.into(),
             ApiError::Conflict(msg)
@@ -373,6 +402,7 @@ impl ApiError {
                 Note::Copy(Text::BroOnlyOwner.fill(&[&owner_label(owner.as_deref())]))
             }
             ApiError::TokenRejected => Note::Copy(Text::ClientTokenRejected.into()),
+            ApiError::InvalidAvatar => Note::Copy(Text::AvatarSaveFailed.into()),
             ApiError::ApprovalSettled => Note::Settled,
             ApiError::Transport(_) => Note::Retry,
             ApiError::NotFound(msg) | ApiError::Status(_, msg) | ApiError::Decode(msg) => {
@@ -398,12 +428,16 @@ pub trait CardApi: Send + Sync {
     fn unread(&self) -> Result<Vec<Unread>, ApiError>;
     /// Mark a chat read up to now; returns its new unread state.
     fn mark_read(&self, group_id: &str) -> Result<Unread, ApiError>;
-    /// All bros with their DM group.
+    /// All bros with their DM group and avatar.
     fn bros(&self) -> Result<Vec<Bro>, ApiError>;
-    /// New bro with the next default name and its DM.
-    fn create_bro(&self) -> Result<Bro, ApiError>;
+    /// New bro and its DM. No name means the next default name; no avatar
+    /// means the id-based default.
+    fn create_bro(&self, name: Option<&str>, avatar: Option<BroAvatar>) -> Result<Bro, ApiError>;
     /// Rename a bro; the host renames its DM too.
     fn rename_bro(&self, id: &str, name: &str) -> Result<Bro, ApiError>;
+    /// robroz#194: set (`Some`) or clear (`None`) a bro's avatar. Owner
+    /// only: 403 `not_bro_owner`, 400 `invalid_avatar`.
+    fn set_avatar(&self, id: &str, avatar: Option<BroAvatar>) -> Result<Bro, ApiError>;
     /// Composer: store the text; the host queues a task when a bro is meant.
     fn say(&self, group_id: &str, body: &str) -> Result<Said, ApiError>;
     /// Returns the updated `choice` event when the host sends it back.
@@ -754,13 +788,16 @@ impl CardApi for HttpApi {
         Ok(decode::<Bros>(&self.get(paths::BROS)?)?.bros)
     }
 
-    fn create_bro(&self) -> Result<Bro, ApiError> {
-        let body = serde_json::to_string(&CreateBro::default()).expect("serialize bro");
-        decode(&self.post(paths::BROS, Some(body))?)
+    fn create_bro(&self, name: Option<&str>, avatar: Option<BroAvatar>) -> Result<Bro, ApiError> {
+        decode(&self.post(paths::BROS, Some(bodies::create_bro(name, avatar)))?)
     }
 
     fn rename_bro(&self, id: &str, name: &str) -> Result<Bro, ApiError> {
         decode(&self.patch(&paths::bro(id), bodies::rename(name))?)
+    }
+
+    fn set_avatar(&self, id: &str, avatar: Option<BroAvatar>) -> Result<Bro, ApiError> {
+        decode(&self.patch(&paths::bro(id), bodies::avatar(avatar))?)
     }
 
     fn say(&self, group_id: &str, body: &str) -> Result<Said, ApiError> {
@@ -1075,15 +1112,25 @@ impl CardApi for FakeApi {
         Ok(self.bros.lock().expect("fake bros lock").clone())
     }
 
-    fn create_bro(&self) -> Result<Bro, ApiError> {
+    fn create_bro(&self, name: Option<&str>, avatar: Option<BroAvatar>) -> Result<Bro, ApiError> {
+        if avatar.is_some_and(|a| !a.is_valid()) {
+            return Err(ApiError::InvalidAvatar);
+        }
         let mut bros = self.bros.lock().expect("fake bros lock");
         let n = bros.len() + 1;
+        let name = match name.map(str::trim).filter(|n| !n.is_empty()) {
+            Some(n) if n.chars().count() > robroz_contract::BRO_NAME_MAX => {
+                return Err(ApiError::BadRequest("名字太长".into()));
+            }
+            Some(n) => n.to_string(),
+            None => next_bro_name(bros.iter().map(|b| b.name.as_str())),
+        };
         let bro = Bro {
-            avatar: None,
             id: format!("fake-bro-{n}"),
-            name: next_bro_name(bros.iter().map(|b| b.name.as_str())),
+            name,
             dm_group_id: Some(format!("fake-dm-{n}")),
-            owner_user_id: None,
+            owner_user_id: Some(FAKE_ME_ID.into()),
+            avatar,
         };
         bros.push(bro.clone());
         self.unread.lock().expect("fake unread lock").push(Unread {
@@ -1109,6 +1156,27 @@ impl CardApi for FakeApi {
             .find(|b| b.id == id)
             .ok_or_else(|| ApiError::NotFound("bro 不存在".into()))?;
         bro.name = name.to_string();
+        Ok(bro.clone())
+    }
+
+    /// Same checks as robroz#194: owner only, indices in range.
+    fn set_avatar(&self, id: &str, avatar: Option<BroAvatar>) -> Result<Bro, ApiError> {
+        if avatar.is_some_and(|a| !a.is_valid()) {
+            return Err(ApiError::InvalidAvatar);
+        }
+        let mut bros = self.bros.lock().expect("fake bros lock");
+        let bro = bros
+            .iter_mut()
+            .find(|b| b.id == id)
+            .ok_or_else(|| ApiError::NotFound("bro 不存在".into()))?;
+        if bro
+            .owner_user_id
+            .as_deref()
+            .is_some_and(|o| o != FAKE_ME_ID)
+        {
+            return Err(ApiError::NotBroOwner { owner: None });
+        }
+        bro.avatar = avatar;
         Ok(bro.clone())
     }
 
@@ -2778,8 +2846,8 @@ mod tests {
         fn new_bro_gets_default_name_and_a_dm_in_the_list() {
             let base = spawn_host();
             let api = HttpApi::new(Conn::new(&base));
-            let first = api.create_bro().unwrap();
-            let second = api.create_bro().unwrap();
+            let first = api.create_bro(None, None).unwrap();
+            let second = api.create_bro(None, None).unwrap();
             assert_eq!(first.name, "bro");
             assert_eq!(second.name, "bro 2");
             let dm = first.dm_group_id.clone().expect("DM created");
@@ -2843,7 +2911,7 @@ mod tests {
                 .any(|e| e["type"] == "status" && e["botId"] == "bot-doc"));
 
             // DM: the bro behind it gets the task.
-            let bro = api.create_bro().unwrap();
+            let bro = api.create_bro(None, None).unwrap();
             let dm = bro.dm_group_id.clone().unwrap();
             let said = api.say(&dm, "整理一下周报").unwrap();
             let task = said.task.expect("a DM always asks its bro");
@@ -2862,7 +2930,7 @@ mod tests {
         fn rename_bro_renames_its_dm() {
             let base = spawn_host();
             let api = HttpApi::new(Conn::new(&base));
-            let bro = api.create_bro().unwrap();
+            let bro = api.create_bro(None, None).unwrap();
             let dm = bro.dm_group_id.clone().unwrap();
             let renamed = api.rename_bro(&bro.id, "  文档哥 ").unwrap();
             assert_eq!(renamed.name, "文档哥");
@@ -2874,7 +2942,7 @@ mod tests {
             assert!(groups.iter().any(|g| g.id == dm && g.name == "文档哥"));
             assert_eq!(api.bros().unwrap()[0].name, "文档哥");
             // The next default name is free again.
-            assert_eq!(api.create_bro().unwrap().name, "bro");
+            assert_eq!(api.create_bro(None, None).unwrap().name, "bro");
             assert!(matches!(
                 api.rename_bro(&bro.id, "   "),
                 Err(ApiError::BadRequest(_))
@@ -2945,7 +3013,7 @@ mod tests {
                 other => panic!("expected token_rejected, got {other:?}"),
             }
             let api = HttpApi::new(Conn::new(&base).with_token(Some(token.into())));
-            let bro = api.create_bro().unwrap();
+            let bro = api.create_bro(None, None).unwrap();
             let dm = bro.dm_group_id.unwrap();
             assert_eq!(api.mark_read(&dm).unwrap().unread, 0);
             let mut source = crate::source::HttpSource::new(
