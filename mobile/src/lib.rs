@@ -352,6 +352,15 @@ fn window_scale(ui: &MainWindow) -> f32 {
     ui.window().scale_factor().max(1.0)
 }
 
+fn items_from_events(
+    prev: &[chat::ChatItem],
+    events: &[(robroz_contract::Event, bool, Option<String>)],
+) -> Vec<chat::ChatItem> {
+    let mut items = chat::build_from(events);
+    chat::carry_process(prev, &mut items);
+    items
+}
+
 fn chat_rows(
     items: &[chat::ChatItem],
     fallback_name: &str,
@@ -378,7 +387,46 @@ fn render_chat(ui: &MainWindow, st: &State) {
         window_scale(ui),
     ))));
     render_title(ui, st);
+    render_working(ui, st);
+    render_banner(ui, st);
     render_page(ui, st);
+}
+
+fn render_working(ui: &MainWindow, st: &State) {
+    let working = chat::working_bros(&st.chat);
+    let names: Vec<&str> = working.iter().map(|(_, n)| n.as_str()).collect();
+    if let Some(line) = robroz_ui::process::working_row(&names) {
+        let list: Vec<_> = working
+            .iter()
+            .take(3)
+            .map(|(id, _)| avatars::avatar_of(&st.bros, id))
+            .collect();
+        let ring = tokens_for(st.theme).surface;
+        let (img, width) = avatars::stack_at(
+            &list,
+            st.theme,
+            ring,
+            window_scale(ui),
+            16.0,
+            16.0 * 8.0 / 24.0,
+        );
+        ui.set_working_row(line.into());
+        ui.set_working_avatars(img);
+        ui.set_working_avatars_width(width);
+    } else {
+        ui.set_working_row("".into());
+        ui.set_working_avatars(slint::Image::default());
+        ui.set_working_avatars_width(0.0);
+    }
+}
+
+fn render_banner(ui: &MainWindow, st: &State) {
+    if robroz_ui::process::show_reconnect_banner(st.poll_fail_since, robroz_ui::process::now_unix())
+    {
+        ui.set_reconnect_banner(robroz_ui::process::reconnect_banner().into());
+    } else {
+        ui.set_reconnect_banner("".into());
+    }
 }
 
 /// Title capsule: up to three avatars then "+N"; the `…` entry only for
@@ -526,28 +574,58 @@ fn feed_entry_row(
                     time: row.time.into(),
                     ..ChatRow::default()
                 },
-                chat::ChatItem::Status(c) => ChatRow {
-                    kind: 2,
-                    // #155: the bro name is not drawn inside the card.
-                    name: if row.show_name {
-                        name.into()
+                chat::ChatItem::Status(c) => {
+                    let now = robroz_ui::process::now_unix();
+                    let failed = c.failure.is_some();
+                    let (status, step, progress, status_mono, expandable) = if failed {
+                        (
+                            c.shown_status(),
+                            shown(&c.step_progress),
+                            shown(&c.progress),
+                            false,
+                            false,
+                        )
                     } else {
-                        "".into()
-                    },
-                    status: c.shown_status().into(),
-                    detail: c.detail_line().unwrap_or_default().into(),
-                    step: shown(&c.step_progress),
-                    progress: shown(&c.progress),
-                    dot: status_dot_color(mode, c.tone),
-                    show_name: row.show_name,
-                    show_avatar: row.show_avatar,
-                    initial,
-                    glyph,
-                    has_glyph,
-                    pad_top: row.pad_top,
-                    time: row.time.into(),
-                    ..ChatRow::default()
-                },
+                        let status = c.process_line(now).unwrap_or_else(|| c.shown_status());
+                        let mono = c.timer(now) != robroz_ui::process::TimerPhase::Hidden;
+                        let progress: SharedString = if c.expanded {
+                            c.steps
+                                .iter()
+                                .map(|s| s.text())
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                                .into()
+                        } else {
+                            "".into()
+                        };
+                        (status, "".into(), progress, mono, c.expandable())
+                    };
+                    ChatRow {
+                        kind: 2,
+                        // #155: the bro name is not drawn inside the card.
+                        name: if row.show_name {
+                            name.into()
+                        } else {
+                            "".into()
+                        },
+                        status: status.into(),
+                        detail: c.detail_line().unwrap_or_default().into(),
+                        step,
+                        progress,
+                        dot: status_dot_color(mode, c.tone),
+                        show_name: row.show_name,
+                        show_avatar: row.show_avatar,
+                        initial,
+                        glyph,
+                        has_glyph,
+                        pad_top: row.pad_top,
+                        time: row.time.into(),
+                        task_id: c.task_id.clone().into(),
+                        expandable,
+                        status_mono,
+                        ..ChatRow::default()
+                    }
+                }
             }
         }
     }
@@ -586,6 +664,8 @@ struct State {
     new_bro: Option<BroAvatar>,
     new_bro_note: Option<String>,
     creating: bool,
+    /// Continuous poll/stream failure start, for the reconnecting banner.
+    poll_fail_since: Option<i64>,
 }
 
 /// Desktop-only shot hook: pre-fill screens from a fixture host when
@@ -687,11 +767,12 @@ fn prepare_shot(ui: &MainWindow, state: &Arc<Mutex<State>>, shot: &str) {
                     .find(|(id, _)| id == group_id)
                     .map(|(_, n)| n)
                     .unwrap_or_else(|| group_id.to_string());
-                let items = chat::build(&events);
+                let items = items_from_events(&[], &events);
                 ui.set_chat_title(name.clone().into());
                 ui.set_chat_note("".into());
                 let mut st = state.lock().unwrap();
                 st.chat = items;
+                st.poll_fail_since = None;
                 st.chat_name = name.clone();
                 st.chat_group = group_id.to_string();
                 st.chat_in_group = avatars::dm_bro(&st.bros, &st.chat_group).is_none();
@@ -783,6 +864,17 @@ pub fn run() -> Result<(), slint::PlatformError> {
     apply_unencrypted_hint(&ui);
     apply_token_field(&ui, &state.lock().unwrap());
 
+    if std::env::var("ROBROZ_SHOT_SCREEN").is_ok()
+        || std::env::var("ROBROZ_FAKE_RECONNECTING").is_ok()
+    {
+        if let Some(unix) = robroz_ui::process::parse_unix(robroz_ui::process::FAKE_NOW_ISO) {
+            robroz_ui::process::freeze_clock(unix);
+        }
+    }
+    if std::env::var("ROBROZ_FAKE_RECONNECTING").as_deref() == Ok("1") {
+        state.lock().unwrap().poll_fail_since =
+            Some(robroz_ui::process::now_unix() - (robroz_ui::process::SSE_BANNER_SECS as i64 + 1));
+    }
     if let Ok(shot) = std::env::var("ROBROZ_SHOT_SCREEN") {
         prepare_shot(&ui, &state, &shot);
     }
@@ -929,7 +1021,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     let ui = weak.unwrap();
                     match result {
                         Ok(events) => {
-                            let items = chat::build(&events);
+                            let items = {
+                                let st = state.lock().unwrap();
+                                items_from_events(&st.chat, &events)
+                            };
                             ui.set_chat_note(if items.is_empty() {
                                 Key::ConversationsEmptyHint.as_str().into()
                             } else {
@@ -940,6 +1035,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                                 return;
                             }
                             st.chat = items;
+                            st.poll_fail_since = None;
                             st.chat_name = name.clone();
                             st.chat_in_group = avatars::dm_bro(&st.bros, &id).is_none();
                             set_composer_hint(&ui, &name, !st.chat_in_group);
@@ -947,7 +1043,14 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             ui.set_composer_focused(false);
                             render_chat(&ui, &st);
                         }
-                        Err(e) => ui.set_chat_note(e.0.into()),
+                        Err(e) => {
+                            ui.set_chat_note(e.0.into());
+                            let mut st = state.lock().unwrap();
+                            if st.poll_fail_since.is_none() {
+                                st.poll_fail_since = Some(robroz_ui::process::now_unix());
+                            }
+                            render_banner(&ui, &st);
+                        }
                     }
                 });
             });
@@ -1205,8 +1308,59 @@ pub fn run() -> Result<(), slint::PlatformError> {
             ui.set_screen(to);
             let st = state.lock().unwrap();
             render_title(&ui, &st);
+            if to != 2 {
+                ui.set_working_row("".into());
+                ui.set_reconnect_banner("".into());
+            }
         }
     });
+
+    ui.on_toggle_process({
+        let weak = ui.as_weak();
+        let state = state.clone();
+        move |task_id: slint::SharedString| {
+            let ui = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            for item in &mut st.chat {
+                if let chat::ChatItem::Status(c) = item {
+                    if c.task_id == task_id.as_str() && c.expandable() {
+                        c.expanded = !c.expanded;
+                    }
+                }
+            }
+            render_chat(&ui, &st);
+        }
+    });
+
+    let clock = slint::Timer::default();
+    clock.start(
+        slint::TimerMode::Repeated,
+        std::time::Duration::from_secs(1),
+        {
+            let weak = ui.as_weak();
+            let state = state.clone();
+            move || {
+                let Some(ui) = weak.upgrade() else { return };
+                if ui.get_screen() != 2 {
+                    return;
+                }
+                let st = state.lock().unwrap();
+                let now = robroz_ui::process::now_unix();
+                let ticking = st.poll_fail_since.is_some()
+                    || st.chat.iter().any(|item| {
+                        matches!(
+                            item,
+                            chat::ChatItem::Status(c)
+                                if c.timer(now).is_running()
+                        )
+                    });
+                if ticking {
+                    render_chat(&ui, &st);
+                }
+            }
+        },
+    );
+    std::mem::forget(clock);
 
     ui.run()
 }

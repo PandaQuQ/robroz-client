@@ -33,6 +33,7 @@ fn say(id: &str, body: &str, hm: &str) -> GroupEvent {
             author_name: Some(FAKE_ME_NAME.into()),
         },
         approval_extras: None,
+        started_at: None,
     }
 }
 
@@ -59,6 +60,7 @@ fn failed(id: &str, code: FailureCode, detail: Option<&str>, legacy: &str, hm: &
             failure_detail: detail.map(str::to_string),
         },
         approval_extras: None,
+        started_at: None,
     }
 }
 
@@ -85,6 +87,7 @@ fn legacy_failed(id: &str, legacy: &str, hm: &str) -> GroupEvent {
             failure_detail: None,
         },
         approval_extras: None,
+        started_at: None,
     }
 }
 
@@ -113,6 +116,7 @@ fn delivery_fail(
             failure_detail: detail.map(str::to_string),
         },
         approval_extras: None,
+        started_at: None,
     }
 }
 
@@ -135,6 +139,7 @@ fn briefing(id: &str, hm: &str) -> GroupEvent {
             failure_detail: None,
         },
         approval_extras: None,
+        started_at: None,
     }
 }
 

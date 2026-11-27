@@ -232,7 +232,7 @@ impl Conn {
     /// is read from a local `"from": "bro"` field on the raw JSON, which only
     /// the spike's fixture host sends. A real host omits it, so every message
     /// reads as the user's own (right side). The contract is not touched.
-    pub fn events(&self, group_id: &str) -> Result<Vec<(Event, bool)>, ApiError> {
+    pub fn events(&self, group_id: &str) -> Result<Vec<(Event, bool, Option<String>)>, ApiError> {
         let path = format!("/api/groups/{group_id}/events");
         let body = self.get(&path)?;
         let mut raw = Self::decode::<serde_json::Value>(&body)?;
@@ -241,21 +241,25 @@ impl Conn {
         let events = serde_json::from_value::<Events>(raw.clone())
             .map_err(|e| ApiError(Key::ClientDecodeFailed.fill(&[&e])))?
             .events;
-        let from: Vec<Option<String>> = Some(raw)
-            .and_then(|v| {
-                v.get("events")?.as_array().map(|a| {
-                    a.iter()
-                        .map(|e| e.get("from").and_then(|f| f.as_str()).map(str::to_string))
-                        .collect()
-                })
+        let extras: Vec<(Option<String>, Option<String>)> = raw
+            .get("events")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .map(|e| {
+                        let from = e.get("from").and_then(|f| f.as_str()).map(str::to_string);
+                        (from, robroz_ui::process::started_at_of(e))
+                    })
+                    .collect()
             })
             .unwrap_or_default();
         Ok(events
             .into_iter()
             .enumerate()
             .map(|(i, e)| {
-                let own = from.get(i).and_then(|f| f.as_deref()) != Some("bro");
-                (e, own)
+                let (from, started) = extras.get(i).cloned().unwrap_or((None, None));
+                let own = from.as_deref() != Some("bro");
+                (e, own, started)
             })
             .collect())
     }
@@ -518,7 +522,7 @@ mod tests {
         let conn = Conn::new(&base, "t").unwrap();
         let events = conn.events("g1").unwrap();
         seen.join().unwrap();
-        let own: Vec<bool> = events.iter().map(|(_, own)| *own).collect();
+        let own: Vec<bool> = events.iter().map(|(_, own, _)| *own).collect();
         assert_eq!(own, [true, false]);
     }
 

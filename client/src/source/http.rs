@@ -132,6 +132,7 @@ struct RawEvents {
 struct Decoded {
     events: Vec<Event>,
     extras: Vec<Option<ApprovalExtras>>,
+    started_at: Vec<Option<String>>,
     skipped_at: Option<String>,
 }
 
@@ -145,6 +146,10 @@ fn decode_events(raw: Vec<serde_json::Value>) -> Decoded {
     for value in raw {
         match event_decode::parse_event(value.clone()) {
             Ok((event, extras)) => {
+                out.started_at.push(
+                    event_decode::started_at_of(&value)
+                        .filter(|_| matches!(event, Event::Status { .. })),
+                );
                 out.events.push(event);
                 out.extras.push(extras);
             }
@@ -233,11 +238,17 @@ impl EventSource for HttpSource {
             let since = self.since(&group.id);
             let decoded = self.fetch(&group.id, since.as_deref())?;
             self.advance(&group.id, &decoded);
-            for (event, extras) in decoded.events.into_iter().zip(decoded.extras) {
+            for ((event, extras), started_at) in decoded
+                .events
+                .into_iter()
+                .zip(decoded.extras)
+                .zip(decoded.started_at)
+            {
                 out.push(GroupEvent {
                     group_id: group.id.clone(),
                     event,
                     approval_extras: extras,
+                    started_at,
                 });
             }
         }

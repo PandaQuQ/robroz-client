@@ -104,11 +104,16 @@ pub fn build(events: &[(Event, bool)]) -> Vec<ChatItem> {
                 });
             }
             Event::Status { task_id, .. } => {
-                let Some(card) = StatusCard::from_event(event) else {
+                let Some(mut card) = StatusCard::from_event(event) else {
                     continue;
                 };
                 match card_at.iter().find(|(t, _)| *t == task_id.as_str()) {
-                    Some(&(_, at)) => items[at] = ChatItem::Status(card),
+                    Some(&(_, at)) => {
+                        if let ChatItem::Status(old) = &items[at] {
+                            card = merge_status(old, card);
+                        }
+                        items[at] = ChatItem::Status(card);
+                    }
                     None => {
                         card_at.push((task_id.as_str(), items.len()));
                         items.push(ChatItem::Status(card));
@@ -119,6 +124,101 @@ pub fn build(events: &[(Event, bool)]) -> Vec<ChatItem> {
         }
     }
     items
+}
+
+/// Like [`build`], with a host `startedAt` per event when the JSON had one.
+pub fn build_from(events: &[(Event, bool, Option<String>)]) -> Vec<ChatItem> {
+    let mut items: Vec<ChatItem> = Vec::new();
+    let mut card_at: Vec<(String, usize)> = Vec::new();
+    for (event, own, started) in events {
+        match event {
+            Event::Message {
+                body, created_at, ..
+            } => {
+                let at = runs::parse_unix(created_at);
+                let side = if *own {
+                    Side::Own
+                } else {
+                    Side::Bro {
+                        id: String::new(),
+                        name: String::new(),
+                    }
+                };
+                items.push(ChatItem::Text {
+                    body: body.clone(),
+                    side,
+                    at,
+                });
+            }
+            Event::Status { task_id, .. } => {
+                let Some(mut card) = StatusCard::from_event_at(event, started.as_deref()) else {
+                    continue;
+                };
+                match card_at.iter().find(|(t, _)| t == task_id) {
+                    Some((_, at)) => {
+                        let at = *at;
+                        if let ChatItem::Status(old) = &items[at] {
+                            card = merge_status(old, card);
+                        }
+                        items[at] = ChatItem::Status(card);
+                    }
+                    None => {
+                        card_at.push((task_id.clone(), items.len()));
+                        items.push(ChatItem::Status(card));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    items
+}
+
+/// Keep steps, the local timer, and expand state across a status update.
+fn merge_status(old: &StatusCard, mut card: StatusCard) -> StatusCard {
+    card.steps = old.steps.clone();
+    card.local_started = old.local_started;
+    card.expanded = old.expanded;
+    if card.started_at.is_none() {
+        card.started_at = old.started_at.clone();
+    }
+    if card.is_live() && !old.is_live() && card.started_at.is_none() && card.local_started.is_none()
+    {
+        card.local_started = Some(robroz_ui::process::now_unix());
+    }
+    if let Some(line) = card.progress.clone().or(card.step_progress.clone()) {
+        robroz_ui::process::push_step(&mut card.steps, line);
+    }
+    card
+}
+
+/// Live-running bros in this chat, first-seen order, unique by bot id.
+pub fn working_bros(items: &[ChatItem]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for item in items {
+        if let ChatItem::Status(card) = item {
+            if card.is_live() && !out.iter().any(|(id, _)| id == &card.bot_id) {
+                out.push((card.bot_id.clone(), card.bot_name.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// Carry expand/timer state from a previous build of the same chat.
+pub fn carry_process(old: &[ChatItem], new: &mut [ChatItem]) {
+    for item in new.iter_mut() {
+        let ChatItem::Status(card) = item else {
+            continue;
+        };
+        let Some(ChatItem::Status(prev)) = old
+            .iter()
+            .find(|o| matches!(o, ChatItem::Status(c) if c.task_id == card.task_id))
+        else {
+            continue;
+        };
+        *card = merge_status(prev, card.clone());
+    }
 }
 
 /// The name shown over a bro's bubbles: the bro on the newest status card,

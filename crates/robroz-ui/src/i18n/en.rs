@@ -1067,5 +1067,24 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::SecretUndo => "Undo",
         // 已填  [approved, batch 2]
         Key::SecretFilled => "Set",
+        // 处理中 {0}  [approved, PR3 process]
+        Key::ProcessWorking => "Working {0}",
+        // 用了 {0}  [approved, PR3 process]
+        Key::ProcessWorked => "Worked for {0}",
+        // 约 {0}  [approved, PR3 process]
+        Key::ProcessWorkedAbout => "Worked for ~{0}",
+        // {0} 秒  [approved, PR3 process]
+        Key::ProcessSecs => "{0}s",
+        // {0} 分 {1} 秒  [approved, PR3 process]
+        Key::ProcessMins => "{0}m {1}s",
+        // Needs UI review.
+        // {0} 在处理…
+        Key::WorkingRowOne => "{0} is working…",
+        // {0} 和 {1} 在处理…  [approved, PR3 process]
+        Key::WorkingRowTwo => "{0} and {1} are working…",
+        // {0} 和另外 {1} 个  [approved, PR3 process]
+        Key::WorkingRowMany => "{0} and {1} others",
+        // 正在重新连接  [approved, PR3 process]
+        Key::Reconnecting => "Reconnecting…",
     }
 }

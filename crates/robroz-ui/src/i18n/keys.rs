@@ -509,6 +509,15 @@ pub enum Key {
     SecretPendingClear,
     SecretUndo,
     SecretFilled,
+    ProcessWorking,
+    ProcessWorked,
+    ProcessWorkedAbout,
+    ProcessSecs,
+    ProcessMins,
+    WorkingRowOne,
+    WorkingRowTwo,
+    WorkingRowMany,
+    Reconnecting,
 }
 
 impl Key {
@@ -1015,5 +1024,14 @@ impl Key {
         Key::SecretPendingClear,
         Key::SecretUndo,
         Key::SecretFilled,
+        Key::ProcessWorking,
+        Key::ProcessWorked,
+        Key::ProcessWorkedAbout,
+        Key::ProcessSecs,
+        Key::ProcessMins,
+        Key::WorkingRowOne,
+        Key::WorkingRowTwo,
+        Key::WorkingRowMany,
+        Key::Reconnecting,
     ];
 }

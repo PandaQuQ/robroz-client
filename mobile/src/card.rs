@@ -21,6 +21,7 @@ pub const AWAITING_APPROVAL: &str = "等你批准";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusCard {
+    pub task_id: String,
     pub bot_id: String,
     pub bot_name: String,
     /// `createdAt`, Unix seconds, when the host sent one.
@@ -35,6 +36,16 @@ pub struct StatusCard {
     pub step_progress: Option<ProgressLine>,
     /// `(failureCode, failureDetail, failure)` when the task did not get done.
     pub failure: Option<(Option<FailureCode>, Option<String>, String)>,
+    pub state: TaskState,
+    pub container_up: bool,
+    pub waiting_for: Option<WaitingFor>,
+    pub created_at: String,
+    pub updated_at: String,
+    /// Host `startedAt` when the event JSON carried it.
+    pub started_at: Option<String>,
+    pub local_started: Option<i64>,
+    pub steps: Vec<ProgressLine>,
+    pub expanded: bool,
 }
 
 impl StatusCard {
@@ -55,6 +66,40 @@ impl StatusCard {
     /// selectable, never translated).
     pub fn detail_line(&self) -> Option<String> {
         self.failure_line().and_then(|l| l.detail)
+    }
+
+    pub fn is_live(&self) -> bool {
+        self.failure.is_none() && self.state == TaskState::Running && self.container_up
+    }
+
+    pub fn timer(&self, now: i64) -> robroz_ui::process::TimerPhase {
+        robroz_ui::process::timer_phase(robroz_ui::process::TimerInput {
+            state: self.state,
+            live: self.is_live(),
+            failed: self.failure.is_some(),
+            started_at: self
+                .started_at
+                .as_deref()
+                .and_then(robroz_ui::process::parse_unix),
+            local_started: self.local_started,
+            created_at: robroz_ui::process::parse_unix(&self.created_at),
+            updated_at: robroz_ui::process::parse_unix(&self.updated_at),
+            now,
+        })
+    }
+
+    pub fn process_line(&self, now: i64) -> Option<String> {
+        if self.failure.is_some() {
+            return None;
+        }
+        if let Some(line) = self.timer(now).line() {
+            return Some(line);
+        }
+        Some(self.shown_status())
+    }
+
+    pub fn expandable(&self) -> bool {
+        robroz_ui::process::expandable(&self.steps)
     }
 }
 
@@ -94,10 +139,17 @@ fn progress_line(
 impl StatusCard {
     /// `None` for any event that is not a status card.
     pub fn from_event(event: &Event) -> Option<Self> {
+        Self::from_event_at(event, None)
+    }
+
+    /// Like [`from_event`], with a host `startedAt` when the JSON carried it.
+    pub fn from_event_at(event: &Event, started_at: Option<&str>) -> Option<Self> {
         let Event::Status {
+            task_id,
             bot_id,
             bot_name,
             created_at,
+            updated_at,
             state,
             container_up,
             failure,
@@ -144,7 +196,8 @@ impl StatusCard {
             }
             other => (other, None),
         };
-        Some(Self {
+        let mut card = Self {
+            task_id: task_id.clone(),
             bot_id: bot_id.clone(),
             bot_name: bot_name.clone(),
             at: robroz_ui::runs::parse_unix(created_at),
@@ -156,7 +209,23 @@ impl StatusCard {
             failure: failure
                 .clone()
                 .map(|f| (*failure_code, failure_detail.clone(), f)),
-        })
+            state: *state,
+            container_up: *container_up,
+            waiting_for: *waiting_for,
+            created_at: created_at.clone(),
+            updated_at: updated_at.clone(),
+            started_at: started_at
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            local_started: None,
+            steps: Vec::new(),
+            expanded: false,
+        };
+        if let Some(line) = card.progress.clone().or(card.step_progress.clone()) {
+            robroz_ui::process::push_step(&mut card.steps, line);
+        }
+        Some(card)
     }
 }
 

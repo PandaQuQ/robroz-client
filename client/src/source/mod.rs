@@ -11,7 +11,7 @@ mod fake_codes;
 mod http;
 pub mod stream;
 
-pub use fake::{fake_chats, fake_schedules, FakeSource, DRAFT_BODY};
+pub use fake::{fake_chats, fake_schedules, FakeSource, DRAFT_BODY, FAKE_NOW};
 pub use fake_approvals::{approvals_chats, approvals_source};
 pub use fake_codes::{codes_chats, codes_source};
 pub use http::HttpSource;
@@ -37,6 +37,9 @@ pub struct GroupEvent {
     pub event: Event,
     /// Client-side approval fields the contract event cannot carry yet.
     pub approval_extras: Option<ApprovalExtras>,
+    /// Host `startedAt` on a status event, if the JSON carried it. The
+    /// contract crate (v0.3.0) does not have this field yet.
+    pub started_at: Option<String>,
 }
 
 /// A new-kind card the contract has no event for yet (approval, draft),
