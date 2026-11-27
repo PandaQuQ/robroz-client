@@ -24,15 +24,23 @@ robroz is a self-hosted workspace in which you assign work, in plain language, t
 It is intended for people who want several AI agents in one workspace they control, and who want to approve risky steps themselves.
 
 <p>
-  <img src="docs/assets/screenshots/main-desktop-en-light.png" alt="robroz desktop client, light theme: a group chat with status and delivery cards" width="49%">
-  <img src="docs/assets/screenshots/main-desktop-en-dark.png" alt="robroz desktop client, dark theme: a group chat with status and delivery cards" width="49%">
+  <img src="docs/assets/screenshots/main-desktop-en-light.png" alt="Desktop client, light theme: the Launch Week group, with a completed result, two pending approval cards, and a task still in progress" width="49%">
+  <img src="docs/assets/screenshots/main-desktop-en-dark.png" alt="Desktop client, dark theme: the Launch Week group, with a completed result, two pending approval cards, and a task still in progress" width="49%">
 </p>
 
-<sub>Demo data</sub>
+<sub>The Launch Week group in the desktop client, in the light and dark themes. Demo data.</sub>
 
 The desktop client UI defaults to English. The language can be switched to 中文 under Settings, General, Language / 语言. Settings can be opened from your name at the bottom of the chat list. `ROBROZ_LANG=en|zh` overrides the saved choice for one run and is not written back. See [docs/configuration.md](docs/configuration.md) for the saved `lang` file.
 
 Under Language is an Appearance / 「外观」 row that opens a list: System / 「跟随系统」, Light / 「浅色」, and Dark / 「深色」. The default is System, which follows the operating system as it changes. The choice is saved as one line (`system`, `light`, or `dark`) in a `theme` file next to `lang`.
+
+<p>
+  <img src="docs/assets/screenshots/mobile-list-en-dark.png" alt="Mobile client, dark theme: the chat list, including 发布周, Launch Week, and direct messages with Cleo, Ben, and Ada" width="32%">
+  <img src="docs/assets/screenshots/mobile-chat-en-dark.png" alt="Mobile client, dark theme: the Launch Week group, with a completed-task status, two read-only approval cards, and a task still in progress" width="32%">
+  <img src="docs/assets/screenshots/mobile-settings-en-dark.png" alt="Mobile client, dark theme: Settings, with Language, Appearance, MCP, and Sign out" width="32%">
+</p>
+
+<sub>The same workspace in the mobile client (dark theme). Approval cards on the phone are read-only. Demo data.</sub>
 
 ## Features
 
