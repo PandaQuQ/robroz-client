@@ -91,7 +91,7 @@ Host-written `label`, `failure` and `progress` values on the wire are still Chin
 ### Conversation list previews
 
 - When a live run has a progress line, the preview uses that line (mapped into the UI language), for example Ada: Thinking about a reply or Ada: Step 2 of 3, not Ada: Running. Long text is cut to the column width with "…".
-- When `waitingFor` is `approval`, the preview is Ada: Needs your approval, and is not replaced by an approval card's summary that arrives at the same time.
+- When `waitingFor` is `approval`, the bro's owner sees Ada: Needs your approval (「Ada：等你批准」); anyone else, and anyone while `/api/me` or the bro's owner is not known, sees Ada: Waiting for this bro's owner (「Ada：等这个 bro 的主人审批」, `Key::ApprovalWaitingFor`), the same sentence as the card (`client/src/model.rs:preview_of`). The preview is not replaced by an approval card's summary that arrives at the same time.
 - An approval reminder (`approval_reminder`) uses the same sentences as the in-chat row: the owner sees {0} is waiting for your approval in {1} (「{0} 在 {1} 等你审批」, `Key::ApprovalDmReminder`); anyone else sees Waiting for this bro's owner (「等这个 bro 的主人审批」, `Key::ApprovalWaitingFor`).
 - With no progress, or when the task is done, stuck, or failed, the preview uses the status line as usual.
 - Switching the language redraws every preview immediately from the events the client already has.
