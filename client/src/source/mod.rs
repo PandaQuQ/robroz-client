@@ -136,6 +136,15 @@ pub fn http_test_host() -> String {
     )
 }
 
+/// [`http_test_host`] plus the path of its database, so a test can set columns
+/// the HTTP API never writes (the pump's claim sets `startedAt`; no Docker here).
+#[cfg(test)]
+pub fn http_test_host_with_db() -> (String, std::path::PathBuf) {
+    let db = temp_db();
+    let host = robroz_host::Host::open(&db, temp_volumes(), "robroz-runner:local").unwrap();
+    (serve(host.router()), db)
+}
+
 /// Same, with the host requiring `Authorization: Bearer <token>` (robroz#22).
 #[cfg(test)]
 pub fn http_test_host_with_token(token: &str) -> String {

@@ -2995,10 +2995,15 @@ mod tests {
             let base = spawn_host();
             let group = group_with_bot(&base);
             let api = HttpApi::new(Conn::new(&base));
-            // Group, no @: stored, nobody asked.
-            let said = api.say(&group.id, "大家早").unwrap();
+            // Group, no @: stored. Host 0.2 routes it to the only bro in the
+            // group (single responder), so that bro gets the task. A group of
+            // its own, so the @ message below does not join this open task.
+            let other = group_with_bot(&base);
+            let said = api.say(&other.id, "大家早").unwrap();
             assert_eq!(said.message.body, "大家早");
-            assert_eq!(said.task, None);
+            let routed = said.task.expect("the only bro answers");
+            assert_eq!(routed.assignee_bot_id, "bot-doc");
+            assert_eq!(routed.prompt, "大家早");
             // Group, @member: stored as typed, the rest queued for that bro.
             let said = api.say(&group.id, "  @文档哥 写 README ").unwrap();
             assert_eq!(said.message.body, "@文档哥 写 README");
@@ -3006,8 +3011,14 @@ mod tests {
             assert_eq!(task.assignee_bot_id, "bot-doc");
             assert_eq!(task.prompt, "写 README");
             assert_eq!(task.state, TaskState::Queued);
-            // @ someone not in the group: just a message.
-            assert_eq!(api.say(&group.id, "@路人 帮忙").unwrap().task, None);
+            // @ someone not in the group names nobody here, so the single
+            // responder hands it to the only bro (no task for 路人).
+            let stranger = api.say(&group.id, "@路人 帮忙").unwrap();
+            assert_eq!(stranger.message.body, "@路人 帮忙");
+            assert_eq!(
+                stranger.task.map(|t| t.assignee_bot_id).as_deref(),
+                Some("bot-doc")
+            );
             let err = api.say(&group.id, "  ").unwrap_err();
             assert!(matches!(err, ApiError::BadRequest(_)));
             // The host's own constant, shown in the active (default) language.

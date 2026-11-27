@@ -1054,4 +1054,134 @@ mod tests {
             start.elapsed()
         );
     }
+
+    /// The real host's SSE stream, read with the client's own reader.
+    mod against_host {
+        use super::*;
+        use crate::conn::Conn;
+        use robroz_contract::{
+            AddMember, CreateGroup, CreateTask, Group, Message, MessageKind, PostMessage, Task,
+        };
+
+        fn post<T: serde::Serialize, R: serde::de::DeserializeOwned>(
+            base: &str,
+            path: &str,
+            body: &T,
+        ) -> R {
+            let mut response = ureq::post(&format!("{base}{path}"))
+                .header("content-type", "application/json")
+                .send(serde_json::to_string(body).unwrap())
+                .unwrap();
+            serde_json::from_str(&response.body_mut().read_to_string().unwrap()).unwrap()
+        }
+
+        fn say(base: &str, group: &str, body: &str) -> Message {
+            post(
+                base,
+                &format!("/api/groups/{group}/messages"),
+                &PostMessage {
+                    kind: MessageKind::Text,
+                    body: body.into(),
+                },
+            )
+        }
+
+        /// One connection with `last_id`, read up to the end of the first
+        /// batch (the frame that carries an `id:`). Returns the items.
+        fn first_batch(conn: &Conn, group: &str, last_id: &mut Option<String>) -> Vec<StreamItem> {
+            let mut items = Vec::new();
+            let stopped = read_once(conn, group, last_id, &mut |item| {
+                let end = item == StreamItem::BatchEnd;
+                items.push(item);
+                !end
+            })
+            .unwrap();
+            assert!(stopped, "the batch ended before the stream did: {items:?}");
+            items
+        }
+
+        fn card_ids(items: &[StreamItem]) -> Vec<String> {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    StreamItem::Event {
+                        event: Event::Message { id, .. } | Event::Status { id, .. },
+                        ..
+                    } => Some(id.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        #[test]
+        fn out_of_range_last_event_id_gets_resync_then_an_id_snapshot() {
+            let (base, db) = crate::source::http_test_host_with_db();
+            let group: Group = post(
+                &base,
+                "/api/groups",
+                &CreateGroup {
+                    name: "官网".into(),
+                },
+            );
+            let _: serde_json::Value = post(
+                &base,
+                &format!("/api/groups/{}/members", group.id),
+                &AddMember {
+                    bot_id: "bot-ada".into(),
+                    name: "Ada".into(),
+                },
+            );
+            let first = say(&base, &group.id, "一");
+            let second = say(&base, &group.id, "二");
+            let task: Task = post(
+                &base,
+                &format!("/api/groups/{}/tasks", group.id),
+                &CreateTask {
+                    assignee_bot_id: "bot-ada".into(),
+                    prompt: "画草图".into(),
+                },
+            );
+            // The snapshot is ordered by created_at, then id. Give the two
+            // messages the same time so the id decides, and the task a later one.
+            let sql = rusqlite::Connection::open(&db).unwrap();
+            for id in [&first.id, &second.id] {
+                sql.execute(
+                    "UPDATE messages SET created_at = '2026-11-20T08:00:00.000Z' WHERE id = ?1",
+                    [id],
+                )
+                .unwrap();
+            }
+            sql.execute(
+                "UPDATE tasks SET created_at = '2026-11-20T08:00:01.000Z' WHERE id = ?1",
+                [&task.id],
+            )
+            .unwrap();
+            let mut tied = [first.id.clone(), second.id.clone()];
+            tied.sort();
+            let snapshot = [tied[0].clone(), tied[1].clone(), task.id.clone()];
+
+            // An id the host never handed out (far past its newest).
+            let conn = Conn::new(&base).streaming();
+            let mut last_id = Some("999999999".to_string());
+            let items = first_batch(&conn, &group.id, &mut last_id);
+            assert_eq!(items.first(), Some(&StreamItem::Connected), "{items:?}");
+            assert_eq!(items.get(1), Some(&StreamItem::Resync), "{items:?}");
+            assert_eq!(card_ids(&items), snapshot, "{items:?}");
+            assert_eq!(items.last(), Some(&StreamItem::BatchEnd));
+            assert_eq!(items.len(), 2 + 3 + 1, "{items:?}");
+            let id = last_id
+                .clone()
+                .expect("the snapshot's last frame carries the id");
+            assert!(
+                id.parse::<i64>().is_ok() && id != "999999999",
+                "a decimal id from the host: {id}"
+            );
+
+            // That id replays: only what changed, and no resync.
+            let third = say(&base, &group.id, "三");
+            let items = first_batch(&conn, &group.id, &mut last_id);
+            assert!(!items.contains(&StreamItem::Resync), "{items:?}");
+            assert_eq!(card_ids(&items), [third.id], "{items:?}");
+        }
+    }
 }

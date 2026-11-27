@@ -466,6 +466,100 @@ mod tests {
             }
         }
 
+        /// The host sets `startedAt` when the pump claims a task, and the
+        /// client's process timer counts from it, not from `createdAt`.
+        /// There is no Docker here, so the claim is the same `UPDATE` the
+        /// pump makes (the host's `Sandbox` trait is not exported).
+        #[test]
+        fn started_at_after_claim_drives_the_timer() {
+            use robroz_ui::process::{parse_unix, TimerPhase};
+            let (base, db) = crate::source::http_test_host_with_db();
+            let group: Group = post(
+                &base,
+                "/api/groups",
+                &CreateGroup {
+                    name: "官网".into(),
+                },
+            );
+            let _: serde_json::Value = post(
+                &base,
+                &format!("/api/groups/{}/members", group.id),
+                &AddMember {
+                    bot_id: "bot-ada".into(),
+                    name: "Ada".into(),
+                },
+            );
+            let task: Task = post(
+                &base,
+                &format!("/api/groups/{}/tasks", group.id),
+                &CreateTask {
+                    assignee_bot_id: "bot-ada".into(),
+                    prompt: "画草图".into(),
+                },
+            );
+            let card = |base: &str| {
+                let mut source = HttpSource::new(Conn::new(base), Vec::new());
+                source.groups().unwrap();
+                let mut feed = Feed::default();
+                for ge in source.poll().unwrap() {
+                    feed.apply(&ge.event);
+                }
+                let rows: Vec<Row> = feed.rows().cloned().collect();
+                match rows.as_slice() {
+                    [Row::Status(card)] => card.clone(),
+                    other => panic!("expected one status card, got {other:?}"),
+                }
+            };
+
+            // Queued: no `startedAt`, and no timer to show.
+            let queued = card(&base);
+            assert_eq!(queued.task_id, task.id);
+            assert_eq!(queued.state, TaskState::Queued);
+            assert_eq!(queued.started_at, None);
+            assert_eq!(queued.timer(0), TimerPhase::Hidden);
+
+            // The task waited an hour in the queue before the claim.
+            let created = "2026-11-20T07:00:00.000Z";
+            let claimed = "2026-11-20T08:00:00.000Z";
+            let finished = "2026-11-20T08:01:30.000Z";
+            let sql = rusqlite::Connection::open(&db).unwrap();
+            sql.execute(
+                "UPDATE tasks SET created_at = ?1, state = 'running', container_up = 1,
+                                  updated_at = ?2, started_at = ?2
+                 WHERE id = ?3",
+                rusqlite::params![created, claimed, task.id],
+            )
+            .unwrap();
+            let running = card(&base);
+            assert_eq!(running.state, TaskState::Running);
+            assert_eq!(running.started_at.as_deref(), Some(claimed));
+            let start = parse_unix(claimed).unwrap();
+            assert_eq!(
+                running.timer(start + 42),
+                TimerPhase::Running {
+                    secs: 42,
+                    approx: false
+                },
+                "counts from startedAt, not the hour-old createdAt"
+            );
+
+            sql.execute(
+                "UPDATE tasks SET state = 'done', container_up = 0, updated_at = ?1 WHERE id = ?2",
+                rusqlite::params![finished, task.id],
+            )
+            .unwrap();
+            let done = card(&base);
+            assert_eq!(done.state, TaskState::Done);
+            assert_eq!(done.started_at.as_deref(), Some(claimed), "kept when done");
+            assert_eq!(
+                done.timer(start + 3600),
+                TimerPhase::Done {
+                    secs: 90,
+                    approx: false
+                }
+            );
+        }
+
         #[test]
         fn unknown_group_is_an_error() {
             let base = spawn_host();
