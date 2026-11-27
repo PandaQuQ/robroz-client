@@ -762,8 +762,9 @@ pub fn preview(event: &Event) -> String {
 
 /// Like [`preview`], with the signed-in user id and, for a status waiting
 /// on approval, the bro's owner id. A reminder already carries its owner
-/// on the event. Unknown `me` or `owner_id` uses the non-owner sentence,
-/// same as the card (`can_answer` is false unless both ids match).
+/// on the event. A missing `owner_id` is the bootstrap admin
+/// (`local-admin`), same as the card; unknown `me` uses the non-owner
+/// sentence.
 pub fn preview_of(event: &Event, me: Option<&str>, owner_id: Option<&str>) -> String {
     match event {
         Event::Message { kind, body, .. } => match kind {
@@ -788,10 +789,9 @@ pub fn preview_of(event: &Event, me: Option<&str>, owner_id: Option<&str>) -> St
             waiting_for,
             ..
         } if awaits_approval(*state, *waiting_for) => {
-            // Bro cards: only the owner may answer (`can_answer` /
-            // `viewer == Owner`). Unknown me or owner is not the owner,
-            // same as reminder.rs and group_approval.rs.
-            let text = if me.is_some() && me == owner_id {
+            // Same rule as the card and the reminder: [`is_bro_owner`].
+            // A missing owner is `local-admin`; unknown me is not the owner.
+            let text = if robroz_ui::cards::is_bro_owner(me, owner_id) {
                 display(AWAITING_APPROVAL)
             } else {
                 std::borrow::Cow::Borrowed(Text::ApprovalWaitingFor.as_str())
@@ -1843,11 +1843,16 @@ mod tests {
                 "Ada：等这个 bro 的主人审批",
                 "unknown me is not the owner, same as the card"
             );
+            // A missing owner is local-admin, not a non-owner.
             assert_eq!(
-                preview_of(&ev, Some(owner), None),
-                "Ada：等这个 bro 的主人审批",
-                "unknown owner is not the owner"
+                preview_of(&ev, Some(robroz_contract::BOOTSTRAP_ADMIN_ID), None),
+                "Ada：等你批准"
             );
+            assert_eq!(
+                preview_of(&ev, Some("u-lin"), None),
+                "Ada：等这个 bro 的主人审批"
+            );
+            assert_eq!(preview_of(&ev, None, None), "Ada：等这个 bro 的主人审批");
             assert_eq!(preview(&ev), "Ada：等这个 bro 的主人审批");
         }
         {
@@ -1858,6 +1863,18 @@ mod tests {
             );
             assert_eq!(
                 preview_of(&ev, Some("u-lin"), Some(owner)),
+                "Ada: Waiting for this bro's owner"
+            );
+            assert_eq!(
+                preview_of(&ev, Some(robroz_contract::BOOTSTRAP_ADMIN_ID), None),
+                "Ada: Needs your approval"
+            );
+            assert_eq!(
+                preview_of(&ev, Some("u-lin"), None),
+                "Ada: Waiting for this bro's owner"
+            );
+            assert_eq!(
+                preview_of(&ev, None, None),
                 "Ada: Waiting for this bro's owner"
             );
         }
