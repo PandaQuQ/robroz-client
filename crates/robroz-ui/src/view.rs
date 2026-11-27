@@ -137,6 +137,16 @@ pub enum Action {
     SelfMenuOpen,
     SelfMenuClose,
     OpenSettings,
+    /// A Settings row (PR5).
+    SettingsGo {
+        dest: crate::settings::Dest,
+    },
+    /// Round ‹ on a Settings choice or connection page: back to Settings.
+    SettingsBack,
+    /// Option `index` picked on a Settings choice page.
+    SettingsChoose {
+        index: usize,
+    },
     OpenRoutines,
     SignOut,
     HomeSearchEdit {
@@ -1433,10 +1443,7 @@ pub fn approval<'a>(
 ) -> Element<'a, Action> {
     let inner = width - 2.0 * (t.controls.card_pad_h + t.stroke.card);
     // v0.2 host: a group card belongs to the bro's owner, who alone decides.
-    if in_group
-        && !card.is_rule()
-        && group_approval::viewer(card, me) != group_approval::Viewer::Legacy
-    {
+    if group_approval::owner_layout(in_group, card.is_rule(), group_approval::viewer(card, me)) {
         return group_approval_card(t, card, ui, inner, hide_bot, me);
     }
     let (label, d) = status::approval_status(&card.state);
@@ -4936,13 +4943,26 @@ fn rule_confirm_on_page<'a>(
     t: &Skin,
     pending: &'a review_rules::Pending,
     enabled: bool,
+    can_decide: bool,
 ) -> Element<'a, Action> {
     let kind = if pending.is_add() {
         crate::cards::ActionKind::RuleAdd
     } else {
         crate::cards::ActionKind::RuleDelete
     };
-    let show_buttons = pending.is_open();
+    // Only an admin may answer; everyone else gets the status line and
+    // no buttons at all (not greyed out).
+    let show_buttons = pending.is_open() && can_decide;
+    let mut head = column![];
+    if pending.is_open() && !can_decide {
+        head = head
+            .push(
+                text(review_rules::WAITING_FOR_ADMIN)
+                    .size(t.type_.foot)
+                    .color(color(t.palette.text2)),
+            )
+            .push(gap(t.metrics.head_gap));
+    }
     let col = rule_confirm_fields(
         t,
         kind,
@@ -4952,7 +4972,7 @@ fn rule_confirm_on_page<'a>(
         show_buttons,
         enabled,
         None,
-        column![],
+        head,
     );
     container(col)
         .padding(card_padding(t))
@@ -4990,7 +5010,12 @@ fn rule_approval<'a>(
 }
 
 /// The 放行规则 page: add an input, list confirmed rules, confirm in place.
-pub fn review_rules_panel<'a>(t: &Skin, page: &'a review_rules::Page) -> Element<'a, Action> {
+/// `can_decide`: [`review_rules::may_decide`] for the signed-in user.
+pub fn review_rules_panel<'a>(
+    t: &Skin,
+    page: &'a review_rules::Page,
+    can_decide: bool,
+) -> Element<'a, Action> {
     let m = t.metrics;
     let locked = page.locked();
     let head = row![text(review_rules::TITLE)
@@ -5043,7 +5068,7 @@ pub fn review_rules_panel<'a>(t: &Skin, page: &'a review_rules::Page) -> Element
     }
     let add_pending = page.pending.as_ref().filter(|p| p.is_add());
     if let Some(pending) = add_pending {
-        body_col = body_col.push(rule_confirm_on_page(t, pending, !page.busy));
+        body_col = body_col.push(rule_confirm_on_page(t, pending, !page.busy, can_decide));
     }
     match &page.rules {
         None => {
@@ -5063,7 +5088,8 @@ pub fn review_rules_panel<'a>(t: &Skin, page: &'a review_rules::Page) -> Element
         Some(rules) => {
             for r in rules {
                 if let Some(pending) = page.pending.as_ref().filter(|p| p.is_delete_of(&r.id)) {
-                    body_col = body_col.push(rule_confirm_on_page(t, pending, !page.busy));
+                    body_col =
+                        body_col.push(rule_confirm_on_page(t, pending, !page.busy, can_decide));
                     continue;
                 }
                 let date = r.added_on(&Local);
@@ -5605,73 +5631,259 @@ where
     scrollable(col).height(Fill).width(Fill).into()
 }
 
-/// A thin Settings landing: the existing destinations, reached from the
-/// self-row. Visual redesign is PR5.
-pub fn settings_landing<'a, F, I>(t: &Skin, rows: I) -> Element<'a, F>
-where
-    F: Clone + 'a,
-    I: IntoIterator<Item = (&'static str, F)>,
-{
-    use robroz_tokens::home as h;
-    let t = *t;
-    let title = container(
-        text(Key::SettingsTitle)
-            .size(22.0)
-            .font(bold())
-            .color(color(t.palette.text)),
-    )
-    .padding(Padding::from([16.0, 16.0]));
-    let mut card = column![];
-    for (i, (label, msg)) in rows.into_iter().enumerate() {
+/// One Settings row as drawn: label, optional `text2` value, then `›`
+/// (or `↗` when it leaves the app).
+pub struct SettingsRowView {
+    pub label: String,
+    pub value: Option<String>,
+    pub external: bool,
+    pub on: Action,
+}
+
+/// A titled group of rows on one card.
+pub struct SettingsGroupView {
+    pub title: String,
+    pub rows: Vec<SettingsRowView>,
+}
+
+/// Inputs for [`settings_page`].
+pub struct SettingsPage {
+    pub title: String,
+    /// Round ‹ in the top-left; `None` on the desktop landing.
+    pub back: Option<Action>,
+    pub groups: Vec<SettingsGroupView>,
+    /// Red row on its own card under the groups.
+    pub sign_out: Option<(String, Action)>,
+    /// 12px `text3` line, centred at the bottom.
+    pub version: Option<String>,
+    pub scale: f32,
+}
+
+fn settings_card<'a>(t: Skin, rows: Vec<Element<'a, Action>>) -> Element<'a, Action> {
+    use robroz_tokens::settings as st;
+    let mut col = column![];
+    for (i, r) in rows.into_iter().enumerate() {
         if i > 0 {
-            card = card.push(
-                container(Space::new().height(Length::Fixed(1.0)))
+            col = col.push(
+                container(Space::new().height(Length::Fixed(st::DIVIDER)))
                     .width(Fill)
                     .style(move |_| container::Style {
-                        background: Some(color(t.palette.divider).into()),
+                        background: Some(color(t.palette.border).into()),
                         ..container::Style::default()
                     }),
             );
         }
-        card = card.push(
-            button(
-                container(
-                    row![
-                        text(label)
-                            .size(t.type_.body)
-                            .color(color(t.palette.text))
-                            .width(Fill),
-                        text("›").size(18.0).color(color(t.palette.text3)),
-                    ]
-                    .align_y(Alignment::Center),
-                )
-                .height(Fill)
-                .align_y(Alignment::Center),
-            )
-            .width(Fill)
-            .height(Length::Fixed(h::CARD_ROW))
-            .padding(Padding::from([0.0, 16.0]))
-            .style(conversation_row_style(t, false))
-            .on_press(msg),
-        );
+        col = col.push(r);
     }
-    let card = container(card)
+    container(col)
         .width(Fill)
+        .clip(true)
         .style(move |_| container::Style {
             background: Some(color(t.palette.surface).into()),
             border: Border {
                 color: color(t.palette.border2),
                 width: 1.0,
-                radius: h::CARD_R.into(),
+                radius: st::CARD_R.into(),
             },
             ..container::Style::default()
-        });
+        })
+        .into()
+}
+
+fn settings_row<'a>(
+    t: Skin,
+    label: String,
+    label_rgb: crate::theme::Rgb,
+    trailing: Option<Element<'a, Action>>,
+    on: Action,
+) -> Element<'a, Action> {
+    use robroz_tokens::settings as st;
+    let mut r = row![text(label)
+        .size(t.type_.body)
+        .color(color(label_rgb))
+        .wrapping(Wrapping::None)
+        .width(Fill)]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    if let Some(tr) = trailing {
+        r = r.push(tr);
+    }
+    button(container(r).height(Fill).align_y(Alignment::Center))
+        .width(Fill)
+        .height(Length::Fixed(st::ROW))
+        .padding(Padding::from([0.0, st::SIDE_PAD]))
+        .style(conversation_row_style(t, false))
+        .on_press(on)
+        .into()
+}
+
+fn settings_trailing<'a>(
+    t: Skin,
+    value: Option<String>,
+    external: bool,
+    scale: f32,
+) -> Element<'a, Action> {
+    let mut r = row![].spacing(8).align_y(Alignment::Center);
+    if let Some(v) = value {
+        r = r.push(
+            text(v)
+                .size(t.type_.body)
+                .color(color(t.palette.text2))
+                .wrapping(Wrapping::None),
+        );
+    }
+    if external {
+        r = r.push(crate::icons::icon(
+            crate::icons::Glyph::External,
+            t.palette.text3,
+            16.0,
+            scale,
+        ));
+    } else {
+        r = r.push(text("›").size(18.0).color(color(t.palette.text3)));
+    }
+    r.into()
+}
+
+/// Shared frame of the Settings pages: top bar (round ‹ when given and the
+/// title), then a column at most 720px wide, 16px from the sides. `ui`
+/// lifts the ‹ [`Action`] into the page's message type.
+fn settings_frame<'a, M: 'a>(
+    t: Skin,
+    title: String,
+    back: Option<Action>,
+    body: Element<'a, M>,
+    ui: fn(Action) -> M,
+) -> Element<'a, M> {
+    use robroz_tokens::settings as st;
+    let mut bar = row![].spacing(12).align_y(Alignment::Center);
+    if let Some(b) = back {
+        bar = bar.push(crate::avatar_view::round_button(&t, crate::icons::Glyph::Back, b).map(ui));
+    }
+    bar = bar.push(
+        text(title)
+            .size(22.0)
+            .font(bold())
+            .color(color(t.palette.text)),
+    );
+    let inner = column![
+        container(bar)
+            .height(Length::Fixed(robroz_tokens::home::FLOAT_BTN + 16.0))
+            .align_y(Alignment::Center),
+        body,
+    ]
+    .spacing(8)
+    .width(Fill)
+    .max_width(st::MAX_W);
     scrollable(
-        column![title, container(card).padding(Padding::from([0.0, 16.0]))]
-            .spacing(8)
-            .width(Fill),
+        container(inner)
+            .width(Fill)
+            .padding(Padding {
+                top: 0.0,
+                right: st::SIDE_PAD,
+                bottom: st::GROUP_GAP,
+                left: st::SIDE_PAD,
+            })
+            .align_x(Alignment::Center),
     )
     .height(Fill)
     .width(Fill)
     .into()
+}
+
+/// Settings (PR5): grouped cards (r16, `surface`), 24px between groups,
+/// each with a 12px `text3` title 8px above; 52px rows split by 1px
+/// `border` lines, 16px side padding; value in `text2` then `›` (`↗` for
+/// a row that leaves the app); Sign out on its own red card; the version
+/// 12px `text3`, centred.
+pub fn settings_page<'a>(t: &Skin, p: SettingsPage) -> Element<'a, Action> {
+    use robroz_tokens::settings as st;
+    let t = *t;
+    let mut col = column![].spacing(st::GROUP_GAP).width(Fill);
+    for g in p.groups {
+        let rows = g
+            .rows
+            .into_iter()
+            .map(|r| {
+                let trailing = settings_trailing(t, r.value, r.external, p.scale);
+                settings_row(t, r.label, t.palette.text, Some(trailing), r.on)
+            })
+            .collect();
+        col = col.push(
+            column![
+                container(
+                    text(g.title)
+                        .size(st::GROUP_TITLE)
+                        .color(color(t.palette.text3)),
+                )
+                .padding(Padding::from([0.0, st::SIDE_PAD])),
+                settings_card(t, rows),
+            ]
+            .spacing(st::GROUP_TITLE_GAP),
+        );
+    }
+    if let Some((label, on)) = p.sign_out {
+        col = col.push(settings_card(
+            t,
+            vec![settings_row(t, label, crate::theme::DANGER, None, on)],
+        ));
+    }
+    if let Some(v) = p.version {
+        col = col.push(
+            text(v)
+                .size(st::VERSION)
+                .color(color(t.palette.text3))
+                .width(Fill)
+                .align_x(Alignment::Center),
+        );
+    }
+    settings_frame(t, p.title, p.back, col.into(), std::convert::identity)
+}
+
+/// A Settings choice page (Language, Appearance): one card, the active
+/// option ticked in the accent colour. Picking emits
+/// [`Action::SettingsChoose`].
+pub fn settings_choice_page<'a>(
+    t: &Skin,
+    title: String,
+    options: Vec<(String, bool)>,
+    scale: f32,
+) -> Element<'a, Action> {
+    let t = *t;
+    let rows = options
+        .into_iter()
+        .enumerate()
+        .map(|(index, (label, on))| {
+            let tick: Element<'a, Action> = if on {
+                crate::icons::icon(crate::icons::Glyph::Check, t.palette.accent, 16.0, scale).into()
+            } else {
+                Space::new().width(Length::Fixed(16.0)).into()
+            };
+            settings_row(
+                t,
+                label,
+                t.palette.text,
+                Some(tick),
+                Action::SettingsChoose { index },
+            )
+        })
+        .collect();
+    settings_frame(
+        t,
+        title,
+        Some(Action::SettingsBack),
+        settings_card(t, rows),
+        std::convert::identity,
+    )
+}
+
+/// A Settings sub-page that hosts another view (the connection form)
+/// under the same top bar and width.
+pub fn settings_sub_page<'a, M: 'a>(
+    t: &Skin,
+    title: String,
+    body: Element<'a, M>,
+    ui: fn(Action) -> M,
+) -> Element<'a, M> {
+    settings_frame(*t, title, Some(Action::SettingsBack), body, ui)
 }

@@ -22,6 +22,10 @@ pub enum Glyph {
     More,
     /// `‹` chevron (top-bar back button).
     Back,
+    /// Tick for the selected option on a settings choice page.
+    Check,
+    /// `↗` for a settings row that leaves the app.
+    External,
 }
 
 fn rgba_u8(c: Color) -> [u8; 4] {
@@ -194,6 +198,18 @@ fn draw(glyph: Glyph, p: &mut tiny_skia::PathBuilder, s: f32) {
                 p.line_to(x + 0.1, mid);
             }
         }
+        Glyph::Check => {
+            p.move_to(s * 0.20, s * 0.52);
+            p.line_to(s * 0.42, s * 0.74);
+            p.line_to(s * 0.82, s * 0.28);
+        }
+        Glyph::External => {
+            p.move_to(s * 0.28, s * 0.72);
+            p.line_to(s * 0.72, s * 0.28);
+            p.move_to(s * 0.38, s * 0.28);
+            p.line_to(s * 0.72, s * 0.28);
+            p.line_to(s * 0.72, s * 0.62);
+        }
         Glyph::Back => {
             p.move_to(s * 0.64, s * 0.18);
             p.line_to(s * 0.34, mid);
@@ -259,6 +275,8 @@ mod tests {
             Glyph::SignOut,
             Glyph::More,
             Glyph::Back,
+            Glyph::Check,
+            Glyph::External,
         ] {
             let img = icon(g, [0, 0, 0], 20.0, 2.0);
             let _ = img;

@@ -22,6 +22,7 @@ pub mod i18n;
 pub mod icons;
 pub mod process;
 pub mod runs;
+pub mod settings;
 pub mod theme;
 #[cfg(feature = "gui")]
 pub mod view;

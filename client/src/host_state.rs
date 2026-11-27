@@ -329,8 +329,8 @@ mod tests {
 
     #[test]
     fn disconnected_pane_renders_the_shared_language_row() {
-        // The pane in `page_view` must actually include the same Language
-        // row as the Model page; a flag on HostState is not enough.
+        // The pane in `page_view` must actually include the Language row;
+        // a flag on HostState is not enough.
         let src = include_str!("main.rs");
         assert!(
             src.contains("state.shows_language_row()"),
@@ -338,8 +338,12 @@ mod tests {
         );
         assert_eq!(
             src.matches("self.language_row(t)").count(),
-            2,
-            "Model page and disconnected pane share language_row"
+            1,
+            "the disconnected pane draws language_row; Settings has its own Language page"
+        );
+        assert!(
+            src.contains("Page::SettingsLanguage => match Locale::ALL.get(index)"),
+            "the Settings Language page picks through the same SetLocale path"
         );
         assert!(
             src.contains("Message::SetLocale") && src.contains("prefs::save(locale)"),

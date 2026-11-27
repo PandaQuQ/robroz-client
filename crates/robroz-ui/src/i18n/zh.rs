@@ -237,6 +237,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ReviewRulesTooLong => "最多 {0} 字，还要删掉 {1} 字",
         Key::ReviewRulesAddedOn => "添加于 {0}",
         Key::ReviewRulesLoadFailedBecause => "读不到：{0}",
+        Key::ReviewRulesWaitingForAdmin => "等管理员确认",
         Key::ReviewRulesCardMissing => "审批卡不存在",
 
         // ---- Card footnotes after a click (cards/interact.rs) ----
@@ -321,6 +322,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ViewDraftEdit => "修改",
         Key::ViewMcpNoTools => "这台服务器还没有工具",
         Key::ViewBackToChats => "‹ 聊天",
+        Key::ViewBackToSettings => "‹ 设置",
         Key::ViewRenameSave => "保存",
         Key::ViewRenameCancel => "取消",
         Key::ViewDmTag => "私聊",
@@ -405,6 +407,8 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::LocaleNameZh => "中文",
         Key::SettingsAppearance => "外观",
         Key::SettingsThemeSystem => "跟随系统",
+        Key::SettingsGroupGeneral => "通用",
+        Key::SettingsGroupBros => "bro",
 
         // ---- Client-side errors (client/src/api.rs) ----
         Key::ClientNoHost => "连不上主机",

@@ -228,6 +228,18 @@ fn apply_metrics(ui: &MainWindow) {
     am.set_swatch_hit(a::SWATCH_HIT);
     am.set_ring(a::SELECTED_RING);
     am.set_create_empty_opacity(a::CREATE_EMPTY_OPACITY);
+    {
+        use robroz_tokens::settings as st;
+        let sm = ui.global::<SettingsMetrics>();
+        sm.set_card_r(st::CARD_R);
+        sm.set_group_gap(st::GROUP_GAP);
+        sm.set_group_title(st::GROUP_TITLE);
+        sm.set_group_title_gap(st::GROUP_TITLE_GAP);
+        sm.set_row(st::ROW);
+        sm.set_divider(st::DIVIDER);
+        sm.set_side_pad(st::SIDE_PAD);
+        sm.set_version(st::VERSION);
+    }
     use robroz_tokens::home as h;
     let hm = ui.global::<HomeMetrics>();
     hm.set_row(h::ROW);
@@ -366,6 +378,7 @@ fn apply_strings(ui: &MainWindow) {
     tr.set_members_title(Key::MembersTitle.as_str().into());
     tr.set_settings_title(Key::SettingsTitle.as_str().into());
     tr.set_sign_out(Key::SignOutOnThisDevice.as_str().into());
+    tr.set_settings_general(Key::SettingsGroupGeneral.as_str().into());
     ui.set_locale_index(match i18n::locale() {
         Locale::En => 0,
         Locale::Zh => 1,
@@ -1385,6 +1398,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let screen = ui.get_screen();
             let to = match screen {
                 3 => state.lock().unwrap().before_settings,
+                9 => 3,
                 6 | 7 => 2,
                 8 => 6,
                 _ => 1,
@@ -1407,6 +1421,15 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let ui = weak.unwrap();
             state.lock().unwrap().before_settings = ui.get_screen();
             ui.set_screen(3);
+        }
+    });
+
+    ui.on_open_choice({
+        let weak = ui.as_weak();
+        move |kind| {
+            let ui = weak.unwrap();
+            ui.set_choice_kind(kind);
+            ui.set_screen(9);
         }
     });
 
