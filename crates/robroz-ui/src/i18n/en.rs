@@ -61,12 +61,12 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::HostGroupNotFound => "Group not found",
         // 头像的形状或颜色超出范围  [approved, 最优雅UI姐 avatar errors]
         Key::HostInvalidAvatar => "Couldn't save the avatar. Try again",
-        // Needs UI review. 只有建群的人或管理员能改这个群
-        Key::HostNotGroupCreator => "Only the group's creator or an admin can change this group",
-        // Needs UI review. 你不在这个群里
+        // 只有建群的人或管理员能改这个群  [approved, contract-v0.3.0 codes rev 2]
+        Key::HostNotGroupCreator => "Only the creator or an admin can change this group",
+        // 你不在这个群里  [approved, contract-v0.3.0 codes rev 2]
         Key::HostNotGroupMember => "You're not in this group",
-        // Needs UI review. 私聊不能改名或删除
-        Key::HostGroupIsDm => "A DM can't be renamed or deleted",
+        // 私聊不能改名或删除  [approved, contract-v0.3.0 codes rev 2]
+        Key::HostGroupIsDm => "DMs can't be renamed or deleted",
         // 只有 stdio 服务器需要批准启动命令  [approved, batch 2]
         Key::HostStdioOnlyApprove => "Only stdio servers need their start command approved",
         // 这个 bro 不存在  [approved, batch 2]
