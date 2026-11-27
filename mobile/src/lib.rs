@@ -598,13 +598,22 @@ fn render_working(ui: &MainWindow, st: &State) {
     }
 }
 
-fn render_banner(ui: &MainWindow, st: &State) {
+fn header_notice(st: &State) -> Option<String> {
+    if std::env::var("ROBROZ_FAKE_TOO_MANY_STREAMS").as_deref() == Ok("1") {
+        return Some(robroz_ui::process::too_many_streams_banner());
+    }
+    if std::env::var("ROBROZ_FAKE_SYNCING").as_deref() == Ok("1") {
+        return Some(robroz_ui::process::syncing_banner());
+    }
     if robroz_ui::process::show_reconnect_banner(st.poll_fail_since, robroz_ui::process::now_unix())
     {
-        ui.set_reconnect_banner(robroz_ui::process::reconnect_banner().into());
-    } else {
-        ui.set_reconnect_banner("".into());
+        return Some(robroz_ui::process::reconnect_banner());
     }
+    None
+}
+
+fn render_banner(ui: &MainWindow, st: &State) {
+    ui.set_reconnect_banner(header_notice(st).unwrap_or_default().into());
 }
 
 /// Title capsule: up to three avatars then "+N"; the `…` entry only for
@@ -1353,6 +1362,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
     if std::env::var("ROBROZ_SHOT_SCREEN").is_ok()
         || std::env::var("ROBROZ_FAKE_RECONNECTING").is_ok()
+        || std::env::var("ROBROZ_FAKE_SYNCING").is_ok()
+        || std::env::var("ROBROZ_FAKE_TOO_MANY_STREAMS").is_ok()
     {
         if let Some(unix) = robroz_ui::process::parse_unix(robroz_ui::process::FAKE_NOW_ISO) {
             robroz_ui::process::freeze_clock(unix);

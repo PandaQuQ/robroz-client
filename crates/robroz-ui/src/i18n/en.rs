@@ -1154,5 +1154,9 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::WorkingRowMany => "{0} and {1} others",
         // 正在重新连接  [approved, PR3 process]
         Key::Reconnecting => "Reconnecting…",
+        // 同步中…  [approved, UI姐 C3]
+        Key::Syncing => "Syncing…",
+        // 连接太多了，稍后自动重试  [approved, UI姐 C3]
+        Key::TooManyStreams => "Too many connections. Retrying shortly.",
     }
 }

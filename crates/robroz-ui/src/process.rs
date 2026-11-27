@@ -8,8 +8,11 @@
 //! (`updatedAt` refreshes on every progress write, so it would be too
 //! short); a finished card uses `updatedAt − createdAt`. After a
 //! follow-up re-queue, `createdAt` is not reset, so from the second
-//! round on the fallback is cumulative. Host `startedAt` is not read
-//! in this crate (contract still v0.3.0; that lands in the v0.3.1 PR).
+//! round on the fallback is cumulative. When the host sends `startedAt`
+//! (contract-v0.3.1), duration is exact (no 「约」 / "~"): a live card
+//! uses `now − startedAt`, a finished card uses `updatedAt − startedAt`.
+//! Without it (an older host, or a reconnect with no field) the
+//! fallback stays approximate.
 //!
 //! While the task is blocked or queued the line shows no timer. On
 //! `done` it shows the total.
@@ -25,6 +28,63 @@ pub const SSE_IDLE_SECS: u64 = 45;
 /// After this many seconds of continuous failed reconnects, show the
 /// reconnecting banner. Shorter failures stay silent.
 pub const SSE_BANNER_SECS: u64 = 30;
+
+/// Show 「同步中…」 / "Syncing…" only if a resync snapshot is still
+/// incomplete after this many milliseconds (empty groups resync on
+/// every reconnect; a short snapshot must not flash the status).
+pub const RESYNC_STATUS_MS: u128 = 300;
+
+/// An empty snapshot has no id-carrying frame. After this many ms
+/// with no data following `resync`, treat the snapshot as complete.
+pub const RESYNC_EMPTY_COMPLETE_MS: u128 = 300;
+
+/// Safety: data arrived after `resync` but no id-carrying frame came.
+/// Complete after this many ms of silence so 「同步中…」 cannot stick.
+pub const RESYNC_STALL_COMPLETE_MS: u128 = 2_000;
+
+/// Default wait when a 503 `too_many_streams` has no `Retry-After`.
+pub const TOO_MANY_STREAMS_RETRY_SECS: u64 = 5;
+
+/// Whether a resync collection should finish.
+///
+/// The official signal is an id-carrying frame (`got_batch_end`). An
+/// empty group never sends one, so no data for [`RESYNC_EMPTY_COMPLETE_MS`]
+/// completes too. If some cards arrived but the id never did, complete
+/// after [`RESYNC_STALL_COMPLETE_MS`] of silence.
+pub fn resync_should_complete(
+    got_batch_end: bool,
+    seen_data: bool,
+    elapsed_ms: u128,
+    silence_ms: u128,
+) -> bool {
+    if got_batch_end {
+        return true;
+    }
+    if !seen_data && elapsed_ms >= RESYNC_EMPTY_COMPLETE_MS {
+        return true;
+    }
+    if seen_data && silence_ms >= RESYNC_STALL_COMPLETE_MS {
+        return true;
+    }
+    false
+}
+
+/// Show the Syncing status only after [`RESYNC_STATUS_MS`], and never
+/// once the snapshot is complete (so an empty group that finishes at
+/// 300ms does not flash).
+pub fn resync_show_status(complete: bool, elapsed_ms: u128) -> bool {
+    !complete && elapsed_ms >= RESYNC_STATUS_MS
+}
+
+/// Locale-aware 「同步中…」 / "Syncing…".
+pub fn syncing_banner() -> String {
+    Key::Syncing.into()
+}
+
+/// Locale-aware 「连接太多了，稍后自动重试」 / "Too many connections. Retrying shortly."
+pub fn too_many_streams_banner() -> String {
+    Key::TooManyStreams.into()
+}
 
 /// Frozen `--fake` / gallery clock. Process timers are measured from this instant.
 pub const FAKE_NOW_ISO: &str = "2026-10-07T19:10:00.000Z";
@@ -55,6 +115,9 @@ pub struct TimerInput {
     /// First `running` seen in this session, only if we saw the
     /// transition into running (not a snapshot that was already running).
     pub local_started: Option<i64>,
+    /// Host `startedAt` (when the current round first entered `running`).
+    /// Exact when present. Unix seconds.
+    pub started_at: Option<i64>,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
     pub now: i64,
@@ -117,23 +180,21 @@ pub fn timer_phase(input: TimerInput) -> TimerPhase {
         return TimerPhase::Hidden;
     }
 
-    // The local timer is exact. Any fallback (no local start this
-    // session) is approximate: after a restart, or from the second
-    // round on, when `createdAt` still belongs to the first round.
-    let (start, end, approx) = if let Some(start) = input.local_started {
-        let end = if input.live {
-            input.now
-        } else {
-            input.updated_at.unwrap_or(input.now)
-        };
-        (start, end, false)
+    // Host `startedAt` and the local timer are exact. Any fallback
+    // (neither, this session) is approximate: an older host, a
+    // reconnect without the field, or a follow-up round still keyed
+    // off the first `createdAt`.
+    let end = if input.live {
+        input.now
+    } else {
+        input.updated_at.unwrap_or(input.now)
+    };
+    let (start, approx) = if let Some(start) = input.started_at {
+        (start, false)
+    } else if let Some(start) = input.local_started {
+        (start, false)
     } else if let Some(created) = input.created_at {
-        let end = if input.live {
-            input.now
-        } else {
-            input.updated_at.unwrap_or(input.now)
-        };
-        (created, end, true)
+        (created, true)
     } else {
         return TimerPhase::Hidden;
     };
@@ -246,6 +307,7 @@ mod tests {
             live: true,
             failed: false,
             local_started: None,
+            started_at: None,
             created_at: None,
             updated_at: None,
             now: 1_000,
@@ -609,6 +671,100 @@ mod tests {
                 (" 秒".into(), false),
             ]
         );
+    }
+
+    #[test]
+    fn host_started_at_is_exact_and_beats_the_created_at_fallback() {
+        let _en = scoped(Locale::En);
+        let phase = timer_phase(TimerInput {
+            state: TaskState::Done,
+            live: false,
+            started_at: Some(1_000 - 38),
+            created_at: Some(1_000 - 120),
+            updated_at: Some(1_000),
+            now: 1_000,
+            ..input()
+        });
+        assert_eq!(
+            phase,
+            TimerPhase::Done {
+                secs: 38,
+                approx: false
+            }
+        );
+        assert_eq!(phase.line().as_deref(), Some("Worked for 38s"));
+        drop(_en);
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(phase.line().as_deref(), Some("用了 38 秒"));
+    }
+
+    #[test]
+    fn without_started_at_the_fallback_stays_approximate() {
+        let _en = scoped(Locale::En);
+        let phase = timer_phase(TimerInput {
+            state: TaskState::Done,
+            live: false,
+            started_at: None,
+            created_at: Some(1_000 - 38),
+            updated_at: Some(1_000),
+            now: 1_000,
+            ..input()
+        });
+        assert_eq!(
+            phase,
+            TimerPhase::Done {
+                secs: 38,
+                approx: true
+            }
+        );
+        assert_eq!(phase.line().as_deref(), Some("Worked for ~38s"));
+        drop(_en);
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(phase.line().as_deref(), Some("用了约 38 秒"));
+    }
+
+    #[test]
+    fn started_at_under_one_second_never_says_zero() {
+        let phase = timer_phase(TimerInput {
+            state: TaskState::Done,
+            live: false,
+            started_at: Some(1_000),
+            updated_at: Some(1_000),
+            now: 1_000,
+            ..input()
+        });
+        let _en = scoped(Locale::En);
+        assert_eq!(phase.line().as_deref(), Some("Worked for under 1s"));
+        drop(_en);
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(phase.line().as_deref(), Some("用了不到 1 秒"));
+    }
+
+    #[test]
+    fn resync_status_waits_300ms_and_empty_completes_without_flashing() {
+        assert!(!resync_should_complete(false, false, 299, 299));
+        assert!(resync_should_complete(false, false, 300, 300));
+        assert!(resync_should_complete(true, true, 10, 0));
+        assert!(!resync_should_complete(false, true, 1_999, 1_999));
+        assert!(resync_should_complete(false, true, 2_500, 2_000));
+        // Empty group finishes at 300ms: do not show Syncing.
+        assert!(!resync_show_status(true, 300));
+        assert!(!resync_show_status(false, 299));
+        assert!(resync_show_status(false, 300));
+    }
+
+    #[test]
+    fn header_notice_copy() {
+        let _en = scoped(Locale::En);
+        assert_eq!(syncing_banner(), "Syncing…");
+        assert_eq!(
+            too_many_streams_banner(),
+            "Too many connections. Retrying shortly."
+        );
+        drop(_en);
+        let _zh = scoped(Locale::Zh);
+        assert_eq!(syncing_banner(), "同步中…");
+        assert_eq!(too_many_streams_banner(), "连接太多了，稍后自动重试");
     }
 
     #[test]
