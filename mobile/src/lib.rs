@@ -20,6 +20,8 @@ use robroz_card::Tone;
 use robroz_contract::{Bro, BroAvatar, Group, GroupMembers, GroupSearchHit, Me, Unread};
 use robroz_tokens::{ColorSet, DARK, LIGHT};
 use robroz_ui::avatar;
+use robroz_ui::cards::group_approval;
+use robroz_ui::cards::status::Dot;
 use robroz_ui::conversations;
 use robroz_ui::i18n::{self, Key, Locale};
 use robroz_ui::runs;
@@ -545,11 +547,12 @@ fn chat_rows(
     in_group: bool,
     bros: &[Bro],
     scale: f32,
+    me: Option<&Me>,
 ) -> Vec<ChatRow> {
     let now = runs::now_unix();
     chat::feed(items, fallback_name, in_group, now)
         .into_iter()
-        .map(|entry| feed_entry_row(entry, fallback_name, mode, bros, scale))
+        .map(|entry| feed_entry_row(entry, fallback_name, mode, bros, scale, me))
         .collect()
 }
 
@@ -562,6 +565,7 @@ fn render_chat(ui: &MainWindow, st: &State) {
         st.chat_in_group,
         &st.bros,
         window_scale(ui),
+        st.me.as_ref(),
     ))));
     render_title(ui, st);
     render_working(ui, st);
@@ -699,12 +703,24 @@ fn status_runs_of(line: &str) -> ModelRc<StatusRun> {
     ModelRc::new(VecModel::from(runs))
 }
 
+fn approval_dot_color(mode: Mode, dot: Dot) -> slint::Color {
+    let skin = Skin::for_mode(mode);
+    color(match dot {
+        // Pending read-only rows use the yellow `status.blocked` token,
+        // the same colour as a stuck (`Dot::Stuck`) card.
+        Dot::Waiting | Dot::Stuck => skin.status.blocked,
+        Dot::Done => skin.status.done,
+        Dot::Void => tokens_for(mode).dot_void,
+    })
+}
+
 fn feed_entry_row(
     entry: chat::FeedEntry,
     fallback: &str,
     mode: Mode,
     bros: &[Bro],
     scale: f32,
+    me: Option<&Me>,
 ) -> ChatRow {
     let shown = |p: &Option<robroz_ui::cards::codes::ProgressLine>| -> SharedString {
         p.as_ref().map(|p| p.text()).unwrap_or_default().into()
@@ -733,6 +749,13 @@ fn feed_entry_row(
                         c.bot_name.clone()
                     }
                 }
+                chat::ChatItem::Approval(a) => {
+                    if a.card.bot.is_empty() {
+                        fallback.to_string()
+                    } else {
+                        a.card.bot.clone()
+                    }
+                }
             };
             let initial: SharedString = conversations::initial(&name).into();
             let bro_id = match &row.item {
@@ -741,6 +764,7 @@ fn feed_entry_row(
                     ..
                 } => id.as_str(),
                 chat::ChatItem::Status(c) => c.bot_id.as_str(),
+                chat::ChatItem::Approval(a) => a.bot_id.as_str(),
                 _ => "",
             };
             let has_glyph = !bro_id.is_empty();
@@ -824,6 +848,36 @@ fn feed_entry_row(
                         expandable,
                         status_runs: runs,
                         status_shrink: shrink,
+                        ..ChatRow::default()
+                    }
+                }
+                chat::ChatItem::Approval(a) => {
+                    let mut card = a.card.clone();
+                    if let Some(me) = me {
+                        card = card.seen_by(&me.name);
+                    }
+                    let line = group_approval::phone_line_local(
+                        &card,
+                        me.map(|m| m.id.as_str()),
+                        me.map(|m| m.role),
+                    );
+                    ChatRow {
+                        kind: 4,
+                        name: if row.show_name {
+                            name.into()
+                        } else {
+                            "".into()
+                        },
+                        status: line.status.into(),
+                        text: line.line.unwrap_or_default().into(),
+                        dot: approval_dot_color(mode, line.dot),
+                        show_name: row.show_name,
+                        show_avatar: row.show_avatar,
+                        initial,
+                        glyph,
+                        has_glyph,
+                        pad_top: row.pad_top,
+                        time: row.time.into(),
                         ..ChatRow::default()
                     }
                 }

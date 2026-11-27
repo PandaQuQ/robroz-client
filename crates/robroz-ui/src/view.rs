@@ -3020,16 +3020,18 @@ pub fn mcp_panel<'a>(
             list = list.push(container(mcp_form(t, book, busy)).padding(pad));
             continue;
         }
-        list = list.push(container(mcp_row(t, book, server, busy)).padding(Padding {
-            top: 0.0,
-            bottom: if book.open.as_deref() == Some(server.id.as_str()) {
-                m.row_pad_h * 0.75
-            } else {
-                0.0
-            },
-            left: m.row_pad_h,
-            right: m.row_pad_h,
-        }));
+        list = list.push(
+            container(mcp_row(t, book, server, busy, _width)).padding(Padding {
+                top: 0.0,
+                bottom: if book.open.as_deref() == Some(server.id.as_str()) {
+                    m.row_pad_h * 0.75
+                } else {
+                    0.0
+                },
+                left: m.row_pad_h,
+                right: m.row_pad_h,
+            }),
+        );
     }
     col = col.push(list);
     col.into()
@@ -3459,6 +3461,7 @@ fn mcp_row<'a>(
     book: &'a McpBook,
     server: &'a McpServer,
     busy: bool,
+    width: f32,
 ) -> Element<'a, Action> {
     let m = t.metrics;
     let id = server.id.clone();
@@ -3479,9 +3482,18 @@ fn mcp_row<'a>(
         Some(test) => (test.text(), t.palette.text2),
         None => (mcp::row_subtitle(server), t.palette.text3),
     };
-    let sub_text = text(sub)
+    let cols = mcp::subtitle_cols(
+        width,
+        t.type_.unit_width,
+        t.metrics.row_pad_h,
+        t.controls.button_gap,
+    );
+    let sub_text = text(mcp::clamp_subtitle(&sub, cols))
         .size(robroz_tokens::mcp::ROW_SUB)
-        .wrapping(text::Wrapping::None)
+        .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
+            robroz_tokens::mcp::ROW_SUB + 4.0,
+        )))
+        .wrapping(text::Wrapping::Word)
         .color(color(sub_rgb));
     let sub_line: Element<'a, Action> = if mcp::shows_approval_status(server, has_test) {
         row![mcp_status_dot(t, t.status.blocked), sub_text]
@@ -5359,25 +5371,28 @@ pub fn review_rules_panel<'a>(
         .padding(field_padding())
         .width(Fill)
         .style(review_rule_input_style(*t));
-    if !locked {
+    let can_edit = review_rules::shows_edit_controls(can_decide);
+    if can_edit && !locked {
         input = input
             .on_input(|text| Action::ReviewDraft { text })
             .on_submit(Action::ReviewAdd);
     }
-    body_col = body_col.push(
-        row![
-            input,
-            btn(
-                t,
-                review_rules::ADD.into(),
-                Look::Primary,
-                Leading::None,
-                (!locked).then_some(Action::ReviewAdd),
-            ),
-        ]
-        .spacing(t.controls.button_gap)
-        .align_y(Alignment::Center),
-    );
+    if can_edit {
+        body_col = body_col.push(
+            row![
+                input,
+                btn(
+                    t,
+                    review_rules::ADD.into(),
+                    Look::Primary,
+                    Leading::None,
+                    (!locked).then_some(Action::ReviewAdd),
+                ),
+            ]
+            .spacing(t.controls.button_gap)
+            .align_y(Alignment::Center),
+        );
+    }
     if let Some(note) = &page.note {
         if *note == review_rules::ALREADY_ANSWERED {
             body_col = body_col.push(
@@ -5425,7 +5440,7 @@ pub fn review_rules_panel<'a>(
                         row_el.push(text(date).size(t.type_.foot).color(color(t.palette.text2)));
                 }
                 let id = r.id.clone();
-                body_col = body_col.push(
+                let rule_row: Element<'a, Action> = if can_edit {
                     row![
                         container(row_el).width(Fill),
                         btn(
@@ -5437,8 +5452,12 @@ pub fn review_rules_panel<'a>(
                         ),
                     ]
                     .spacing(t.controls.button_gap)
-                    .align_y(Alignment::Center),
-                );
+                    .align_y(Alignment::Center)
+                    .into()
+                } else {
+                    container(row_el).width(Fill).into()
+                };
+                body_col = body_col.push(rule_row);
             }
         }
     }

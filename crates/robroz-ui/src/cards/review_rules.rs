@@ -61,6 +61,12 @@ pub fn may_decide(role: Option<robroz_contract::UserRole>) -> bool {
     role == Some(robroz_contract::UserRole::Admin)
 }
 
+/// Add and Delete on the rules page: only an admin sees them. Members
+/// do not get greyed controls (no dead UI).
+pub fn shows_edit_controls(can_decide: bool) -> bool {
+    can_decide
+}
+
 /// The "Confirm to add / delete" line on a rule card. Only someone who
 /// can answer sees it; a member gets the waiting line and the rule text,
 /// and not this hint.
@@ -328,6 +334,14 @@ mod tests {
         assert!(may_decide(Some(UserRole::Admin)));
         assert!(!may_decide(Some(UserRole::Member)));
         assert!(!may_decide(None), "no buttons before /api/me answers");
+    }
+
+    #[test]
+    fn only_an_admin_sees_add_and_delete_on_the_rules_page() {
+        use robroz_contract::UserRole;
+        assert!(shows_edit_controls(may_decide(Some(UserRole::Admin))));
+        assert!(!shows_edit_controls(may_decide(Some(UserRole::Member))));
+        assert!(!shows_edit_controls(may_decide(None)));
     }
 
     #[test]

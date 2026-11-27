@@ -145,6 +145,26 @@ pub fn tool_count_text(n: Option<u32>) -> String {
 }
 
 /// Second line on a collapsed server row.
+/// Subtitle wraps at most this many lines, then an ellipsis.
+pub const SUBTITLE_LINES: usize = 2;
+
+/// Rough character columns for the MCP row subtitle, given the panel
+/// width (same units as [`super::status::clamp_lines`]). The Connect
+/// capsule is reserved so a narrow window does not clip mid-word.
+pub fn subtitle_cols(panel_width: f32, unit_width: f32, row_pad_h: f32, button_gap: f32) -> usize {
+    use robroz_tokens::mcp as k;
+    let connect = k::CAPSULE_TEXT * unit_width * 8.0 + 2.0 * k::CAPSULE_PAD;
+    let used = 2.0 * row_pad_h + k::ICON + k::ICON_GAP + button_gap + connect;
+    let inner = (panel_width - used).max(0.0);
+    (inner / (k::ROW_SUB * unit_width)).max(8.0) as usize
+}
+
+/// Cut a row subtitle to [`SUBTITLE_LINES`], ending in "…" when anything
+/// was dropped.
+pub fn clamp_subtitle(text: &str, cols: usize) -> String {
+    super::status::clamp_lines(text, cols, SUBTITLE_LINES)
+}
+
 pub fn row_subtitle(s: &McpServer) -> String {
     if command_unapproved(s) {
         TOOLS_NEED_APPROVAL.into()
@@ -1364,5 +1384,30 @@ mod tests {
         b.show_command_prompt("s3", "echo".into(), vec!["hello".into()]);
         assert_eq!(b.open.as_deref(), Some("s3"));
         assert!(b.command_prompt_for("s3").is_some());
+    }
+    #[test]
+    fn a_long_english_subtitle_wraps_to_two_lines_then_ellipsis() {
+        let line = "Approve the command to load its tools";
+        // Plenty of room: two lines of 24 units hold the whole sentence.
+        assert_eq!(clamp_subtitle(line, 24), line);
+        let cut = clamp_subtitle(line, 12);
+        assert!(cut.ends_with('…'), "{cut}");
+        assert!(cut.starts_with("Approve"), "{cut}");
+        assert_eq!(
+            clamp_subtitle(line, 12),
+            crate::cards::status::clamp_lines(line, 12, 2)
+        );
+    }
+
+    #[test]
+    fn subtitle_cols_shrink_on_a_narrow_panel() {
+        let unit = 0.56;
+        let wide = subtitle_cols(720.0, unit, 16.0, 8.0);
+        let narrow = subtitle_cols(390.0, unit, 16.0, 8.0);
+        assert!(wide > narrow, "wide={wide} narrow={narrow}");
+        assert!(narrow >= 8);
+        // The approval sentence fits in two lines at a 390px panel.
+        let line = "Approve the command to load its tools";
+        assert_eq!(clamp_subtitle(line, narrow), line);
     }
 }

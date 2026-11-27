@@ -485,6 +485,12 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::InteractAlreadyDecided => "This card was already handled. Refreshing…",
         // 等这个 bro 的主人审批  [approved, UI姐 review]
         Key::ApprovalWaitingFor => "Waiting for this bro's owner",
+        // 等你批准  [approved, UI姐 mobile approval]
+        Key::ApprovalWaitingForYou => "Waiting for your approval",
+        // 等你批准：{0}  [approved, UI姐 mobile approval]
+        Key::ApprovalWaitingForYouDetail => "Waiting for your approval: {0}",
+        // 到桌面上批准或拒绝  [approved, UI姐 mobile approval]
+        Key::ApprovalHandleOnDesktop => "Approve or decline on desktop",
         // {0} 于 {1} 批准  [approved, group approval spec]
         Key::ApprovalApprovedBy => "Approved by {0} at {1}",
         // {0} 于 {1} 拒绝  [approved, group approval spec]

@@ -8,9 +8,11 @@ use chrono::TimeZone;
 use robroz_contract::ReminderState;
 
 use super::interact::{ApprovalActions, CardUi, Note};
+use super::review_rules;
 use super::status::{self, clock_in, Dot};
 use super::{ApprovalCard, ApprovalState};
 use crate::i18n::Key;
+use robroz_contract::UserRole;
 
 /// Who is looking at an approval card.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +123,111 @@ pub fn decided_line(approved: bool, by_you: bool, owner: &str, time: &str) -> St
         (false, true, true) => Key::StatusDeniedFoot.into(),
         (true, false, true) => Key::StatusApprovedByFoot.fill(&[&owner]),
         (false, false, true) => Key::StatusDeniedByFoot.fill(&[&owner]),
+    }
+}
+
+/// Whether this user may approve or deny the card on desktop. A rule
+/// (settings) card is admin-only; any other card is the bro's owner.
+pub fn can_answer(card: &ApprovalCard, me: Option<&str>, role: Option<UserRole>) -> bool {
+    if card.is_rule() {
+        review_rules::may_decide(role)
+    } else {
+        viewer(card, me) == Viewer::Owner
+    }
+}
+
+/// Read-only approval row on the phone (v0.2): status line, optional
+/// muted second line, no buttons. Pending uses the yellow
+/// `status.blocked` dot ([`Dot::Stuck`]); a resolved card uses the
+/// same sentence as the desktop result line and its usual dot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhoneLine {
+    pub status: String,
+    pub line: Option<String>,
+    pub dot: Dot,
+}
+
+pub fn phone_line<Tz: TimeZone>(
+    card: &ApprovalCard,
+    me: Option<&str>,
+    role: Option<UserRole>,
+    tz: &Tz,
+) -> PhoneLine
+where
+    Tz::Offset: std::fmt::Display,
+{
+    match &card.state {
+        ApprovalState::Pending => {
+            if can_answer(card, me, role) {
+                let d = card.summary.trim();
+                let status = if d.is_empty() {
+                    Key::ApprovalWaitingForYou.into()
+                } else {
+                    Key::ApprovalWaitingForYouDetail.fill(&[&d])
+                };
+                PhoneLine {
+                    status,
+                    line: Some(Key::ApprovalHandleOnDesktop.into()),
+                    dot: Dot::Stuck,
+                }
+            } else {
+                let status = if card.is_rule() {
+                    Key::ReviewRulesWaitingForAdmin.into()
+                } else {
+                    Key::ApprovalWaitingFor.into()
+                };
+                PhoneLine {
+                    status,
+                    line: None,
+                    dot: Dot::Stuck,
+                }
+            }
+        }
+        ApprovalState::Approved { by, at } => resolved_phone_line(true, by, *at, card, me, tz),
+        ApprovalState::Denied { by, at } => resolved_phone_line(false, by, *at, card, me, tz),
+        other => {
+            let (status, dot) = status::approval_status(other);
+            PhoneLine {
+                status: status.to_string(),
+                line: None,
+                dot,
+            }
+        }
+    }
+}
+
+/// [`phone_line`] in the local timezone. The phone crate does not
+/// depend on chrono directly.
+pub fn phone_line_local(
+    card: &ApprovalCard,
+    me: Option<&str>,
+    role: Option<UserRole>,
+) -> PhoneLine {
+    phone_line(card, me, role, &chrono::Local)
+}
+
+fn resolved_phone_line<Tz: TimeZone>(
+    approved: bool,
+    by: &Option<String>,
+    at: i64,
+    card: &ApprovalCard,
+    me: Option<&str>,
+    tz: &Tz,
+) -> PhoneLine
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let time = clock_in(at, tz);
+    let by_you = match by.as_deref() {
+        Some(super::ME_MARK) => true,
+        Some(name) => me == Some(name),
+        None => false,
+    };
+    let owner = owner_label(card.owner_name.as_deref());
+    PhoneLine {
+        status: decided_line(approved, by_you, &owner, &time),
+        line: None,
+        dot: if approved { Dot::Done } else { Dot::Void },
     }
 }
 
@@ -389,5 +496,115 @@ mod tests {
         assert_eq!(reminder_dot(ReminderState::Approved), Dot::Done);
         assert_eq!(reminder_dot(ReminderState::Denied), Dot::Void);
         assert_eq!(reminder_dot(ReminderState::Expired), Dot::Void);
+    }
+
+    fn pending_card(owner: Option<(&str, &str)>, summary: &str, rule: bool) -> ApprovalCard {
+        ApprovalCard {
+            id: "a1".into(),
+            bot: if rule { "设置".into() } else { "Ada".into() },
+            kind: if rule {
+                super::super::ActionKind::RuleAdd
+            } else {
+                super::super::ActionKind::Delete
+            },
+            summary: summary.into(),
+            path: None,
+            state: ApprovalState::Pending,
+            mcp_server: None,
+            mcp_tool: None,
+            reason_code: None,
+            reason: None,
+            owner_id: owner.map(|o| o.0.into()),
+            owner_name: owner.map(|o| o.1.into()),
+        }
+    }
+
+    #[test]
+    fn phone_owner_pending_asks_to_decide_on_desktop() {
+        let _en = scoped(Locale::En);
+        let c = pending_card(Some(("u-me", "Panda")), "Delete 12 old log files", false);
+        let l = phone_line(&c, Some("u-me"), None, &Utc);
+        assert_eq!(
+            l.status,
+            "Waiting for your approval: Delete 12 old log files"
+        );
+        assert_eq!(l.line.as_deref(), Some("Approve or decline on desktop"));
+        assert_eq!(l.dot, Dot::Stuck);
+        let empty = pending_card(Some(("u-me", "Panda")), "  ", false);
+        let l = phone_line(&empty, Some("u-me"), None, &Utc);
+        assert_eq!(l.status, "Waiting for your approval");
+        let _zh = scoped(Locale::Zh);
+        let l = phone_line(&c, Some("u-me"), None, &Utc);
+        assert_eq!(l.status, "等你批准：Delete 12 old log files");
+        assert_eq!(l.line.as_deref(), Some("到桌面上批准或拒绝"));
+    }
+
+    #[test]
+    fn phone_non_owner_pending_waits_for_the_bro_owner() {
+        let c = pending_card(Some(("u-lin", "Lin")), "Delete 12 old log files", false);
+        let en = {
+            let _g = scoped(Locale::En);
+            phone_line(&c, Some("u-me"), Some(UserRole::Admin), &Utc)
+        };
+        assert_eq!(en.status, "Waiting for this bro's owner");
+        assert_eq!(en.line, None);
+        assert_eq!(en.dot, Dot::Stuck);
+        let zh = {
+            let _g = scoped(Locale::Zh);
+            phone_line(&c, Some("u-me"), Some(UserRole::Admin), &Utc)
+        };
+        assert_eq!(zh.status, "等这个 bro 的主人审批");
+        assert_eq!(zh.line, None);
+    }
+
+    #[test]
+    fn phone_member_pending_rule_waits_for_an_admin() {
+        use robroz_contract::UserRole;
+        let c = pending_card(None, "允许发周报", true);
+        let en = {
+            let _g = scoped(Locale::En);
+            phone_line(&c, Some("u-lin"), Some(UserRole::Member), &Utc)
+        };
+        assert_eq!(en.status, "Waiting for an admin");
+        assert_eq!(en.line, None);
+        assert_eq!(en.dot, Dot::Stuck);
+        let zh = {
+            let _g = scoped(Locale::Zh);
+            phone_line(&c, Some("u-lin"), Some(UserRole::Member), &Utc)
+        };
+        assert_eq!(zh.status, "等管理员确认");
+        let admin = {
+            let _g = scoped(Locale::Zh);
+            phone_line(&c, Some("u-me"), Some(UserRole::Admin), &Utc)
+        };
+        assert_eq!(admin.status, "等你批准：允许发周报");
+        assert_eq!(admin.line.as_deref(), Some("到桌面上批准或拒绝"));
+    }
+
+    #[test]
+    fn phone_resolved_reuses_the_desktop_result_line() {
+        let _en = scoped(Locale::En);
+        let mut c = pending_card(Some(("u-me", "Panda")), "Delete 12 old log files", false);
+        c.state = ApprovalState::Denied {
+            by: Some(super::super::ME_MARK.into()),
+            at: at(),
+        };
+        let l = phone_line(&c, Some("u-me"), None, &Utc);
+        assert_eq!(
+            l.status,
+            decided_line(false, true, "Panda", &clock_in(at(), &Utc))
+        );
+        assert_eq!(l.line, None);
+        assert_eq!(l.dot, Dot::Void);
+        c.state = ApprovalState::Approved {
+            by: Some("Lin".into()),
+            at: at(),
+        };
+        let l = phone_line(&c, Some("u-me"), None, &Utc);
+        assert_eq!(
+            l.status,
+            decided_line(true, false, "Panda", &clock_in(at(), &Utc))
+        );
+        assert_eq!(l.dot, Dot::Done);
     }
 }

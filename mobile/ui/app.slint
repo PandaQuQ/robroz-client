@@ -240,7 +240,7 @@ export struct MemberLine {
 }
 
 // kind: 0 own bubble (right), 1 bro bubble (left), 2 status card (left),
-// 3 date separator (centred).
+// 3 date separator (centred), 4 read-only approval row (left, no buttons).
 export struct StatusRun {
     text: string,
     mono: bool,
@@ -1324,6 +1324,85 @@ export component MainWindow inherits Window {
                                                     color: Brand.text3;
                                                     font-size: 12px;
                                                     font-family: Metrics.mono-font;
+                                                    wrap: word-wrap;
+                                                    horizontal-alignment: left;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if row.time != "": HorizontalLayout {
+                                width: 100%;
+                                Rectangle { width: feed.gutter; }
+                                Text {
+                                    text: row.time;
+                                    color: Brand.text3;
+                                    font-size: Metrics.time-size;
+                                    horizontal-alignment: left;
+                                }
+                            }
+                        }
+                        if row.kind == 4: VerticalLayout {
+                            width: 100%;
+                            spacing: 2px;
+                            HorizontalLayout {
+                                width: 100%;
+                                alignment: start;
+                                VerticalLayout {
+                                    width: Metrics.avatar;
+                                    alignment: end;
+                                    vertical-stretch: 1;
+                                    if row.show-avatar && row.has-glyph: Image { source: row.glyph; width: Metrics.avatar; height: Metrics.avatar; }
+                                    if row.show-avatar && !row.has-glyph: Avatar { letter: row.initial; }
+                                    if !row.show-avatar: Rectangle { width: Metrics.avatar; height: 1px; }
+                                }
+                                Rectangle { width: Metrics.avatar-gap; }
+                                VerticalLayout {
+                                    spacing: 3px;
+                                    max-width: feed.col-w - feed.gutter;
+                                    if row.show-name: Text {
+                                        text: row.name;
+                                        color: Brand.muted;
+                                        font-size: 12px;
+                                    }
+                                    HorizontalLayout {
+                                        width: feed.col-w - feed.gutter;
+                                        alignment: start;
+                                        Rectangle {
+                                            horizontal-stretch: 1;
+                                            background: transparent;
+                                            border-radius: 14px;
+                                            border-width: 1px;
+                                            border-color: Brand.border;
+                                            VerticalLayout {
+                                                padding: 14px;
+                                                spacing: 4px;
+                                                alignment: start;
+                                                HorizontalLayout {
+                                                    alignment: start;
+                                                    spacing: 8px;
+                                                    Rectangle {
+                                                        width: 8px;
+                                                        height: 8px;
+                                                        y: (parent.height - self.height) / 2;
+                                                        border-radius: 4px;
+                                                        background: row.dot;
+                                                    }
+                                                    Text {
+                                                        text: row.status;
+                                                        color: Brand.ink;
+                                                        font-size: 14px;
+                                                        font-weight: 600;
+                                                        wrap: word-wrap;
+                                                        horizontal-alignment: left;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+                                                if row.text != "": Text {
+                                                    text: row.text;
+                                                    color: Brand.muted;
+                                                    font-size: 13px;
                                                     wrap: word-wrap;
                                                     horizontal-alignment: left;
                                                 }
