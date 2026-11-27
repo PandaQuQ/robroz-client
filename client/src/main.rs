@@ -4252,7 +4252,15 @@ impl App {
                 Fold::Hide => None,
                 Fold::More { task, n } => Some((FeedItem::More { task, n }, meta.clone())),
             });
-        let blocks = model::chat_blocks(items, t.chat.group_secs, &chrono::Local);
+        let blocks = model::chat_blocks(
+            items,
+            t.chat.group_secs,
+            &chrono::Local,
+            |item| match item {
+                FeedItem::Row(r) => r.feed_rank(),
+                FeedItem::More { .. } => robroz_ui::runs::RANK_CARD,
+            },
+        );
         let chrome = if self.gallery.is_some() || self.narrow() {
             0.0
         } else {

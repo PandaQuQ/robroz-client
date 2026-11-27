@@ -358,6 +358,19 @@ pub enum Sender {
     Reminder,
 }
 
+impl Row {
+    /// Feed order when timestamps are equal: a message, then the task
+    /// status (or a delivery), then an approval or other card.
+    pub fn feed_rank(&self) -> u8 {
+        use robroz_ui::runs::{RANK_CARD, RANK_MESSAGE, RANK_TASK};
+        match self {
+            Row::Text { .. } | Row::Attachment { .. } => RANK_MESSAGE,
+            Row::Status(_) | Row::Delivery(_) => RANK_TASK,
+            Row::Card(_) | Row::Reminder(_) => RANK_CARD,
+        }
+    }
+}
+
 impl Sender {
     /// Same sender: both own, or the same bro (by id when both have one,
     /// else by name).
@@ -485,14 +498,17 @@ pub fn chat_blocks<T, Tz: chrono::TimeZone>(
     items: impl IntoIterator<Item = (T, Meta)>,
     window: i64,
     tz: &Tz,
+    rank: impl Fn(&T) -> u8,
 ) -> Vec<robroz_ui::runs::Block<T, Sender>> {
     robroz_ui::runs::blocks(
         items.into_iter().map(|(item, meta)| {
+            let rank = rank(&item);
             (
                 item,
                 robroz_ui::runs::Meta {
                     sender: meta.sender,
                     at: meta.at,
+                    rank,
                 },
             )
         }),
@@ -2841,5 +2857,48 @@ mod tests {
                 .any(|(r, _)| matches!(r, Row::Status(_))),
             "a card for another task leaves this chip visible"
         );
+    }
+
+    #[test]
+    fn equal_timestamps_put_the_message_before_the_task_card() {
+        let at = "2026-11-27T14:12:12.360Z";
+        let mut feed = Feed::default();
+        // Task event first, the way a `/say` snapshot can arrive.
+        let mut ev = status("t-say", "Ada", TaskState::Running, true);
+        if let Event::Status {
+            created_at,
+            updated_at,
+            ..
+        } = &mut ev
+        {
+            *created_at = at.into();
+            *updated_at = at.into();
+        }
+        feed.apply(&ev);
+        let mut msg = text("m-say", "@Ada also try a version with the logo on the left");
+        if let Event::Message { created_at, .. } = &mut msg {
+            *created_at = at.into();
+        }
+        feed.apply(&msg);
+        assert!(
+            matches!(feed.rows().next(), Some(Row::Status(_))),
+            "the stored feed keeps arrival order"
+        );
+
+        let items: Vec<_> = feed.items().map(|(r, m)| (r, m.clone())).collect();
+        let kinds: Vec<_> = chat_blocks(items, 300, &chrono::Utc, |r| r.feed_rank())
+            .into_iter()
+            .filter_map(|b| match b {
+                robroz_ui::runs::Block::Run(run) => Some(run.items),
+                _ => None,
+            })
+            .flatten()
+            .map(|r| match r {
+                Row::Text { .. } => "text",
+                Row::Status(_) => "status",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, ["text", "status"]);
     }
 }

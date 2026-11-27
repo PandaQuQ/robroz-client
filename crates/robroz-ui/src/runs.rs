@@ -5,6 +5,8 @@
 //! changes. The desktop and mobile clients both use this so grouping stays
 //! identical. The default window is five minutes ([`GROUP_SECS`]).
 
+use std::cmp::Ordering;
+
 use chrono::{Datelike, NaiveDate, TimeZone};
 
 use crate::i18n::{self, Key};
@@ -27,6 +29,31 @@ pub trait RunSender: Clone {
 pub struct Meta<S> {
     pub sender: S,
     pub at: Option<i64>,
+    /// Tie-break when `at` is equal: a lower rank is drawn first.
+    /// [`RANK_MESSAGE`] sits above [`RANK_TASK`], which sits above
+    /// [`RANK_CARD`], so a `/say` trigger message appears above the
+    /// task card created at the same instant.
+    pub rank: u8,
+}
+
+/// A chat message or attachment.
+pub const RANK_MESSAGE: u8 = 0;
+/// A task status card, or a delivery.
+pub const RANK_TASK: u8 = 1;
+/// An approval, confirm, choice, draft, or reminder card.
+pub const RANK_CARD: u8 = 2;
+
+/// Stable order: earlier timestamp first; equal times go by
+/// [`Meta::rank`]. A missing time keeps its original relative place.
+pub fn cmp_time_and_rank<S>(a: &Meta<S>, b: &Meta<S>) -> Ordering {
+    match (a.at, b.at) {
+        (Some(ta), Some(tb)) => ta.cmp(&tb).then(a.rank.cmp(&b.rank)),
+        _ => Ordering::Equal,
+    }
+}
+
+fn sort_by_time_and_rank<T, S>(items: &mut [(T, Meta<S>)]) {
+    items.sort_by(|a, b| cmp_time_and_rank(&a.1, &b.1));
 }
 
 /// Consecutive items of one sender, drawn as one block.
@@ -110,6 +137,8 @@ pub fn blocks<T, S: RunSender, Tz: TimeZone>(
     window: i64,
     tz: &Tz,
 ) -> Vec<Block<T, S>> {
+    let mut items: Vec<_> = items.into_iter().collect();
+    sort_by_time_and_rank(&mut items);
     let runs = group_items_if(items, window, |a, b| day_of(a, tz) == day_of(b, tz));
     let mut out = Vec::new();
     let mut last_day = None;
@@ -196,6 +225,7 @@ mod tests {
         Meta {
             sender: Who::Own,
             at,
+            rank: 0,
         }
     }
 
@@ -203,6 +233,7 @@ mod tests {
         Meta {
             sender: Who::Bro(name),
             at,
+            rank: 0,
         }
     }
 
@@ -322,5 +353,53 @@ mod tests {
         assert_eq!(date_label(yesterday, now, &tz), "昨天");
         assert_eq!(date_label(same_year, now, &tz), "1月1日");
         assert_eq!(date_label(older, now, &tz), "2024年1月1日");
+    }
+
+    fn run_items<'a>(blocks: &'a [Block<&'a str, Who>]) -> Vec<&'a str> {
+        blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Run(r) => Some(r.items.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .copied()
+            .collect()
+    }
+
+    fn ranked(sender: Who, at: Option<i64>, rank: u8) -> Meta<Who> {
+        Meta { sender, at, rank }
+    }
+
+    #[test]
+    fn equal_timestamps_put_a_lower_rank_first() {
+        // Status arrives first, as `/say` may write the task event before
+        // the client sees the trigger message. Same created_at: the
+        // message must still be drawn first.
+        let ordered = super::blocks(
+            [
+                ("status", ranked(Who::Bro("Ada"), Some(T0), RANK_TASK)),
+                ("message", ranked(Who::Own, Some(T0), RANK_MESSAGE)),
+                ("approval", ranked(Who::Bro("Ada"), Some(T0), RANK_CARD)),
+                ("later", ranked(Who::Own, Some(T0 + 60), RANK_MESSAGE)),
+            ],
+            GROUP_SECS,
+            &chrono::Utc,
+        );
+        assert_eq!(
+            run_items(&ordered),
+            ["message", "status", "approval", "later"]
+        );
+
+        // Same time and rank: arrival order is kept (stable sort).
+        let ordered = super::blocks(
+            [
+                ("first", ranked(Who::Own, Some(T0), RANK_MESSAGE)),
+                ("second", ranked(Who::Own, Some(T0), RANK_MESSAGE)),
+            ],
+            GROUP_SECS,
+            &chrono::Utc,
+        );
+        assert_eq!(run_items(&ordered), ["first", "second"]);
     }
 }
