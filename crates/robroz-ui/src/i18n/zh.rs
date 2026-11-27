@@ -589,5 +589,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::WorkingRowTwo => "{0} 和 {1} 在处理…",
         Key::WorkingRowMany => "{0} 和另外 {1} 个",
         Key::Reconnecting => "正在重新连接",
+        Key::Syncing => "同步中…",
+        Key::TooManyStreams => "连接太多了，稍后自动重试",
     }
 }

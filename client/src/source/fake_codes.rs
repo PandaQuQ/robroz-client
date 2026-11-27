@@ -54,6 +54,7 @@ fn failed(id: &str, code: FailureCode, detail: Option<&str>, legacy: &str, hm: &
             status_code: Some(CardStatusCode::Done),
             failure_code: Some(code),
             failure_detail: detail.map(str::to_string),
+            started_at: None,
         },
         approval_extras: None,
     }
@@ -80,6 +81,7 @@ fn legacy_failed(id: &str, legacy: &str, hm: &str) -> GroupEvent {
             status_code: None,
             failure_code: None,
             failure_detail: None,
+            started_at: None,
         },
         approval_extras: None,
     }

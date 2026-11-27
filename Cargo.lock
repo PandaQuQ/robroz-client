@@ -5645,7 +5645,7 @@ dependencies = [
 name = "robroz-card"
 version = "0.1.0"
 dependencies = [
- "robroz-contract",
+ "robroz-contract 0.1.0 (git+https://github.com/PandaQuQ/robroz?tag=contract-v0.3.1)",
 ]
 
 [[package]]
@@ -5658,7 +5658,7 @@ dependencies = [
  "keyring",
  "png",
  "robroz-card",
- "robroz-contract",
+ "robroz-contract 0.1.0 (git+https://github.com/PandaQuQ/robroz?tag=contract-v0.3.1)",
  "robroz-host",
  "robroz-ui",
  "serde",
@@ -5678,6 +5678,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "robroz-contract"
+version = "0.1.0"
+source = "git+https://github.com/PandaQuQ/robroz?tag=contract-v0.3.1#dd74e0c7855fff50d6ff0e712cc1b1fec6579e03"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "robroz-host"
 version = "0.1.1"
 source = "git+https://github.com/PandaQuQ/robroz?tag=contract-v0.3.0#e5394a2c4a862f90b74f96206352ae2c6e63c9ee"
@@ -5687,7 +5696,7 @@ dependencies = [
  "croner",
  "futures-util",
  "libc",
- "robroz-contract",
+ "robroz-contract 0.1.0 (git+https://github.com/PandaQuQ/robroz?tag=contract-v0.3.0)",
  "robroz-mcp",
  "robroz-model",
  "robroz-policy",
@@ -5719,7 +5728,7 @@ name = "robroz-mobile"
 version = "0.1.0"
 dependencies = [
  "robroz-card",
- "robroz-contract",
+ "robroz-contract 0.1.0 (git+https://github.com/PandaQuQ/robroz?tag=contract-v0.3.1)",
  "robroz-tokens",
  "robroz-ui",
  "serde",
@@ -5751,7 +5760,7 @@ name = "robroz-runner"
 version = "0.1.0"
 source = "git+https://github.com/PandaQuQ/robroz?tag=contract-v0.3.0#e5394a2c4a862f90b74f96206352ae2c6e63c9ee"
 dependencies = [
- "robroz-contract",
+ "robroz-contract 0.1.0 (git+https://github.com/PandaQuQ/robroz?tag=contract-v0.3.0)",
  "robroz-policy",
 ]
 
@@ -5769,7 +5778,7 @@ dependencies = [
  "chrono",
  "iced",
  "robroz-card",
- "robroz-contract",
+ "robroz-contract 0.1.0 (git+https://github.com/PandaQuQ/robroz?tag=contract-v0.3.1)",
  "robroz-tokens",
  "serde",
  "serde_json",

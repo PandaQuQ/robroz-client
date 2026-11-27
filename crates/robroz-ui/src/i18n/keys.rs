@@ -550,6 +550,8 @@ pub enum Key {
     WorkingRowTwo,
     WorkingRowMany,
     Reconnecting,
+    Syncing,
+    TooManyStreams,
 }
 
 impl Key {
@@ -1096,5 +1098,7 @@ impl Key {
         Key::WorkingRowTwo,
         Key::WorkingRowMany,
         Key::Reconnecting,
+        Key::Syncing,
+        Key::TooManyStreams,
     ];
 }
