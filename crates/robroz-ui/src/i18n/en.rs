@@ -1085,7 +1085,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::McpNeedSecretKey => "Enter a value for the new secret",
         // 命令未批准  [approved, batch 2]
         Key::McpCommandUnapproved => "Command not approved",
-        // 批准命令后才能读取工具  [approved, batch 1]
+        // 批准命令后才能加载工具  [approved, batch 1]
         Key::McpToolsNeedApproval => "Approve the command to load its tools",
         // 这条命令会在你的电脑上运行  [approved, batch 2]
         Key::McpCommandRunsLocal => "This command runs on your computer",

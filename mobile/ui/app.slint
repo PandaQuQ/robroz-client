@@ -205,6 +205,7 @@ export struct McpLine {
     letter: string,
     sub: string,
     connected: bool,
+    needs-approval: bool,
 }
 
 // One shape cell or colour swatch of the avatar picker.
@@ -1869,7 +1870,20 @@ export component MainWindow inherits Window {
                             spacing: 2px;
                             horizontal-stretch: 1;
                             Text { text: r.name; color: Brand.ink; font-size: McpMetrics.row-name; font-weight: 600; overflow: elide; }
-                            Text { text: r.sub; color: Brand.text3; font-size: McpMetrics.row-sub; overflow: elide; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                vertical-stretch: 0;
+                                if r.needs-approval: Rectangle {
+                                    width: McpMetrics.connected-dot;
+                                    height: McpMetrics.connected-dot;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: self.height / 2;
+                                    background: Brand.stuck;
+                                    vertical-stretch: 0;
+                                    horizontal-stretch: 0;
+                                }
+                                Text { text: r.sub; color: Brand.text3; font-size: McpMetrics.row-sub; overflow: elide; horizontal-stretch: 1; }
+                            }
                         }
                         // Vertically centred in the 64px row, same as the icon.
                         // Inside the group, the dot stays centred on the label

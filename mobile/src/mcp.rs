@@ -24,6 +24,7 @@ pub fn filter_from_index(i: i32) -> Filter {
 }
 
 /// One row as plain data (id, name, tile letter, second line, connected).
+/// `needs_approval` puts a `status.blocked` yellow dot on the subtitle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Line {
     pub id: String,
@@ -31,6 +32,7 @@ pub struct Line {
     pub letter: String,
     pub sub: String,
     pub connected: bool,
+    pub needs_approval: bool,
 }
 
 pub fn lines(book: &Book) -> Vec<Line> {
@@ -41,6 +43,7 @@ pub fn lines(book: &Book) -> Vec<Line> {
             letter: mcp::icon_letter(&s.name),
             sub: book.row_line(s),
             connected: mcp::is_connected(s),
+            needs_approval: mcp::shows_approval_status(s, book.test_for(&s.id).is_some()),
         })
         .collect()
 }
@@ -103,8 +106,10 @@ mod tests {
         assert_eq!(l.len(), 2);
         assert!(l
             .iter()
-            .any(|x| x.id == "a" && x.connected && x.letter == "S"));
-        assert!(l.iter().any(|x| x.id == "bb" && !x.connected));
+            .any(|x| x.id == "a" && x.connected && x.letter == "S" && !x.needs_approval));
+        assert!(l
+            .iter()
+            .any(|x| x.id == "bb" && !x.connected && !x.needs_approval));
         assert!(!connected_text(&b).is_empty());
         b.set_filter(filter_from_index(2));
         assert_eq!(lines(&b).len(), 1);
@@ -113,5 +118,15 @@ mod tests {
         b.set_enabled("a", false);
         assert_eq!(connected_text(&b), "");
         assert_eq!(filter_index(b.active_filter()), 0);
+    }
+
+    #[test]
+    fn unapproved_enabled_stdio_row_is_marked_needs_approval() {
+        let mut b = Book::default();
+        b.load(vec![server("c", "stdio", true, Some(false))]);
+        let l = &lines(&b)[0];
+        assert!(!l.connected);
+        assert!(l.needs_approval);
+        assert_eq!(l.sub, mcp::TOOLS_NEED_APPROVAL);
     }
 }
