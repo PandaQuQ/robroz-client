@@ -322,7 +322,6 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ViewDraftEdit => "修改",
         Key::ViewMcpNoTools => "这台服务器还没有工具",
         Key::ViewBackToChats => "‹ 聊天",
-        Key::ViewBackToSettings => "‹ 设置",
         Key::ViewRenameSave => "保存",
         Key::ViewRenameCancel => "取消",
         Key::ViewDmTag => "私聊",

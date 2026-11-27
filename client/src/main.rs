@@ -2082,6 +2082,13 @@ impl App {
                         | Page::SettingsLanguage
                         | Page::SettingsAppearance
                         | Page::SettingsConnection
+                        | Page::Model
+                        | Page::Search
+                        | Page::Mcp
+                        | Page::Skills
+                        | Page::Memories
+                        | Page::Routines
+                        | Page::ReviewRules
                 ) {
                     self.page = Page::Group;
                 }
@@ -3426,32 +3433,23 @@ impl App {
                     | Page::SettingsLanguage
                     | Page::SettingsAppearance
                     | Page::SettingsConnection
+                    | Page::Model
+                    | Page::Search
+                    | Page::Mcp
+                    | Page::Skills
+                    | Page::Memories
+                    | Page::Routines
+                    | Page::ReviewRules
             );
             if !self.host_state().shows_sidebar() || (self.narrow_open && own_back) {
                 self.page_view(&t)
             } else if self.narrow_open {
-                let to_settings = self.settings_return
-                    && matches!(
-                        self.page,
-                        Page::Model
-                            | Page::Search
-                            | Page::Mcp
-                            | Page::Skills
-                            | Page::Memories
-                            | Page::Routines
-                            | Page::ReviewRules
-                    );
-                let (label, go) = if to_settings {
-                    (Text::ViewBackToSettings, Message::Ui(Action::OpenSettings))
-                } else {
-                    (Text::ViewBackToChats, Message::Back)
-                };
-                let back = button(text(label).size(t.type_.row_name))
+                let back = button(text(Text::ViewBackToChats).size(t.type_.row_name))
                     .height(Length::Fixed(
                         t.controls.touch_target.max(t.controls.button_h),
                     ))
                     .style(view::nav_button_style(t, false))
-                    .on_press(go);
+                    .on_press(Message::Back);
                 column![
                     container(back).padding(Padding::from([4.0, 8.0])),
                     self.page_view(&t)
@@ -3529,6 +3527,16 @@ impl App {
         self.feeds.get(id).is_some_and(|f| f.any_live_timer())
     }
 
+    /// Back from a Settings sub-page: to Settings when we opened it from
+    /// there, otherwise back to the chat.
+    fn settings_sub_back(&self) -> Action {
+        if self.settings_return {
+            Action::SettingsBack
+        } else {
+            Action::BackToList
+        }
+    }
+
     /// Settings pages (PR5), or `None` when another page is open.
     fn settings_view(&self, t: &Skin) -> Option<Element<'_, Message>> {
         use robroz_ui::settings::{self as st, Dest};
@@ -3562,7 +3570,6 @@ impl App {
                         .map(|r| view::SettingsRowView {
                             label: label(r.dest),
                             value: r.value,
-                            external: r.external,
                             on: Action::SettingsGo { dest: r.dest },
                         })
                         .collect(),
@@ -3607,6 +3614,7 @@ impl App {
             Page::SettingsConnection => view::settings_sub_page(
                 t,
                 Text::ConnSectionTitle.into(),
+                Action::SettingsBack,
                 self.connection_form(t, false),
                 Message::Ui,
             ),
@@ -3991,87 +3999,74 @@ impl App {
             return el;
         }
         if self.page == Page::Memories {
-            return scrollable(
-                container(view::memories_panel(t, &self.memories, now_unix()).map(Message::Ui))
-                    .padding(t.metrics.stream_padding)
-                    .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                robroz_ui::cards::memories::TITLE.into(),
+                self.settings_sub_back(),
+                view::memories_panel(t, &self.memories, now_unix(), false).map(Message::Ui),
+                Message::Ui,
+            );
         }
         if self.page == Page::Skills {
-            return scrollable(
-                container(
-                    view::skills_panel(t, &self.skills, now_unix(), self.content_width(t))
-                        .map(Message::Ui),
-                )
-                .padding(t.metrics.stream_padding)
-                .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                robroz_ui::cards::skills::TITLE.into(),
+                self.settings_sub_back(),
+                view::skills_panel(t, &self.skills, now_unix(), self.content_width(t), false)
+                    .map(Message::Ui),
+                Message::Ui,
+            );
         }
         if self.page == Page::Mcp {
-            return scrollable(
-                container(
-                    view::mcp_panel(t, &self.mcp, now_unix(), self.content_width(t))
-                        .map(Message::Ui),
-                )
-                .padding(t.metrics.stream_padding)
-                .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                robroz_ui::cards::mcp::TITLE.into(),
+                self.settings_sub_back(),
+                view::mcp_panel(t, &self.mcp, now_unix(), self.content_width(t), false)
+                    .map(Message::Ui),
+                Message::Ui,
+            );
         }
         if self.page == Page::Model {
-            return scrollable(
-                container(view::model_panel(t, &self.model_settings).map(Message::Ui))
-                    .padding(t.metrics.stream_padding)
-                    .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                model_page::TITLE.into(),
+                self.settings_sub_back(),
+                view::model_panel(t, &self.model_settings, false).map(Message::Ui),
+                Message::Ui,
+            );
         }
         if self.page == Page::Search {
-            return scrollable(
-                container(view::search_panel(t, &self.search).map(Message::Ui))
-                    .padding(t.metrics.stream_padding)
-                    .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                search_page::TITLE.into(),
+                self.settings_sub_back(),
+                view::search_panel(t, &self.search, false).map(Message::Ui),
+                Message::Ui,
+            );
         }
         if self.page == Page::ReviewRules {
-            return scrollable(
-                container(
-                    view::review_rules_panel(
-                        t,
-                        &self.review_rules,
-                        review_rules::may_decide(self.me.as_ref().map(|m| m.role)),
-                    )
-                    .map(Message::Ui),
+            return view::settings_sub_page(
+                t,
+                review_rules::TITLE.into(),
+                self.settings_sub_back(),
+                view::review_rules_panel(
+                    t,
+                    &self.review_rules,
+                    review_rules::may_decide(self.me.as_ref().map(|m| m.role)),
                 )
-                .padding(t.metrics.stream_padding)
-                .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+                .map(Message::Ui),
+                Message::Ui,
+            );
         }
         if self.page == Page::Routines {
-            return scrollable(
-                container(view::routines_panel(t, &self.routines, now_unix()).map(Message::Ui))
-                    .padding(t.metrics.stream_padding)
-                    .width(Fill),
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
+            return view::settings_sub_page(
+                t,
+                robroz_ui::cards::routines::TITLE.into(),
+                self.settings_sub_back(),
+                view::routines_panel(t, &self.routines, now_unix(), false).map(Message::Ui),
+                Message::Ui,
+            );
         }
         let Some(id) = &self.selected else {
             return container(text(Text::ClientPickChat).color(color(t.palette.text2)))
@@ -4397,9 +4392,9 @@ impl App {
             section("草稿卡 draft", &g.draft),
             title("例行任务列表 routines"),
             caption("routines · list"),
-            view::routines_panel(t, &g.routines, g.now).map(Message::Ui),
+            view::routines_panel(t, &g.routines, g.now, true).map(Message::Ui),
             caption("routines · empty"),
-            view::routines_panel(t, &g.empty, g.now).map(Message::Ui),
+            view::routines_panel(t, &g.empty, g.now, true).map(Message::Ui),
         ]
         .spacing(6)
         .width(Fill);

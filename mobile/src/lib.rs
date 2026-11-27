@@ -239,6 +239,8 @@ fn apply_metrics(ui: &MainWindow) {
         sm.set_divider(st::DIVIDER);
         sm.set_side_pad(st::SIDE_PAD);
         sm.set_version(st::VERSION);
+        sm.set_title(st::TITLE);
+        sm.set_bottom_pad(st::BOTTOM_PAD);
     }
     use robroz_tokens::home as h;
     let hm = ui.global::<HomeMetrics>();

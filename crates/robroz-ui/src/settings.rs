@@ -22,13 +22,12 @@ pub enum Dest {
     Connection,
 }
 
-/// One row: a label (filled in by the client), an optional `text2` value
-/// before the `›`, and whether it leaves the app (`↗` instead of `›`).
+/// One row: a label (filled in by the client) and an optional `text2`
+/// value before the `›`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub dest: Dest,
     pub value: Option<String>,
-    pub external: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,11 +37,7 @@ pub struct Group {
 }
 
 fn row(dest: Dest, value: Option<String>) -> Row {
-    Row {
-        dest,
-        value,
-        external: false,
-    }
+    Row { dest, value }
 }
 
 /// The landing page groups. `language` and `appearance` are the active
@@ -117,8 +112,6 @@ mod tests {
         assert!(g[1].rows.iter().all(|r| r.value.is_none()));
         assert_eq!(g[2].rows[0].dest, Dest::Connection);
         assert_eq!(g[2].rows[0].value.as_deref(), Some("127.0.0.1:8790"));
-        // No row leaves the app yet, so no `↗` is drawn.
-        assert!(g.iter().flat_map(|g| &g.rows).all(|r| !r.external));
     }
 
     #[test]

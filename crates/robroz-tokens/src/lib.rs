@@ -267,13 +267,17 @@ pub mod settings {
     /// Group title size (`text3`) and its gap to the card below.
     pub const GROUP_TITLE: f32 = 12.0;
     pub const GROUP_TITLE_GAP: f32 = 8.0;
-    pub const ROW: f32 = 52.0;
+    pub const ROW: f32 = 44.0;
     /// 1px `border` divider between rows.
     pub const DIVIDER: f32 = 1.0;
     /// Left and right padding inside a row.
     pub const SIDE_PAD: f32 = 16.0;
     /// Version line under the last card (`text3`, centred).
     pub const VERSION: f32 = 12.0;
+    /// Page title next to the round back button.
+    pub const TITLE: f32 = 20.0;
+    /// Space under the last item (plus a safe-area inset on a phone).
+    pub const BOTTOM_PAD: f32 = 24.0;
     /// Page width cap on desktop, same as the chat column.
     pub const MAX_W: f32 = 720.0;
 }
@@ -486,6 +490,8 @@ fn scalar_vars() -> Vec<(String, String)> {
             ("divider", crate::settings::DIVIDER),
             ("side-pad", crate::settings::SIDE_PAD),
             ("version", crate::settings::VERSION),
+            ("title", crate::settings::TITLE),
+            ("bottom-pad", crate::settings::BOTTOM_PAD),
             ("max-w", crate::settings::MAX_W),
         ],
     );
@@ -555,10 +561,13 @@ mod tests {
         assert_eq!(s::GROUP_GAP, 24.0);
         assert_eq!(s::GROUP_TITLE, 12.0);
         assert_eq!(s::GROUP_TITLE_GAP, 8.0);
-        assert_eq!(s::ROW, 52.0);
+        assert_eq!(s::ROW, 44.0);
         assert_eq!(s::DIVIDER, 1.0);
         assert_eq!(s::SIDE_PAD, 16.0);
         assert_eq!(s::VERSION, 12.0);
+        assert_eq!(s::TITLE, 20.0);
+        assert_eq!(s::BOTTOM_PAD, 24.0);
+        assert_eq!(s::MAX_W, 720.0);
     }
 
     #[test]

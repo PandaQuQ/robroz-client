@@ -114,6 +114,8 @@ export global SettingsMetrics {
     in property <length> divider: 1px;
     in property <length> side-pad: 16px;
     in property <length> version: 12px;
+    in property <length> title: 20px;
+    in property <length> bottom-pad: 24px;
 }
 
 // Bro avatar sizes from robroz-tokens `base.avatar` (pushed from Rust).
@@ -729,7 +731,7 @@ export component MainWindow inherits Window {
         padding-left: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 ? HomeMetrics.profile-side : 20px);
         padding-right: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 ? HomeMetrics.profile-side : 20px);
         padding-top: 20px + root.safe-area-insets.top + root.extra-safe-top;
-        padding-bottom: root.screen == 2 ? 0 : (20px + root.safe-area-insets.bottom + root.extra-safe-bottom);
+        padding-bottom: root.screen == 2 ? 0 : ((root.screen == 3 || root.screen == 9 ? SettingsMetrics.bottom-pad : 20px) + root.safe-area-insets.bottom + root.extra-safe-bottom);
         spacing: 14px;
 
         if root.screen == 0: VerticalLayout {
@@ -1489,7 +1491,7 @@ export component MainWindow inherits Window {
                 height: HomeMetrics.float-btn + 16px;
                 spacing: 12px;
                 VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.back(); } } }
-                Text { text: Tr.settings-title; color: Brand.ink; font-size: 22px; font-weight: 700; vertical-alignment: center; }
+                Text { text: Tr.settings-title; color: Brand.ink; font-size: SettingsMetrics.title; font-weight: 700; vertical-alignment: center; }
             }
             Flickable {
                 VerticalLayout {
@@ -1539,7 +1541,7 @@ export component MainWindow inherits Window {
                 height: HomeMetrics.float-btn + 16px;
                 spacing: 12px;
                 VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.back(); } } }
-                Text { text: root.choice-kind == 0 ? Tr.language : Tr.appearance; color: Brand.ink; font-size: 22px; font-weight: 700; vertical-alignment: center; }
+                Text { text: root.choice-kind == 0 ? Tr.language : Tr.appearance; color: Brand.ink; font-size: SettingsMetrics.title; font-weight: 700; vertical-alignment: center; }
             }
             if root.choice-kind == 0: SettingsCard {
                 SettingsRow { label: Tr.locale-en; chevron: false; ticked: root.locale-index == 0; clicked => { root.set-locale(0); } }

@@ -473,7 +473,7 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ReviewRulesAddedOn => "Added {0}",
         // 读不到：{0}  [approved, batch 2]
         Key::ReviewRulesLoadFailedBecause => "Couldn't load: {0}",
-        // Needs UI review.
+        // 等管理员确认  [approved, PR5 settings]
         Key::ReviewRulesWaitingForAdmin => "Waiting for an admin",
         // 审批卡不存在  [approved, batch 1]
         Key::ReviewRulesCardMissing => "Approval card not found",
@@ -635,8 +635,6 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ViewMcpNoTools => "This server has no tools yet",
         // ‹ 聊天  [approved, batch 2]
         Key::ViewBackToChats => "‹ Chats",
-        // Needs UI review.
-        Key::ViewBackToSettings => "‹ Settings",
         // 保存  [approved, batch 2]
         Key::ViewRenameSave => "Save",
         // 取消  [approved, batch 2]
@@ -801,9 +799,9 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::SettingsAppearance => "Appearance",
         // 跟随系统  [approved, appearance row]
         Key::SettingsThemeSystem => "System",
-        // Needs UI review.
+        // 通用  [approved, PR5 settings]
         Key::SettingsGroupGeneral => "General",
-        // Needs UI review.
+        // bro  [approved, PR5 settings]
         Key::SettingsGroupBros => "Bros",
 
         // ---- Client-side errors (client/src/api.rs) ----
