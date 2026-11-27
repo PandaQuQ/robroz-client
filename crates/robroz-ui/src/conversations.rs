@@ -229,6 +229,11 @@ fn units(c: char) -> usize {
     }
 }
 
+/// A row shows a second line only when there is a preview to show.
+pub fn has_preview(c: &Conversation) -> bool {
+    c.preview.as_deref().is_some_and(|p| !p.trim().is_empty())
+}
+
 /// Fit one line into `max` width units (ASCII 1, CJK 2), ending in `…`
 /// when cut. iced has no text ellipsis, so the view estimates `max` from
 /// the space left beside the time or the unread badge.
@@ -299,6 +304,16 @@ where
 mod tests {
     use super::*;
     use chrono::{FixedOffset, Utc};
+
+    #[test]
+    fn a_row_without_preview_has_no_second_line() {
+        let mut c = Conversation::default();
+        assert!(!has_preview(&c));
+        c.preview = Some("   ".into());
+        assert!(!has_preview(&c));
+        c.preview = Some("Ada: done".into());
+        assert!(has_preview(&c));
+    }
 
     #[test]
     fn sorted_by_activity_and_badges_follow_host() {

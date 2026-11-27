@@ -85,6 +85,8 @@ export global Tr {
     in property <string> menu-profile;
     in property <string> menu-find;
     in property <string> menu-delete;
+    in property <string> menu-rename;
+    in property <string> delete-confirm;
     in property <string> profile-edit;
     in property <string> profile-routines;
     in property <string> profile-members;
@@ -123,9 +125,8 @@ export global AvatarMetrics {
 
 // Home list, menus and profile (PR4). Values pushed from `robroz_tokens::home`.
 export global HomeMetrics {
-    in property <length> main-bro: 96px;
-    in property <length> main-bro-name: 13px;
-    in property <length> row: 72px;
+    in property <length> row: 64px;
+    in property <length> row-face-w: 56px;
     in property <length> row-avatar: 48px;
     in property <length> row-name: 16px;
     in property <length> row-time: 12px;
@@ -136,8 +137,14 @@ export global HomeMetrics {
     in property <length> float-btn: 40px;
     in property <length> menu-w: 220px;
     in property <length> menu-r: 16px;
-    in property <length> menu-gap: 8px;
-    in property <length> menu-row: 48px;
+    in property <length> menu-gap: 4px;
+    in property <length> menu-pad: 4px;
+    in property <length> menu-divider-gap: 4px;
+    in property <length> more-icon: 16px;
+    in property <length> back-gap: 4px;
+    in property <length> profile-card-gap: 24px;
+    in property <length> profile-side: 16px;
+    in property <length> menu-row: 36px;
     in property <length> menu-text: 15px;
     in property <length> profile-avatar: 96px;
     in property <length> profile-name: 22px;
@@ -386,10 +393,24 @@ component Avatar inherits Rectangle {
     }
 }
 
-// Round button with one glyph (`…`, `+`), 32px, surface fill.
+// `‹` as a 16px stroked chevron, centred on its box.
+component Chevron inherits Path {
+    width: HomeMetrics.more-icon;
+    height: HomeMetrics.more-icon;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 10 3 L 5 8 L 10 13";
+    stroke: Brand.ink;
+    stroke-width: 2px;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+}
+
+// Round button: `+` text, or a drawn `more` (three dots, 16px) or `back`
+// (chevron, 16px). 32px for the ••• and ‹ buttons, 40px for `+`.
 component RoundButton inherits Rectangle {
     in property <string> glyph;
-    in property <length> size: HomeMetrics.float-btn;
+    in property <length> size: root.glyph == "+" ? HomeMetrics.float-btn : 32px;
     callback clicked();
     width: root.size;
     height: root.size;
@@ -397,7 +418,25 @@ component RoundButton inherits Rectangle {
     background: Brand.surface;
     border-width: 1px;
     border-color: Brand.border;
-    Text { text: root.glyph; color: Brand.ink; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; }
+    if root.glyph == "+": Text { text: "+"; color: Brand.ink; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+    if root.glyph == "more": Rectangle {
+        width: HomeMetrics.more-icon;
+        height: HomeMetrics.more-icon;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        for i in 3: Rectangle {
+            width: 2.6px;
+            height: 2.6px;
+            border-radius: 1.3px;
+            background: Brand.ink;
+            x: i * (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+    }
+    if root.glyph == "back": Chevron {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
     TouchArea { clicked => { root.clicked(); } }
 }
 
@@ -491,21 +530,54 @@ component AvatarPicker inherits VerticalLayout {
     }
 }
 
+// One 36px menu item: text centred vertically, 12px inside the item.
 component MenuRow inherits Rectangle {
     in property <string> label;
     in property <bool> danger: false;
     callback clicked();
     width: 100%;
     height: HomeMetrics.menu-row;
+    border-radius: HomeMetrics.menu-r - HomeMetrics.menu-pad;
     Text {
         x: 12px;
         width: parent.width - 24px;
+        height: 100%;
         text: root.label;
         color: root.danger ? Brand.danger : Brand.ink;
         font-size: HomeMetrics.menu-text;
         vertical-alignment: center;
     }
     TouchArea { clicked => { root.clicked(); } }
+}
+
+// 1px line with 4px above and 4px below.
+component MenuDivider inherits Rectangle {
+    width: 100%;
+    height: 2 * HomeMetrics.menu-divider-gap + 1px;
+    Rectangle {
+        x: 8px;
+        y: HomeMetrics.menu-divider-gap;
+        width: parent.width - 16px;
+        height: 1px;
+        background: Brand.rule;
+    }
+}
+
+// Popover surface with 4px inner padding. `rows` / `dividers` size it.
+component MenuBox inherits Rectangle {
+    in property <int> rows: 1;
+    in property <int> dividers: 0;
+    width: HomeMetrics.menu-w;
+    height: 2 * HomeMetrics.menu-pad + root.rows * HomeMetrics.menu-row + root.dividers * (2 * HomeMetrics.menu-divider-gap + 1px);
+    border-radius: HomeMetrics.menu-r;
+    background: Brand.surface;
+    border-width: 1px;
+    border-color: Brand.border;
+    VerticalLayout {
+        padding: HomeMetrics.menu-pad;
+        alignment: start;
+        @children
+    }
 }
 
 export component MainWindow inherits Window {
@@ -557,9 +629,7 @@ export component MainWindow inherits Window {
     in property <int> routines-on: -1;
     in property <int> member-count: -1;
     in property <string> me-name;
-    in property <string> main-bro-name;
-    in property <image> main-bro-glyph;
-    in property <bool> has-main-bro: false;
+    in property <string> me-initial;
     in-out property <string> home-query;
     in property <image> profile-avatars;
     in property <float> profile-avatars-width;
@@ -628,8 +698,8 @@ export component MainWindow inherits Window {
     min-height: 844px;
 
     VerticalLayout {
-        padding-left: root.screen == 2 ? Metrics.column-margin : 20px;
-        padding-right: root.screen == 2 ? Metrics.column-margin : 20px;
+        padding-left: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 ? HomeMetrics.profile-side : 20px);
+        padding-right: root.screen == 2 ? Metrics.column-margin : (root.screen == 6 ? HomeMetrics.profile-side : 20px);
         padding-top: 20px + root.safe-area-insets.top + root.extra-safe-top;
         padding-bottom: root.screen == 2 ? 0 : (20px + root.safe-area-insets.bottom + root.extra-safe-bottom);
         spacing: 14px;
@@ -683,36 +753,9 @@ export component MainWindow inherits Window {
         if root.screen == 1: Rectangle {
             VerticalLayout {
                 spacing: 12px;
-                // Main bro, 96px, with the + button over the top-right.
+                // `+` over the top-right; no hero avatar.
                 Rectangle {
-                    height: HomeMetrics.main-bro + HomeMetrics.main-bro-name + 8px;
-                    if root.has-main-bro: VerticalLayout {
-                        spacing: 8px;
-                        alignment: start;
-                        HorizontalLayout {
-                            alignment: center;
-                            Image {
-                                source: root.main-bro-glyph;
-                                width: HomeMetrics.main-bro;
-                                height: HomeMetrics.main-bro;
-                            }
-                        }
-                        Text {
-                            text: root.main-bro-name;
-                            color: Brand.ink;
-                            font-size: HomeMetrics.main-bro-name;
-                            horizontal-alignment: center;
-                            overflow: elide;
-                        }
-                    }
-                    if !root.has-main-bro && root.sessions.length == 0: Text {
-                        y: (parent.height - self.height) / 2;
-                        width: 100%;
-                        text: Tr.empty-chats;
-                        color: Brand.muted;
-                        wrap: word-wrap;
-                        horizontal-alignment: center;
-                    }
+                    height: HomeMetrics.float-btn;
                     RoundButton {
                         x: parent.width - self.width;
                         y: 0px;
@@ -720,28 +763,40 @@ export component MainWindow inherits Window {
                         clicked => { root.open-new-bro(); }
                     }
                 }
+                if root.sessions.length == 0: Text {
+                    text: Tr.empty-chats;
+                    color: Brand.muted;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
                 ListView {
                     vertical-stretch: 1;
                     for s in root.sessions: Rectangle {
                         height: HomeMetrics.row;
                         HorizontalLayout {
-                            spacing: 12px;
+                            spacing: 8px;
                             alignment: stretch;
+                            // 56px face slot: a DM avatar (48px) or up to three
+                            // overlapped 24px group avatars, centred.
                             VerticalLayout {
                                 alignment: center;
-                                width: HomeMetrics.row-avatar;
+                                width: HomeMetrics.row-face-w;
                                 if s.has-glyph: Image {
                                     source: s.glyph;
-                                    width: HomeMetrics.row-avatar;
+                                    width: HomeMetrics.row-face-w;
                                     height: HomeMetrics.row-avatar;
+                                    image-fit: contain;
                                 }
-                                if !s.has-glyph: Rectangle {
-                                    width: HomeMetrics.row-avatar;
-                                    height: HomeMetrics.row-avatar;
-                                    border-radius: HomeMetrics.row-avatar / 2;
-                                    background: Brand.surface;
-                                    border-width: 1px;
-                                    border-color: Brand.border;
+                                if !s.has-glyph: HorizontalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: HomeMetrics.row-avatar;
+                                        height: HomeMetrics.row-avatar;
+                                        border-radius: HomeMetrics.row-avatar / 2;
+                                        background: Brand.surface;
+                                        border-width: 1px;
+                                        border-color: Brand.border;
+                                    }
                                 }
                             }
                             VerticalLayout {
@@ -780,7 +835,8 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                 }
-                                Text {
+                                // No preview: no second line, the name stays centred.
+                                if s.preview != "": Text {
                                     text: s.preview;
                                     color: Brand.muted;
                                     font-size: HomeMetrics.row-preview;
@@ -793,20 +849,33 @@ export component MainWindow inherits Window {
                 }
                 // Self row + search capsule, 16px off the bottom (layout
                 // padding already includes the safe area).
+                // The row never changes look when its menu is open: no card.
                 Rectangle {
                     height: HomeMetrics.card-row;
                     border-radius: HomeMetrics.menu-r;
-                    background: Brand.surface;
                     HorizontalLayout {
-                        padding-left: 16px;
-                        padding-right: 16px;
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 32px;
+                                height: 32px;
+                                border-radius: 16px;
+                                background: Brand.surface;
+                                border-width: 1px;
+                                border-color: Brand.border;
+                                Text { text: root.me-initial; color: Brand.ink; font-size: 15px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
                         Text {
                             text: root.me-name;
                             color: Brand.ink;
                             font-size: 16px;
-                            font-weight: 700;
                             vertical-alignment: center;
                             overflow: elide;
+                            horizontal-stretch: 1;
                         }
                     }
                     TouchArea { clicked => { root.open-self-menu(); } }
@@ -845,19 +914,16 @@ export component MainWindow inherits Window {
                 width: 100%;
                 height: 100%;
                 TouchArea { clicked => { root.close-menus(); } }
-                Rectangle {
-                    x: parent.width - HomeMetrics.menu-w;
-                    y: parent.height - HomeMetrics.search - HomeMetrics.search-lift - HomeMetrics.card-row - HomeMetrics.menu-gap - (2 * HomeMetrics.menu-row + 1px);
-                    width: HomeMetrics.menu-w;
-                    border-radius: HomeMetrics.menu-r;
-                    background: Brand.surface;
-                    border-width: 1px;
-                    border-color: Brand.border;
-                    VerticalLayout {
-                        MenuRow { label: Tr.settings-title; clicked => { root.close-menus(); root.open-settings(); } }
-                        Rectangle { height: 1px; background: Brand.rule; }
-                        MenuRow { label: Tr.sign-out; danger: true; clicked => { root.sign-out(); } }
-                    }
+                // 4px above the self row (row, 12px gap, search, 12px gap, lift).
+                MenuBox {
+                    rows: 2;
+                    dividers: 1;
+                    x: 0px;
+                    y: parent.height - HomeMetrics.search-lift - 12px - HomeMetrics.search - 12px - HomeMetrics.card-row - HomeMetrics.menu-gap - self.height;
+                    width: min(HomeMetrics.menu-w, parent.width);
+                    MenuRow { label: Tr.settings-title; clicked => { root.close-menus(); root.open-settings(); } }
+                    MenuDivider { }
+                    MenuRow { label: Tr.sign-out; danger: true; clicked => { root.sign-out(); } }
                 }
             }
         }
@@ -875,12 +941,10 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                         padding-left: 8px;
                         padding-right: 10px;
-                        spacing: 4px;
-                        Text {
-                            text: "‹";
-                            color: Brand.ink;
-                            font-size: 22px;
-                            vertical-alignment: center;
+                        spacing: HomeMetrics.back-gap;
+                        VerticalLayout {
+                            alignment: center;
+                            Chevron { }
                         }
                         if root.unread-other > 0: Text {
                             text: root.unread-other > 99 ? "99+" : root.unread-other;
@@ -929,24 +993,7 @@ export component MainWindow inherits Window {
                 Rectangle { horizontal-stretch: 1; }
                 VerticalLayout {
                     alignment: center;
-                    RoundButton { glyph: "…"; clicked => { root.open-group-menu(); } }
-                }
-            }
-            if root.group-menu: HorizontalLayout {
-                width: 100%;
-                alignment: end;
-                Rectangle {
-                    width: HomeMetrics.menu-w;
-                    border-radius: HomeMetrics.menu-r;
-                    background: Brand.surface;
-                    border-width: 1px;
-                    border-color: Brand.border;
-                    VerticalLayout {
-                        MenuRow { label: Tr.menu-profile; clicked => { root.open-group-profile(); } }
-                        MenuRow { label: Tr.menu-find; clicked => { root.open-find(); } }
-                        if root.can-manage: Rectangle { height: 1px; background: Brand.rule; }
-                        if root.can-manage: MenuRow { label: Tr.menu-delete; danger: true; clicked => { root.ask-delete(); } }
-                    }
+                    RoundButton { glyph: "more"; clicked => { root.open-group-menu(); } }
                 }
             }
             if root.chat-note != "": Text { text: root.chat-note; color: Brand.muted; wrap: word-wrap; }
@@ -1386,7 +1433,7 @@ export component MainWindow inherits Window {
                 height: 52px;
                 Text { text: Tr.avatar-title; color: Brand.ink; font-size: 20px; font-weight: 700; vertical-alignment: center; }
                 Rectangle { horizontal-stretch: 1; }
-                VerticalLayout { alignment: center; RoundButton { glyph: "‹"; clicked => { root.page-back(); } } }
+                VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.page-back(); } } }
             }
             AvatarPreview { glyph: root.avatar-preview; note: root.avatar-note; }
             Text { text: root.avatar-name; color: Brand.ink; font-size: 16px; font-weight: 700; horizontal-alignment: center; }
@@ -1441,25 +1488,9 @@ export component MainWindow inherits Window {
             spacing: 12px;
             HorizontalLayout {
                 height: HomeMetrics.float-btn;
-                RoundButton { glyph: "‹"; clicked => { root.back(); } }
+                VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.back(); } } }
                 Rectangle { horizontal-stretch: 1; }
-                RoundButton { glyph: "…"; clicked => { root.open-group-menu(); } }
-            }
-            if root.group-menu: HorizontalLayout {
-                width: 100%;
-                alignment: end;
-                Rectangle {
-                    width: HomeMetrics.menu-w;
-                    border-radius: HomeMetrics.menu-r;
-                    background: Brand.surface;
-                    border-width: 1px;
-                    border-color: Brand.border;
-                    VerticalLayout {
-                        MenuRow { label: Tr.profile-copy-id; clicked => { root.copy-id(); } }
-                        if root.can-manage: Rectangle { height: 1px; background: Brand.rule; }
-                        if root.can-manage: MenuRow { label: Tr.menu-delete; danger: true; clicked => { root.ask-delete(); } }
-                    }
-                }
+                VerticalLayout { alignment: center; RoundButton { glyph: "more"; clicked => { root.open-group-menu(); } } }
             }
             VerticalLayout {
                 spacing: HomeMetrics.profile-name-gap;
@@ -1525,6 +1556,11 @@ export component MainWindow inherits Window {
                 horizontal-alignment: center;
                 wrap: word-wrap;
             }
+            // Layout spacing is 12px, plus 12px here: 24px from Edit to the card.
+            VerticalLayout {
+                padding-top: HomeMetrics.profile-card-gap - 12px;
+                vertical-stretch: 0;
+                alignment: start;
             Rectangle {
                 border-radius: HomeMetrics.card-r;
                 background: Brand.surface;
@@ -1551,6 +1587,7 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+            }
             Rectangle { vertical-stretch: 1; }
         }
 
@@ -1559,7 +1596,7 @@ export component MainWindow inherits Window {
             HorizontalLayout {
                 height: HomeMetrics.float-btn;
                 spacing: 8px;
-                RoundButton { glyph: "‹"; clicked => { root.back(); } }
+                VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.back(); } } }
                 Text { text: Tr.find-title; color: Brand.ink; font-size: 20px; font-weight: 700; vertical-alignment: center; }
             }
             Rectangle {
@@ -1608,7 +1645,7 @@ export component MainWindow inherits Window {
             HorizontalLayout {
                 height: HomeMetrics.float-btn;
                 spacing: 8px;
-                RoundButton { glyph: "‹"; clicked => { root.back(); } }
+                VerticalLayout { alignment: center; RoundButton { glyph: "back"; clicked => { root.back(); } } }
                 Text { text: Tr.members-title; color: Brand.ink; font-size: 20px; font-weight: 700; vertical-alignment: center; }
             }
             ListView {
@@ -1632,6 +1669,36 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    // `•••` popovers: right-aligned to the 32px button, 4px below it. The
+    // header is 40px tall and the button is centred in it, so the popover
+    // starts one header height under the safe-area top padding.
+    if root.group-menu && (root.screen == 2 || root.screen == 6): Rectangle {
+        width: 100%;
+        height: 100%;
+        TouchArea { clicked => { root.close-menus(); } }
+        if root.screen == 2: MenuBox {
+            rows: root.can-manage ? 5 : 2;
+            dividers: root.can-manage ? 1 : 0;
+            x: parent.width - Metrics.column-margin - self.width;
+            y: 20px + root.safe-area-insets.top + root.extra-safe-top + AvatarMetrics.title-height;
+            MenuRow { label: Tr.menu-profile; clicked => { root.open-group-profile(); } }
+            MenuRow { label: Tr.menu-find; clicked => { root.open-find(); } }
+            if root.can-manage: MenuRow { label: Tr.menu-rename; clicked => { root.open-group-profile(); root.start-edit(); } }
+            if root.can-manage: MenuRow { label: Tr.profile-members; clicked => { root.open-group-profile(); root.open-members(); } }
+            if root.can-manage: MenuDivider { }
+            if root.can-manage: MenuRow { label: Tr.menu-delete; danger: true; clicked => { root.ask-delete(); } }
+        }
+        if root.screen == 6: MenuBox {
+            rows: root.can-manage ? 2 : 1;
+            dividers: root.can-manage ? 1 : 0;
+            x: parent.width - HomeMetrics.profile-side - self.width;
+            y: 20px + root.safe-area-insets.top + root.extra-safe-top + HomeMetrics.float-btn;
+            MenuRow { label: Tr.profile-copy-id; clicked => { root.copy-id(); } }
+            if root.can-manage: MenuDivider { }
+            if root.can-manage: MenuRow { label: Tr.menu-delete; danger: true; clicked => { root.ask-delete(); } }
         }
     }
 
@@ -1667,7 +1734,7 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
                         border-radius: 10px;
                         background: Brand.danger;
-                        Text { text: Tr.menu-delete; color: #ffffff; font-size: 16px; font-weight: 600; }
+                        Text { text: Tr.delete-confirm; color: #ffffff; font-size: 16px; font-weight: 600; }
                         TouchArea { clicked => { root.confirm-delete(); } }
                     }
                 }

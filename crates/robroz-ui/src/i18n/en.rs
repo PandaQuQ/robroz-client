@@ -665,44 +665,48 @@ pub(super) fn text(key: Key) -> &'static str {
         Key::ConversationsYesterday => "Yesterday",
 
         // ---- Home list, group menu and self-row (PR4) ----
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::HomeSearchPlaceholder => "Search",
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::GroupMenuProfile => "View profile",
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::GroupMenuFind => "Find in chat",
         // Needs UI review.
-        Key::GroupMenuDelete => "Delete",
-        // Needs UI review.
+        Key::GroupMenuRename => "Rename",
+        // 删除群  [approved, UI姐 PR4 review]
+        Key::GroupMenuDelete => "Delete group",
+        // 删除  [approved, UI姐 PR4 review]
+        Key::GroupDeleteConfirm => "Delete",
+        // PR4 copy  [approved, UI姐 review]
         Key::GroupProfileEdit => "Edit",
         // 3 个开着 / "3 on"  [UI姐 PR4 spec]
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::GroupProfileRoutinesOn => "{0} on",
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::GroupProfileMembers => "Members",
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::GroupProfileCopyId => "Copy ID",
         // "Copied"  [UI姐 PR4 spec]
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::GroupProfileCopied => "Copied",
         // "Delete {group}?"  [UI姐 PR4 spec]
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::GroupDeleteTitle => "Delete {0}?",
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::GroupDeleteBody => "Messages, tasks and routines are deleted, and running tasks are stopped. Bros are kept.",
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::FindInChatTitle => "Find in chat",
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::FindInChatPlaceholder => "Search messages",
-        // Needs UI review.
-        Key::FindInChatEmpty => "Type to search this chat.",
-        // Needs UI review.
-        Key::FindInChatNoResults => "No messages matched.",
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
+        Key::FindInChatEmpty => "Search this chat",
+        // PR4 copy  [approved, UI姐 review]
+        Key::FindInChatNoResults => "No matching messages",
+        // PR4 copy  [approved, UI姐 review]
         Key::MembersTitle => "Members",
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::SettingsTitle => "Settings",
-        // Needs UI review.
+        // PR4 copy  [approved, UI姐 review]
         Key::SignOutOnThisDevice => "Sign out on this device",
 
         // 今天  [approved, chat column]

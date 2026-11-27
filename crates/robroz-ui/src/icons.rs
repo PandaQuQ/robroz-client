@@ -18,6 +18,10 @@ pub enum Glyph {
     Routines,
     Pencil,
     SignOut,
+    /// `•••`, three round dots (top-bar menu button).
+    More,
+    /// `‹` chevron (top-bar back button).
+    Back,
 }
 
 fn rgba_u8(c: Color) -> [u8; 4] {
@@ -86,6 +90,15 @@ fn stroke(
     );
 }
 
+/// Logical stroke width. `More` draws dots, so its stroke is the dot size.
+fn stroke_width(glyph: Glyph) -> f32 {
+    match glyph {
+        Glyph::More => 2.6,
+        Glyph::Back => 2.0,
+        _ => 1.6,
+    }
+}
+
 fn draw(glyph: Glyph, p: &mut tiny_skia::PathBuilder, s: f32) {
     let m = s * 0.18;
     let x0 = m;
@@ -127,14 +140,30 @@ fn draw(glyph: Glyph, p: &mut tiny_skia::PathBuilder, s: f32) {
             p.line_to(x1 - s * 0.16, y1 - s * 0.16);
         }
         Glyph::Settings => {
-            p.push_circle(mid, mid, s * 0.12);
-            for i in 0..6 {
-                let a = (i as f32) * std::f32::consts::PI / 3.0;
-                let inner = s * 0.20;
-                let outer = s * 0.32;
-                p.move_to(mid + a.cos() * inner, mid + a.sin() * inner);
-                p.line_to(mid + a.cos() * outer, mid + a.sin() * outer);
+            // Gear: eight square-ish teeth around a ring, plus the hub.
+            let teeth = 8;
+            let step = std::f32::consts::TAU / teeth as f32;
+            let (r_in, r_out) = (s * 0.30, s * 0.42);
+            let (half_in, half_out) = (step * 0.26, step * 0.17);
+            for i in 0..teeth {
+                let a = i as f32 * step;
+                let pts = [
+                    (r_in, a - half_in),
+                    (r_out, a - half_out),
+                    (r_out, a + half_out),
+                    (r_in, a + half_in),
+                ];
+                for (k, (r, ang)) in pts.iter().enumerate() {
+                    let (x, y) = (mid + r * ang.cos(), mid + r * ang.sin());
+                    if i == 0 && k == 0 {
+                        p.move_to(x, y);
+                    } else {
+                        p.line_to(x, y);
+                    }
+                }
             }
+            p.close();
+            p.push_circle(mid, mid, s * 0.13);
         }
         Glyph::Members => {
             p.push_circle(mid - s * 0.14, mid - s * 0.08, s * 0.10);
@@ -158,6 +187,18 @@ fn draw(glyph: Glyph, p: &mut tiny_skia::PathBuilder, s: f32) {
             p.line_to(x0 + s * 0.28, y1 - s * 0.16);
             p.line_to(x0 + s * 0.10, y1 - s * 0.10);
         }
+        Glyph::More => {
+            // Zero-length strokes: the round cap makes each a dot.
+            for x in [s * 0.14, mid, s * 1.0 - s * 0.14] {
+                p.move_to(x, mid);
+                p.line_to(x + 0.1, mid);
+            }
+        }
+        Glyph::Back => {
+            p.move_to(s * 0.64, s * 0.18);
+            p.line_to(s * 0.34, mid);
+            p.line_to(s * 0.64, s * 0.82);
+        }
         Glyph::SignOut => {
             p.move_to(x0 + s * 0.10, y0 + s * 0.16);
             p.line_to(x0 + s * 0.10, y1 - s * 0.16);
@@ -173,23 +214,28 @@ fn draw(glyph: Glyph, p: &mut tiny_skia::PathBuilder, s: f32) {
     }
 }
 
-/// A 20px (logical) line icon, sharp at `scale` device pixels.
-pub fn icon(glyph: Glyph, rgb: [u8; 3], size: f32, scale: f32) -> Image {
-    let scale = scale.max(1.0);
-    let px = (size * scale).round().max(1.0) as u32;
-    let color = Color::from_rgb8(rgb[0], rgb[1], rgb[2]);
-    let Some(mut pm) = tiny_skia::Pixmap::new(px, px) else {
-        return Image::new(image::Handle::from_rgba(1, 1, vec![0, 0, 0, 0]))
-            .width(Length::Fixed(size))
-            .height(Length::Fixed(size));
-    };
+/// RGBA pixels of a glyph, `px` square, at `scale` device px per logical.
+fn rasterize(glyph: Glyph, px: u32, scale: f32, color: Color) -> Option<(u32, Vec<u8>)> {
+    let mut pm = tiny_skia::Pixmap::new(px, px)?;
     stroke(
         &mut pm,
         |p| draw(glyph, p, px as f32),
         color,
-        (1.6 * scale).max(1.0),
+        (stroke_width(glyph) * scale).max(1.0),
     );
-    Image::new(image::Handle::from_rgba(px, px, pack_rgba(&pm)))
+    Some((px, pack_rgba(&pm)))
+}
+
+/// A line icon of `size` logical px, sharp at `scale` device pixels.
+pub fn icon(glyph: Glyph, rgb: [u8; 3], size: f32, scale: f32) -> Image {
+    let scale = scale.max(1.0);
+    let px = (size * scale).round().max(1.0) as u32;
+    let color = Color::from_rgb8(rgb[0], rgb[1], rgb[2]);
+    let handle = match rasterize(glyph, px, scale, color) {
+        Some((px, rgba)) => image::Handle::from_rgba(px, px, rgba),
+        None => image::Handle::from_rgba(1, 1, vec![0, 0, 0, 0]),
+    };
+    Image::new(handle)
         .width(Length::Fixed(size))
         .height(Length::Fixed(size))
         .content_fit(iced::ContentFit::Contain)
@@ -211,9 +257,65 @@ mod tests {
             Glyph::Routines,
             Glyph::Pencil,
             Glyph::SignOut,
+            Glyph::More,
+            Glyph::Back,
         ] {
             let img = icon(g, [0, 0, 0], 20.0, 2.0);
             let _ = img;
         }
+    }
+
+    fn painted(glyph: Glyph, px: u32) -> Vec<(u32, u32)> {
+        let (_, rgba) = rasterize(glyph, px, 2.0, Color::BLACK).expect("pixmap");
+        let mut out = Vec::new();
+        for y in 0..px {
+            for x in 0..px {
+                if rgba[((y * px + x) * 4 + 3) as usize] > 64 {
+                    out.push((x, y));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn more_is_three_dots_on_one_centre_line() {
+        let px = 32;
+        let pts = painted(Glyph::More, px);
+        assert!(!pts.is_empty());
+        let (min_y, max_y) = pts
+            .iter()
+            .fold((px, 0), |(a, b), &(_, y)| (a.min(y), b.max(y)));
+        // Centred vertically (rows min..=max straddle the middle).
+        assert!(min_y <= px / 2 && max_y >= px / 2 - 1, "{min_y}..{max_y}");
+        assert!((min_y + max_y).abs_diff(px - 1) <= 1, "not centred");
+        // Three separate clusters along x.
+        let mut cols: Vec<u32> = pts.iter().map(|&(x, _)| x).collect();
+        cols.sort_unstable();
+        cols.dedup();
+        let clusters = cols.windows(2).filter(|w| w[1] - w[0] > 1).count() + 1;
+        assert_eq!(clusters, 3);
+    }
+
+    #[test]
+    fn back_chevron_is_vertically_centred() {
+        let px = 32;
+        let pts = painted(Glyph::Back, px);
+        let (min_y, max_y) = pts
+            .iter()
+            .fold((px, 0), |(a, b), &(_, y)| (a.min(y), b.max(y)));
+        assert!((min_y + max_y).abs_diff(px - 1) <= 1, "not centred");
+    }
+
+    #[test]
+    fn settings_is_a_gear_not_a_star() {
+        // A gear has a hub hole: the centre pixel is empty, the ring is not.
+        let px = 40;
+        let pts = painted(Glyph::Settings, px);
+        let at = |x: u32, y: u32| pts.contains(&(x, y));
+        assert!(!at(px / 2, px / 2) || pts.len() > 100);
+        // The outline reaches close to the glyph's outer radius.
+        let max_dx = pts.iter().map(|&(x, _)| x.abs_diff(px / 2)).max().unwrap();
+        assert!(max_dx >= (px as f32 * 0.38) as u32);
     }
 }

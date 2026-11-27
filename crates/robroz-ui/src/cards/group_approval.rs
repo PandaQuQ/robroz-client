@@ -319,6 +319,31 @@ mod tests {
         assert_eq!(Note::Settled.text(), "");
     }
 
+    /// The server (`may_answer` in host/src/approvals.rs) lets only the
+    /// bro's owner answer a bro's card. An admin who does not own the bro
+    /// is refused too, so the client must not offer buttons by role.
+    #[test]
+    fn only_the_bro_owner_gets_buttons_not_an_admin_or_a_member() {
+        let _en = scoped(Locale::En);
+        // Bea belongs to the admin; Lin is a member.
+        let c = card(ApprovalState::Pending, Some(("local-admin", "admin")));
+        let ui = CardUi::default();
+        let admin = lines(&c, &ui, Some("local-admin"), &Utc);
+        assert_eq!(admin.actions, ApprovalActions::Decide { enabled: true });
+        let lin = lines(&c, &ui, Some("local-member"), &Utc);
+        assert_eq!(lin.actions, ApprovalActions::None, "no buttons, not greyed");
+        assert_eq!(lin.status, "Waiting for admin");
+        assert_eq!(lin.error, None);
+        // The other way round: Lin's bro, viewed by the admin.
+        let lins = card(ApprovalState::Pending, Some(("local-member", "Lin")));
+        assert_eq!(
+            lines(&lins, &ui, Some("local-admin"), &Utc).actions,
+            ApprovalActions::None
+        );
+        // Before /api/me answers nobody gets buttons.
+        assert_eq!(lines(&c, &ui, None, &Utc).actions, ApprovalActions::None);
+    }
+
     #[test]
     fn reminder_dots_follow_the_card() {
         assert_eq!(reminder_dot(ReminderState::Waiting), Dot::Waiting);

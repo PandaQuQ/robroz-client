@@ -151,15 +151,16 @@ fn round_button_style(t: Skin) -> impl Fn(&IcedTheme, button::Status) -> button:
     }
 }
 
-/// Round 32px button with a single glyph (`…`, `‹`).
-pub fn round_button<'a>(t: &Skin, glyph: &'static str, on: Action) -> Element<'a, Action> {
+/// Round 32px button with a 16px line icon (`•••`, `‹`).
+pub fn round_button<'a>(t: &Skin, glyph: crate::icons::Glyph, on: Action) -> Element<'a, Action> {
     let s = tok::MORE_BUTTON;
     button(
-        container(
-            text(glyph)
-                .size(t.type_.row_name)
-                .color(color(t.palette.text)),
-        )
+        container(crate::icons::icon(
+            glyph,
+            t.palette.text,
+            robroz_tokens::home::MORE_ICON,
+            RASTER_SCALE,
+        ))
         .width(Length::Fixed(s))
         .height(Length::Fixed(s))
         .align_x(Alignment::Center)
@@ -496,7 +497,7 @@ pub fn avatar_page<'a>(
     stored: bool,
     note: Option<&'a str>,
 ) -> Element<'a, Action> {
-    let back = round_button(t, "‹", Action::AvatarPageClose);
+    let back = round_button(t, crate::icons::Glyph::Back, Action::AvatarPageClose);
     let mut body = column![
         page_head(t, Key::AvatarTitle.as_str().to_string(), back),
         container(avatar_preview(t, a)).width(Fill).center_x(Fill),

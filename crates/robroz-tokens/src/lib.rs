@@ -207,22 +207,32 @@ pub mod space {
 
 /// Home list, chat top bar and group menus (v0.2 PR4).
 pub mod home {
-    pub const MAIN_BRO: f32 = 96.0;
-    pub const MAIN_BRO_NAME: f32 = 13.0;
-    pub const ROW: f32 = 72.0;
+    pub const ROW: f32 = 64.0;
     pub const ROW_AVATAR: f32 = 48.0;
     pub const ROW_NAME: f32 = 16.0;
     pub const ROW_TIME: f32 = 12.0;
     pub const ROW_PREVIEW: f32 = 14.0;
     pub const UNREAD_DOT: f32 = 8.0;
-    pub const GROUP_TILE: f32 = 28.0;
+    /// Group rows stack up to three 24px avatars, 8px overlap, like the
+    /// chat title capsule.
+    pub const GROUP_STACK: f32 = 24.0;
+    pub const GROUP_STACK_OVERLAP: f32 = 8.0;
+    /// Fixed width of the face slot (a 3-avatar stack fits exactly).
+    pub const ROW_FACE_W: f32 = 56.0;
+    /// Left and right padding inside the search capsule.
+    pub const SEARCH_PAD: f32 = 16.0;
     pub const SEARCH: f32 = 48.0;
     pub const SEARCH_LIFT: f32 = 16.0;
     pub const FLOAT_BTN: f32 = 40.0;
     pub const MENU_W: f32 = 220.0;
     pub const MENU_R: f32 = 16.0;
-    pub const MENU_GAP: f32 = 8.0;
-    pub const MENU_ROW: f32 = 48.0;
+    /// Popover offset from the button or row it belongs to.
+    pub const MENU_GAP: f32 = 4.0;
+    /// Inner padding of the popover box.
+    pub const MENU_PAD: f32 = 4.0;
+    pub const MENU_ROW: f32 = 36.0;
+    /// Space above and below the 1px divider.
+    pub const MENU_DIVIDER_GAP: f32 = 4.0;
     pub const MENU_ICON: f32 = 20.0;
     pub const MENU_ICON_GAP: f32 = 12.0;
     pub const MENU_TEXT: f32 = 15.0;
@@ -230,7 +240,18 @@ pub mod home {
     pub const PROFILE_NAME_GAP: f32 = 12.0;
     pub const PROFILE_NAME: f32 = 22.0;
     pub const PROFILE_EDIT_H: f32 = 32.0;
+    /// Name to Edit.
     pub const PROFILE_EDIT_GAP: f32 = 12.0;
+    /// Edit to the card.
+    pub const PROFILE_CARD_GAP: f32 = 24.0;
+    /// Card (and chat column) max width on desktop.
+    pub const PROFILE_CARD_MAX: f32 = 720.0;
+    /// Page side margin on narrow screens.
+    pub const PROFILE_SIDE: f32 = 16.0;
+    /// The `•••` icon in the round top-bar buttons.
+    pub const MORE_ICON: f32 = 16.0;
+    /// `‹` to unread count gap in the back button.
+    pub const BACK_GAP: f32 = 4.0;
     pub const CARD_R: f32 = 16.0;
     pub const CARD_ROW: f32 = 52.0;
     pub const CARD_ICON: f32 = 20.0;
@@ -396,22 +417,25 @@ fn scalar_vars() -> Vec<(String, String)> {
     add(
         "home",
         &[
-            ("main-bro", crate::home::MAIN_BRO),
-            ("main-bro-name", crate::home::MAIN_BRO_NAME),
             ("row", crate::home::ROW),
             ("row-avatar", crate::home::ROW_AVATAR),
             ("row-name", crate::home::ROW_NAME),
             ("row-time", crate::home::ROW_TIME),
             ("row-preview", crate::home::ROW_PREVIEW),
             ("unread-dot", crate::home::UNREAD_DOT),
-            ("group-tile", crate::home::GROUP_TILE),
+            ("group-stack", crate::home::GROUP_STACK),
+            ("group-stack-overlap", crate::home::GROUP_STACK_OVERLAP),
+            ("row-face-w", crate::home::ROW_FACE_W),
+            ("search-pad", crate::home::SEARCH_PAD),
             ("search", crate::home::SEARCH),
             ("search-lift", crate::home::SEARCH_LIFT),
             ("float-btn", crate::home::FLOAT_BTN),
             ("menu-w", crate::home::MENU_W),
             ("menu-r", crate::home::MENU_R),
             ("menu-gap", crate::home::MENU_GAP),
+            ("menu-pad", crate::home::MENU_PAD),
             ("menu-row", crate::home::MENU_ROW),
+            ("menu-divider-gap", crate::home::MENU_DIVIDER_GAP),
             ("menu-icon", crate::home::MENU_ICON),
             ("menu-icon-gap", crate::home::MENU_ICON_GAP),
             ("menu-text", crate::home::MENU_TEXT),
@@ -420,6 +444,11 @@ fn scalar_vars() -> Vec<(String, String)> {
             ("profile-name", crate::home::PROFILE_NAME),
             ("profile-edit-h", crate::home::PROFILE_EDIT_H),
             ("profile-edit-gap", crate::home::PROFILE_EDIT_GAP),
+            ("profile-card-gap", crate::home::PROFILE_CARD_GAP),
+            ("profile-card-max", crate::home::PROFILE_CARD_MAX),
+            ("profile-side", crate::home::PROFILE_SIDE),
+            ("more-icon", crate::home::MORE_ICON),
+            ("back-gap", crate::home::BACK_GAP),
             ("card-r", crate::home::CARD_R),
             ("card-row", crate::home::CARD_ROW),
             ("card-icon", crate::home::CARD_ICON),
@@ -484,6 +513,28 @@ pub const JSON_PATH: &str = "tokens.json";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_metrics_match_the_pr4_review() {
+        use crate::home as h;
+        assert_eq!(h::ROW, 64.0);
+        assert_eq!(h::MENU_PAD, 4.0);
+        assert_eq!(h::MENU_ROW, 36.0);
+        assert_eq!(h::MENU_DIVIDER_GAP, 4.0);
+        assert_eq!(h::MENU_GAP, 4.0);
+        assert_eq!(h::MORE_ICON, 16.0);
+        assert_eq!(h::BACK_GAP, 4.0);
+        assert_eq!(h::SEARCH_PAD, 16.0);
+        assert_eq!(h::PROFILE_CARD_MAX, 720.0);
+        assert_eq!(h::PROFILE_SIDE, 16.0);
+        assert_eq!(h::PROFILE_EDIT_GAP, 12.0);
+        assert_eq!(h::PROFILE_CARD_GAP, 24.0);
+        // Three 24px avatars overlapping by 8px fill the face slot.
+        assert_eq!(
+            h::GROUP_STACK + 2.0 * (h::GROUP_STACK - h::GROUP_STACK_OVERLAP),
+            h::ROW_FACE_W
+        );
+    }
 
     fn on_disk(rel: &str) -> String {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);

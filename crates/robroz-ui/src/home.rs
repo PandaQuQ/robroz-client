@@ -32,6 +32,28 @@ pub fn unread_except(total: u64, open: u64) -> u64 {
     total.saturating_sub(open)
 }
 
+/// One entry of the group `•••` menu, in order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupMenuEntry {
+    Profile,
+    Find,
+    Rename,
+    Members,
+    /// Preceded by a divider.
+    Delete,
+}
+
+/// Menu entries for a group. Rename, Members and Delete group share the
+/// one `can_manage` condition, so they appear together or not at all.
+pub fn group_menu_entries(can_manage: bool) -> Vec<GroupMenuEntry> {
+    use GroupMenuEntry::*;
+    if can_manage {
+        vec![Profile, Find, Rename, Members, Delete]
+    } else {
+        vec![Profile, Find]
+    }
+}
+
 /// Case-insensitive name or preview match for the home search capsule.
 pub fn row_matches(name: &str, preview: Option<&str>, query: &str) -> bool {
     let q = query.trim();
@@ -45,6 +67,16 @@ pub fn row_matches(name: &str, preview: Option<&str>, query: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manage_entries_appear_together_or_not_at_all() {
+        use GroupMenuEntry::*;
+        assert_eq!(
+            group_menu_entries(true),
+            vec![Profile, Find, Rename, Members, Delete]
+        );
+        assert_eq!(group_menu_entries(false), vec![Profile, Find]);
+    }
 
     #[test]
     fn manage_is_hidden_for_a_dm_even_when_the_caller_is_admin() {

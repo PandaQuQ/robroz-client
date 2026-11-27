@@ -398,3 +398,20 @@ fn router_steps_and_tool_results_map_by_contract() {
         "Call failed: disk full"
     );
 }
+
+#[test]
+fn pr4_review_copy_is_in_place() {
+    let zh = |k| text_in(Locale::Zh, k);
+    let en = |k| text_in(Locale::En, k);
+    assert_eq!(zh(Key::GroupMenuFind), "在聊天里找");
+    assert_eq!(zh(Key::FindInChatTitle), "在聊天里找");
+    assert_eq!(zh(Key::GroupMenuDelete), "删除群");
+    assert_eq!(en(Key::GroupMenuDelete), "Delete group");
+    assert_eq!(zh(Key::FindInChatEmpty), "输入关键词搜这个聊天");
+    assert_eq!(en(Key::FindInChatEmpty), "Search this chat");
+    assert_eq!(zh(Key::FindInChatNoResults), "没找到相关消息");
+    assert_eq!(en(Key::FindInChatNoResults), "No matching messages");
+    // The confirm button keeps the short verb.
+    assert_eq!(zh(Key::GroupDeleteConfirm), "删除");
+    assert_eq!(en(Key::GroupDeleteConfirm), "Delete");
+}

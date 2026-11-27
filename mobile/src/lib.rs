@@ -230,9 +230,8 @@ fn apply_metrics(ui: &MainWindow) {
     am.set_create_empty_opacity(a::CREATE_EMPTY_OPACITY);
     use robroz_tokens::home as h;
     let hm = ui.global::<HomeMetrics>();
-    hm.set_main_bro(h::MAIN_BRO);
-    hm.set_main_bro_name(h::MAIN_BRO_NAME);
     hm.set_row(h::ROW);
+    hm.set_row_face_w(h::ROW_FACE_W);
     hm.set_row_avatar(h::ROW_AVATAR);
     hm.set_row_name(h::ROW_NAME);
     hm.set_row_time(h::ROW_TIME);
@@ -244,6 +243,12 @@ fn apply_metrics(ui: &MainWindow) {
     hm.set_menu_w(h::MENU_W);
     hm.set_menu_r(h::MENU_R);
     hm.set_menu_gap(h::MENU_GAP);
+    hm.set_menu_pad(h::MENU_PAD);
+    hm.set_menu_divider_gap(h::MENU_DIVIDER_GAP);
+    hm.set_more_icon(h::MORE_ICON);
+    hm.set_back_gap(h::BACK_GAP);
+    hm.set_profile_card_gap(h::PROFILE_CARD_GAP);
+    hm.set_profile_side(h::PROFILE_SIDE);
     hm.set_menu_row(h::MENU_ROW);
     hm.set_menu_text(h::MENU_TEXT);
     hm.set_profile_avatar(h::PROFILE_AVATAR);
@@ -347,6 +352,8 @@ fn apply_strings(ui: &MainWindow) {
     tr.set_menu_profile(Key::GroupMenuProfile.as_str().into());
     tr.set_menu_find(Key::GroupMenuFind.as_str().into());
     tr.set_menu_delete(Key::GroupMenuDelete.as_str().into());
+    tr.set_menu_rename(Key::GroupMenuRename.as_str().into());
+    tr.set_delete_confirm(Key::GroupDeleteConfirm.as_str().into());
     tr.set_profile_edit(Key::GroupProfileEdit.as_str().into());
     tr.set_profile_members(Key::GroupProfileMembers.as_str().into());
     tr.set_profile_copy_id(Key::GroupProfileCopyId.as_str().into());
@@ -722,17 +729,6 @@ fn apply_sessions(ui: &MainWindow, st: &State) {
         })
         .collect();
     ui.set_sessions(ModelRc::new(VecModel::from(model)));
-    let main = main_bro(st);
-    ui.set_has_main_bro(main.is_some());
-    if let Some(b) = main {
-        ui.set_main_bro_name(b.name.clone().into());
-        ui.set_main_bro_glyph(avatars::glyph(
-            avatars::avatar_of(&st.bros, &b.id),
-            st.theme,
-            robroz_tokens::home::MAIN_BRO,
-            scale,
-        ));
-    }
     ui.set_me_name(
         st.me
             .as_ref()
@@ -740,14 +736,10 @@ fn apply_sessions(ui: &MainWindow, st: &State) {
             .unwrap_or_default()
             .into(),
     );
+    ui.set_me_initial(
+        conversations::initial(st.me.as_ref().map(|m| m.name.as_str()).unwrap_or_default()).into(),
+    );
     ui.set_home_query(st.home_query.clone().into());
-}
-
-fn main_bro(st: &State) -> Option<&Bro> {
-    st.bros
-        .iter()
-        .find(|b| avatars::owns(st.me.as_ref(), b))
-        .or_else(|| st.bros.first())
 }
 
 fn row_glyph(st: &State, g: &Group, scale: f32) -> (slint::Image, bool) {
@@ -764,7 +756,10 @@ fn row_glyph(st: &State, g: &Group, scale: f32) -> (slint::Image, bool) {
     }
     if let Some((faces, _)) = st.group_faces.get(&g.id) {
         if !faces.is_empty() {
-            return (avatars::group_tile(faces, st.theme, scale), true);
+            return (
+                avatars::group_stack(faces, st.theme, tokens_for(st.theme).window, scale),
+                true,
+            );
         }
     }
     (slint::Image::default(), false)

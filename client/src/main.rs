@@ -930,18 +930,6 @@ impl App {
         )
     }
 
-    fn main_bro(&self) -> Option<view::MainBro<'_>> {
-        let bro = self
-            .bros
-            .iter()
-            .find(|b| self.owns(b))
-            .or_else(|| self.bros.first())?;
-        Some(view::MainBro {
-            name: &bro.name,
-            avatar: avatar::resolve(bro.avatar, &bro.id),
-        })
-    }
-
     fn close_menus(&mut self) {
         self.group_menu = false;
         self.self_menu = false;
@@ -2210,6 +2198,20 @@ impl App {
                     self.load_group_schedules(id),
                 ])
             }
+            Action::GroupRenameOpen => {
+                let open = self.on_action(Action::GroupProfileOpen);
+                if self.page == Page::GroupProfile {
+                    let _ = self.on_action(Action::GroupEditStart);
+                }
+                open
+            }
+            Action::GroupMembersOpen => {
+                let open = self.on_action(Action::GroupProfileOpen);
+                if self.page == Page::GroupProfile {
+                    return Task::batch([open, self.on_action(Action::MembersOpen)]);
+                }
+                open
+            }
             Action::GroupProfileClose => {
                 self.page = Page::Group;
                 self.group_menu = false;
@@ -3353,8 +3355,16 @@ impl App {
         }
         let main: Element<'_, Message> = if self.narrow() {
             // Phone: one screen at a time.
-            if !self.host_state().shows_sidebar() || (self.narrow_open && self.page == Page::Group)
-            {
+            // Pages with their own round ‹ do not also get the "‹ Chats" bar.
+            let own_back = matches!(
+                self.page,
+                Page::Group
+                    | Page::GroupProfile
+                    | Page::FindInChat
+                    | Page::Members
+                    | Page::BroAvatar
+            );
+            if !self.host_state().shows_sidebar() || (self.narrow_open && own_back) {
                 self.page_view(&t)
             } else if self.narrow_open {
                 let back = button(text(Text::ViewBackToChats).size(t.type_.row_name))
@@ -3673,7 +3683,6 @@ impl App {
                 now: now_unix(),
                 width: list_w,
                 query: &self.home_query,
-                main_bro: self.main_bro(),
                 me_name: self.me.as_ref().map(|m| m.name.as_str()),
                 self_menu: self.self_menu,
                 scale: self.scale,
@@ -4121,9 +4130,8 @@ impl App {
         };
         if self.group_menu && self.page == Page::Group {
             let can = self.can_manage(id);
-            let menu =
-                view::group_menu_overlay(t, can, self.scale, header_h, t.metrics.stream_padding)
-                    .map(Message::Ui);
+            let menu = view::group_menu_overlay(t, can, self.scale, t.metrics.stream_padding)
+                .map(Message::Ui);
             chrome = iced::widget::stack![chrome, menu]
                 .width(Fill)
                 .height(Fill)
