@@ -9,6 +9,7 @@ use crate::i18n::Key;
 pub mod codes;
 pub mod confirm;
 pub mod group_approval;
+pub use group_approval::{effective_owner_id, is_bro_owner};
 pub mod interact;
 pub mod mcp;
 pub mod memories;
